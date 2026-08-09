@@ -1,0 +1,6 @@
+{
+  "name": "froc.ia",
+  "description": "Plataforma de IA para criação, personalização e pré-visualização instantânea de sites modernos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

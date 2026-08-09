@@ -1,0 +1,513 @@
+import { Router } from 'express';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import { AuthenticatedRequest } from '../types.js';
+import { AIExecutionService } from '../ai/aiExecutionService.js';
+import { GeminiProvider } from '../ai/providers/geminiProvider.js';
+import { ContextBuilder } from '../ai/contextBuilder.js';
+import { AIRouter } from '../ai/aiRouter.js';
+import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
+import { ExecutionTraceService } from '../ai/executionTraceService.js';
+import { CitationService } from '../ai/citationService.js';
+import { CostService } from '../ai/costService.js';
+import { adminDb } from '../lib/firebaseAdmin.js';
+import { FieldValue } from 'firebase-admin/firestore';
+import {
+  InvalidAIAttachmentError,
+  validateAIAttachments
+} from '../validators/aiAttachmentValidators.js';
+import {
+  AIMode,
+  ExecutionParams
+} from '../ai/types/ai.js';
+import { SafetyService } from '../ai/safetyService.js';
+import {
+  FeatureFlagDisabledError,
+  FeatureFlagService
+} from '../services/featureFlagService.js';
+
+export const aiRouter = Router();
+
+const ALLOWED_MODES = new Set<AIMode>([
+  'fast',
+  'smart',
+  'deep',
+  'code',
+  'research',
+  'site-builder',
+  'image',
+  'video',
+  'document'
+]);
+
+class InvalidAIRequestError extends Error {
+  readonly details: string[];
+
+  constructor(details: string[]) {
+    super('invalid_ai_request');
+    this.name = 'InvalidAIRequestError';
+    this.details = details;
+  }
+}
+
+function optionalId(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (
+    typeof value !== 'string' ||
+    value.trim().length > 200 ||
+    !/^[A-Za-z0-9_-]+$/.test(value.trim())
+  ) {
+    throw new InvalidAIRequestError([
+      'Um dos identificadores informados é inválido.'
+    ]);
+  }
+
+  return value.trim();
+}
+
+function parseExecutionRequest(
+  value: unknown
+): Omit<ExecutionParams, 'userId'> {
+  if (!value || typeof value !== 'object') {
+    throw new InvalidAIRequestError([
+      'O corpo da requisição é obrigatório.'
+    ]);
+  }
+
+  const body = value as Record<string, unknown>;
+  const prompt =
+    typeof body.prompt === 'string'
+      ? body.prompt.trim()
+      : '';
+
+  if (!prompt || prompt.length > 50000) {
+    throw new InvalidAIRequestError([
+      'O prompt deve conter entre 1 e 50.000 caracteres.'
+    ]);
+  }
+
+  const mode =
+    typeof body.mode === 'string'
+      ? (body.mode as AIMode)
+      : 'smart';
+
+  if (!ALLOWED_MODES.has(mode)) {
+    throw new InvalidAIRequestError([
+      'O modo de IA informado não é permitido.'
+    ]);
+  }
+
+  const rawKnowledgeBaseIds = body.knowledgeBaseIds;
+  const knowledgeBaseIds = Array.isArray(rawKnowledgeBaseIds)
+    ? Array.from(
+        new Set(
+          rawKnowledgeBaseIds
+            .filter(
+              (id): id is string =>
+                typeof id === 'string' &&
+                /^[A-Za-z0-9_-]{1,200}$/.test(id)
+            )
+            .map((id) => id.trim())
+        )
+      ).slice(0, 10)
+    : [];
+
+  if (
+    Array.isArray(rawKnowledgeBaseIds) &&
+    knowledgeBaseIds.length !== rawKnowledgeBaseIds.length
+  ) {
+    throw new InvalidAIRequestError([
+      'A lista de bases de conhecimento é inválida.'
+    ]);
+  }
+
+  const idempotencyKey =
+    typeof body.idempotencyKey === 'string' &&
+    /^[A-Za-z0-9:_-]{8,200}$/.test(
+      body.idempotencyKey.trim()
+    )
+      ? body.idempotencyKey.trim()
+      : undefined;
+
+  return {
+    prompt,
+    mode,
+    conversationId: optionalId(body.conversationId),
+    projectId: optionalId(body.projectId),
+    idempotencyKey,
+    knowledgeBaseIds,
+    attachments: validateAIAttachments(body.attachments),
+    responseFormat:
+      body.responseFormat === 'json' ? 'json' : 'text'
+  };
+}
+
+async function assertModeEnabled(mode: AIMode): Promise<void> {
+  await FeatureFlagService.assertEnabled('ai_chat');
+
+  if (mode === 'image') {
+    await FeatureFlagService.assertEnabled('image_generation');
+  }
+
+  if (mode === 'video') {
+    await FeatureFlagService.assertEnabled('video_generation');
+  }
+}
+
+/**
+ * POST /api/ai/chat (Streaming Response with SSE)
+ */
+aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const uid = req.user!.uid;
+  let parsedRequest: Omit<ExecutionParams, 'userId'>;
+
+  try {
+    parsedRequest = parseExecutionRequest(req.body);
+    await assertModeEnabled(parsedRequest.mode);
+  } catch (error) {
+    if (error instanceof InvalidAIAttachmentError) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_ai_attachments',
+          message: error.issues[0],
+          details: error.issues,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    if (error instanceof InvalidAIRequestError) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_ai_request',
+          message: error.details[0],
+          details: error.details,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    if (error instanceof FeatureFlagDisabledError) {
+      return res.status(503).json({
+        error: {
+          code: 'feature_temporarily_disabled',
+          message:
+            'Este recurso está temporariamente indisponível.',
+          feature: error.flag,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    return res.status(500).json({
+      error: {
+        code: 'ai_request_validation_failed',
+        message:
+          'Não foi possível validar a solicitação.',
+        correlationId: req.correlationId
+      }
+    });
+  }
+
+  const {
+    prompt,
+    mode,
+    conversationId = null,
+    projectId = null,
+    knowledgeBaseIds = [],
+    attachments = [],
+    idempotencyKey: providedKey
+  } = parsedRequest;
+
+  const safety = SafetyService.inspectPrompt(prompt);
+
+  if (!safety.safe) {
+    return res.status(400).json({
+      error: {
+        code: 'unsafe_prompt',
+        message:
+          safety.reason || 'Prompt rejeitado por segurança.',
+        correlationId: req.correlationId
+      }
+    });
+  }
+
+  const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
+
+  const route = AIRouter.route({
+    mode,
+    prompt: sanitizedPrompt,
+    hasImages: attachments.some(
+      (attachment) => attachment.type === 'image'
+    ),
+    hasFiles: attachments.length > 0
+  });
+  const idempotencyKey = providedKey || `aistream-${uid}-${Date.now()}`;
+
+  let reserveResult;
+  try {
+    reserveResult = await CreditWalletService.reserveCredits({
+      userId: uid,
+      amount: route.estimatedCredits,
+      operation: `Reserva para streaming de IA (${mode})`,
+      idempotencyKey,
+    });
+  } catch (err: any) {
+    const isInsufficient = err instanceof InsufficientCreditsError;
+    return res.status(isInsufficient ? 402 : 500).json({
+      error: {
+        code: isInsufficient ? 'insufficient_credits' : 'credit_reservation_failed',
+        message: err.message || 'Erro ao reservar creditos.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+
+  const reservationId = reserveResult.reservationId;
+
+  const executionId = await ExecutionTraceService.createTrace({
+    userId: uid,
+    conversationId,
+    projectId,
+    mode,
+    selectedModel: route.selectedModel,
+    fallbackModels: route.fallbackModels,
+    attemptedModels: [route.selectedModel],
+    status: 'running',
+    promptVersion: 'v1.0.0',
+    inputTokens: null,
+    outputTokens: null,
+    cachedTokens: null,
+    estimatedCredits: route.estimatedCredits,
+    consumedCredits: null,
+    reservationId,
+    latencyMs: null,
+    fallbackUsed: false,
+    correlationId: req.correlationId,
+    errorCode: null,
+    createdAt: new Date().toISOString(),
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+  });
+
+  // Set SSE Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendEvent = (event: string, data: any) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent('start', { executionId, selectedModel: route.selectedModel });
+
+  let fullOutput = '';
+  const startTime = Date.now();
+
+  try {
+    const assembled = await ContextBuilder.assemble({
+      userId: uid,
+      mode,
+      prompt: sanitizedPrompt,
+      conversationId,
+      projectId,
+      knowledgeBaseIds,
+    });
+
+    const stream = GeminiProvider.generateStream({
+      model: route.selectedModel,
+      systemInstruction: assembled.systemInstruction,
+      userMessage: assembled.userMessage,
+      attachments,
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.text) {
+        fullOutput += chunk.text;
+        sendEvent('token', { text: chunk.text });
+      }
+      if (chunk.groundingMetadata) {
+        const citations = CitationService.extractSearchGroundingCitations(chunk.groundingMetadata);
+        if (citations.length > 0) {
+          sendEvent('citations', { citations });
+        }
+      }
+    }
+
+    const inputTokens = assembled.tokenCountEstimate;
+    const outputTokens = CostService.estimateTokenCount(fullOutput);
+    const consumedCredits = CostService.calculateCreditCost(route.selectedModel, inputTokens, outputTokens);
+
+    await CreditWalletService.confirmConsumption({
+      userId: uid,
+      reservationId,
+      amountConsumed: Math.min(consumedCredits, route.estimatedCredits),
+      operation: `Streaming IA (${mode})`,
+      idempotencyKey: `cnf-${idempotencyKey}`,
+    });
+
+    await ExecutionTraceService.updateTrace(executionId, {
+      status: 'completed',
+      inputTokens,
+      outputTokens,
+      consumedCredits,
+      latencyMs: Date.now() - startTime,
+      completedAt: new Date().toISOString(),
+    });
+
+    sendEvent('completed', {
+      executionId,
+      consumedCredits,
+      totalTokens: inputTokens + outputTokens,
+    });
+    res.end();
+  } catch (streamErr: any) {
+    console.error('Erro na transmissao SSE de IA:', streamErr);
+
+    await CreditWalletService.releaseReservation({
+      userId: uid,
+      reservationId,
+      operation: `Estorno por erro de transmissao SSE: ${streamErr.message}`,
+      idempotencyKey: `rel-${idempotencyKey}`,
+    });
+
+    await ExecutionTraceService.updateTrace(executionId, {
+      status: 'failed',
+      errorCode: streamErr.message,
+      completedAt: new Date().toISOString(),
+    });
+
+    sendEvent('error', {
+      code: 'stream_failed',
+      message: streamErr.message || 'Erro durante transmissao.',
+    });
+    res.end();
+  }
+});
+
+/**
+ * POST /api/ai/executions (Synchronous execution)
+ */
+aiRouter.post('/executions', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const parsedRequest = parseExecutionRequest(req.body);
+    const result = await AIExecutionService.execute(
+      {
+        userId: req.user!.uid,
+        ...parsedRequest
+      },
+      req.correlationId
+    );
+
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof InvalidAIAttachmentError) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_ai_attachments',
+          message: error.issues[0],
+          details: error.issues,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    if (error instanceof InvalidAIRequestError) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_ai_request',
+          message: error.details[0],
+          details: error.details,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    if (error instanceof FeatureFlagDisabledError) {
+      return res.status(503).json({
+        error: {
+          code: 'feature_temporarily_disabled',
+          message:
+            'Este recurso está temporariamente indisponível.',
+          feature: error.flag,
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    const isInsufficient =
+      error instanceof InsufficientCreditsError;
+
+    return res.status(isInsufficient ? 402 : 500).json({
+      error: {
+        code: isInsufficient ? 'insufficient_credits' : 'execution_failed',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Erro ao executar IA.',
+        correlationId: req.correlationId
+      }
+    });
+  }
+});
+
+/**
+ * GET /api/ai/executions/:executionId
+ */
+aiRouter.get('/executions/:executionId', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { executionId } = req.params;
+    const trace = await ExecutionTraceService.getTrace(executionId);
+
+    if (!trace || (trace.userId !== req.user!.uid && req.user!.role !== 'admin')) {
+      return res.status(404).json({
+        error: { code: 'trace_not_found', message: 'Trace de execucao nao localizado.', correlationId: req.correlationId },
+      });
+    }
+
+    return res.json({ execution: trace });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: { code: 'trace_fetch_failed', message: 'Erro ao buscar trace.', correlationId: req.correlationId },
+    });
+  }
+});
+
+/**
+ * POST /api/ai/executions/:executionId/cancel
+ */
+aiRouter.post('/executions/:executionId/cancel', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const uid = req.user!.uid;
+    const { executionId } = req.params;
+    const trace = await ExecutionTraceService.getTrace(executionId);
+
+    if (!trace || trace.userId !== uid) {
+      return res.status(404).json({
+        error: { code: 'trace_not_found', message: 'Execucao nao encontrada.', correlationId: req.correlationId },
+      });
+    }
+
+    if (trace.status === 'running') {
+      await CreditWalletService.releaseReservation({
+        userId: uid,
+        reservationId: trace.reservationId,
+        operation: 'Estorno por cancelamento do usuario',
+        idempotencyKey: `cancel-${executionId}`,
+      });
+
+      await ExecutionTraceService.updateTrace(executionId, {
+        status: 'cancelled',
+        completedAt: new Date().toISOString(),
+      });
+    }
+
+    return res.json({ success: true, status: 'cancelled' });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: { code: 'cancel_failed', message: 'Erro ao cancelar execucao.', correlationId: req.correlationId },
+    });
+  }
+});

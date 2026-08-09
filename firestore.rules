@@ -1,0 +1,130 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.role == 'admin' ||
+         request.auth.token.admin == true ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'user'
+        && (!('creditsRemaining' in request.resource.data) || request.resource.data.creditsRemaining == 0)
+        && (!('creditsAvailable' in request.resource.data) || request.resource.data.creditsAvailable == 0);
+      allow update: if isOwner(userId)
+        && request.resource.data.role == resource.data.role
+        && (!('creditsAvailable' in request.resource.data) || request.resource.data.creditsAvailable == resource.data.creditsAvailable)
+        && (!('creditsRemaining' in request.resource.data) || request.resource.data.creditsRemaining == resource.data.creditsRemaining)
+        && (!('creditsReserved' in request.resource.data) || request.resource.data.creditsReserved == resource.data.creditsReserved);
+      allow delete: if isAdmin();
+    }
+
+    // Payments Collection (Backend Express / Firebase Admin SDK writes only)
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false; // Strict backend-only mutation
+    }
+
+    // Credit Transactions Statement (Backend Express / Firebase Admin SDK writes only)
+    match /credit_transactions/{txId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false; // Strict backend-only mutation
+    }
+
+    // Credit Reservations (Backend Express / Firebase Admin SDK writes only)
+    match /credit_reservations/{resId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Financial Reconciliation Cases (Admin read, Backend write)
+    match /financial_reconciliation_cases/{caseId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Webhook Events Log (Backend Express / Firebase Admin SDK only)
+    match /payment_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Conversations Collection
+    match /conversations/{convId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()) && request.resource.data.userId == resource.data.userId;
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Messages Collection
+    match /messages/{msgId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()) && request.resource.data.userId == resource.data.userId;
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // User Memories Collection
+    match /user_memories/{memId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()) && request.resource.data.userId == resource.data.userId;
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Knowledge Bases Collection
+    match /knowledge_bases/{kbId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Knowledge Documents Collection
+    match /knowledge_documents/{docId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Knowledge Chunks Collection
+    match /knowledge_chunks/{chunkId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // AI Executions Collection (Backend writes, Owner/Admin read)
+    match /ai_executions/{execId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Prompt Definitions & Versions (Admin read/write)
+    match /prompt_definitions/{promptId} {
+      allow read, write: if isAdmin();
+    }
+    match /prompt_versions/{versionId} {
+      allow read, write: if isAdmin();
+    }
+
+    // AI Evaluations Collection (Admin read/write)
+    match /ai_evaluations/{evalId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Fallback: Deny all other collections by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
