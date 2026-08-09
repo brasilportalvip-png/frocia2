@@ -1,38 +1,44 @@
 import { Router } from 'express';
-import { adminDb, adminAuth } from '../lib/firebaseAdmin.js';
+import { adminDb, adminAuth, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { AuthenticatedRequest } from '../types.js';
 
 export const healthRouter = Router();
 
-// GET /api/health - Light ping check
-healthRouter.get('/health', (_req, res) => {
+// GET /api/health - Light ping check matching IntegrationsPage expectations
+healthRouter.get('/health', (req: AuthenticatedRequest, res) => {
+  const firebaseConfigured = isFirebaseAdminConfigured();
+  const mercadoPagoConfigured = Boolean(
+    process.env.MERCADO_PAGO_ACCESS_TOKEN && process.env.MERCADO_PAGO_ACCESS_TOKEN.trim().length > 5
+  );
+  const geminiConfigured = Boolean(
+    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
+  );
+
   return res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
+    status: 'ok',
+    healthy: true,
     service: 'Froc.IA Backend',
-    version: '2.0.0',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    correlationId: req.correlationId || `corr-${Date.now()}`,
+    firebaseConfigured,
+    mercadoPagoConfigured,
+    geminiConfigured,
   });
 });
 
 // GET /api/health/detailed - Detailed subsystem status check
-healthRouter.get('/health/detailed', async (_req, res) => {
+healthRouter.get('/health/detailed', async (req: AuthenticatedRequest, res) => {
   const timestamp = new Date().toISOString();
 
-  let firestoreOk = false;
-  if (adminDb) {
-    try {
-      await adminDb.collection('health_check').doc('ping').set(
-        { lastPing: new Date() },
-        { merge: true }
-      );
-      firestoreOk = true;
-    } catch {
-      firestoreOk = false;
-    }
-  }
-
-  const authOk = Boolean(adminAuth);
-  const geminiOk = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
-  const mercadoPagoOk = Boolean(process.env.MERCADO_PAGO_ACCESS_TOKEN && process.env.MERCADO_PAGO_ACCESS_TOKEN.trim().length > 5);
+  const firestoreOk = Boolean(adminDb);
+  const authOk = isFirebaseAdminConfigured();
+  const geminiOk = Boolean(
+    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
+  );
+  const mercadoPagoOk = Boolean(
+    process.env.MERCADO_PAGO_ACCESS_TOKEN && process.env.MERCADO_PAGO_ACCESS_TOKEN.trim().length > 5
+  );
 
   let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
 
@@ -45,6 +51,7 @@ healthRouter.get('/health/detailed', async (_req, res) => {
   return res.status(statusCode).json({
     status: overallStatus,
     timestamp,
+    correlationId: req.correlationId,
     checks: {
       firestore: firestoreOk,
       auth: authOk,

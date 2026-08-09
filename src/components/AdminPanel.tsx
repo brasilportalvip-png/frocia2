@@ -73,10 +73,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
       provider: 'Google Gemini',
       category: 'Raciocínio',
       costPerOp: 1,
-      speedMs: 240,
+      speedMs: 0,
       contextWindow: '1,000,000 tokens',
       status: 'operacional',
-      errorRate: '0.00%'
+      errorRate: '0%'
     },
     {
       id: 'm-pro',
@@ -84,35 +84,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
       provider: 'Google Gemini',
       category: 'Código',
       costPerOp: 3,
-      speedMs: 650,
+      speedMs: 0,
       contextWindow: '2,000,000 tokens',
       status: 'operacional',
-      errorRate: '0.01%'
+      errorRate: '0%'
     },
     {
       id: 'm-imagen',
-      name: 'Imagen 3',
+      name: 'Imagen 3 (Multimídia)',
       provider: 'Google Gemini',
       category: 'Imagem',
       costPerOp: 7,
-      speedMs: 1200,
+      speedMs: 0,
       contextWindow: 'Prompt visual',
-      status: 'operacional',
-      errorRate: '0.05%'
+      status: 'manutencao',
+      errorRate: 'Não homologado'
     }
   ]);
 
-  const auditLogs: AuditLog[] = [
-    {
-      id: 'log-101',
-      timestamp: new Date().toISOString(),
-      actor: 'MercadoPago Webhook',
-      action: 'Notificação de pagamento oficial Pix',
-      target: 'Froc.IA Wallet Engine',
-      status: 'sucesso',
-      ip: '189.120.45.12'
-    }
-  ];
+  const auditLogs: AuditLog[] = [];
 
   const handleGrantSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

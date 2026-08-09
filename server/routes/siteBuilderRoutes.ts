@@ -5,6 +5,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
 import { validateAIAttachments } from '../validators/aiAttachmentValidators.js';
+import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featureFlagService.js';
 
 export const siteBuilderRouter = Router();
 
@@ -115,6 +116,20 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
         correlationId,
       },
     });
+  }
+
+  try {
+    await FeatureFlagService.assertEnabled('ai_chat');
+  } catch (flagErr: any) {
+    if (flagErr instanceof FeatureFlagDisabledError) {
+      return res.status(503).json({
+        error: {
+          code: 'feature_temporarily_disabled',
+          message: 'Geração de sites por IA está temporariamente desativada.',
+          correlationId,
+        },
+      });
+    }
   }
 
   const idempotencyKey = req.body.idempotencyKey || `gen-site-${uid}-${Date.now()}`;
@@ -302,6 +317,20 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
         correlationId,
       },
     });
+  }
+
+  try {
+    await FeatureFlagService.assertEnabled('ai_chat');
+  } catch (flagErr: any) {
+    if (flagErr instanceof FeatureFlagDisabledError) {
+      return res.status(503).json({
+        error: {
+          code: 'feature_temporarily_disabled',
+          message: 'Refinamento de sites por IA está temporariamente desativado.',
+          correlationId,
+        },
+      });
+    }
   }
 
   const idempotencyKey = req.body.idempotencyKey || `ref-site-${uid}-${Date.now()}`;

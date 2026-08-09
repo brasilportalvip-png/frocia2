@@ -590,8 +590,9 @@ export class CreditWalletService {
       const purchasedBefore = Number(data.creditsPurchased ?? 0);
       const refundedBefore = Number(data.creditsRefunded ?? 0);
 
-      const reservedAfter = Math.max(0, reservedBefore - amountReserved);
-      const availableAfter = availableBefore + amountReserved;
+      const actualRefund = Math.min(amountReserved, reservedBefore);
+      const reservedAfter = Math.max(0, reservedBefore - actualRefund);
+      const availableAfter = availableBefore + actualRefund;
 
       assertWalletInvariants({
         creditsAvailable: availableAfter,

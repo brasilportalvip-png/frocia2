@@ -217,9 +217,12 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
   try {
     const uid = req.user!.uid;
     const { id: conversationId } = req.params;
-    const { role = 'user', content, attachments = [], citations = [], executionId = null, model = null } = req.body;
+    const { content, attachments = [], citations = [], executionId = null, model = null } = req.body;
 
-    if (!content) {
+    // Enforce role = 'user' for client API calls
+    const role = 'user';
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
       return res.status(400).json({ error: { code: 'missing_content', message: 'Conteudo da mensagem e obrigatorio.', correlationId: req.correlationId } });
     }
 

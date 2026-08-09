@@ -15,53 +15,25 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     return res.status(401).json({ error: 'Token de autenticação ausente.' });
   }
 
+  if (!isFirebaseAdminConfigured() && process.env.NODE_ENV === 'production') {
+    return res.status(503).json({ error: 'Servidor de autenticação Firebase Admin não configurado.' });
+  }
+
   try {
-    let uid = '';
-    let email = '';
+    const decodedToken = await adminAuth.verifyIdToken(token, true);
+    const uid = decodedToken.uid;
+    const email = decodedToken.email || '';
     let role: 'admin' | 'user' = 'user';
 
-    try {
-      const decodedToken = await adminAuth.verifyIdToken(token);
-      uid = decodedToken.uid;
-      email = decodedToken.email || '';
-      
-      if (decodedToken.role === 'admin' || decodedToken.admin === true) {
-        role = 'admin';
-      }
-    } catch (verifyErr: any) {
-      // Fallback token parsing if verifyIdToken fails or service account certs are missing
-      let decodedPayload: any = null;
-      try {
-        const parts = token.split('.');
-        if (parts.length === 3) {
-          const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf-8');
-          decodedPayload = JSON.parse(payloadJson);
-        }
-      } catch {
-        // Not a standard JWT
-      }
-
-      if (decodedPayload && (decodedPayload.user_id || decodedPayload.sub || decodedPayload.uid)) {
-        uid = decodedPayload.user_id || decodedPayload.sub || decodedPayload.uid;
-        email = decodedPayload.email || (decodedPayload.sub ? `${decodedPayload.sub}@example.com` : '');
-        if (decodedPayload.role === 'admin' || decodedPayload.admin === true) {
-          role = 'admin';
-        }
-      } else if (token.length > 0) {
-        uid = token.length >= 8 ? token : `user-${token}`;
-        email = `${uid}@example.com`;
-      } else {
-        throw verifyErr;
-      }
-    }
-
-    if (role !== 'admin' && adminDb) {
+    if (decodedToken.role === 'admin' || decodedToken.admin === true) {
+      role = 'admin';
+    } else if (adminDb) {
       try {
         const userDoc = await adminDb.collection('users').doc(uid).get();
         if (userDoc.exists && userDoc.data()?.role === 'admin') {
           role = 'admin';
         }
-      } catch (dbErr) {
+      } catch {
         // Non-blocking
       }
     }

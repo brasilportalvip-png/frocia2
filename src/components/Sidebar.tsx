@@ -69,7 +69,7 @@ interface SidebarProps {
     colorPalette: string;
     tone: string;
     features: string[];
-  }) => Promise<void>;
+  }, files?: UploadedFile[]) => Promise<void>;
   onRefineSite: (instruction: string) => Promise<void>;
   onSelectTemplate: (template: SiteTemplate) => void;
   onLoadSavedSite: (site: GeneratedSite) => void;
@@ -254,9 +254,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       colorPalette,
       tone,
       features: selectedFeatures
-    });
+    }, attachedFiles);
 
     setPrompt('');
+    setAttachedFiles([]);
   };
 
   const processNativeFiles = (files: File[]) => {

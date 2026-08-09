@@ -1,10 +1,35 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 
 export const projectRouter = Router();
+
+const createProjectSchema = z.object({
+  title: z.string().max(200).optional().default('Novo Projeto'),
+  description: z.string().max(1000).optional().default(''),
+  prompt: z.string().max(10000).optional().default(''),
+  category: z.string().max(100).optional().default('Geral'),
+  colorPalette: z.string().max(200).optional().default(''),
+  tone: z.string().max(100).optional().default('Profissional'),
+  html: z.string().max(5000000).optional().default(''),
+  isFavorite: z.boolean().optional().default(false),
+  suggestedRefinements: z.array(z.string().max(200)).max(20).optional().default([]),
+});
+
+const updateProjectSchema = z.object({
+  title: z.string().max(200).optional(),
+  description: z.string().max(1000).optional(),
+  prompt: z.string().max(10000).optional(),
+  category: z.string().max(100).optional(),
+  colorPalette: z.string().max(200).optional(),
+  tone: z.string().max(100).optional(),
+  html: z.string().max(5000000).optional(),
+  isFavorite: z.boolean().optional(),
+  suggestedRefinements: z.array(z.string().max(200)).max(20).optional(),
+});
 
 // GET /api/projects - List user projects
 projectRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -54,17 +79,29 @@ projectRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
 projectRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const uid = req.user!.uid;
+    const parseResult = createProjectSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_project_data',
+          message: 'Dados do projeto invalidos.',
+          details: parseResult.error.issues,
+          correlationId: req.correlationId,
+        },
+      });
+    }
+
     const {
-      title = 'Novo Projeto',
-      description = '',
-      prompt = '',
-      category = 'Geral',
-      colorPalette = '',
-      tone = 'Profissional',
-      html = '',
-      isFavorite = false,
-      suggestedRefinements = []
-    } = req.body;
+      title,
+      description,
+      prompt,
+      category,
+      colorPalette,
+      tone,
+      html,
+      isFavorite,
+      suggestedRefinements,
+    } = parseResult.data;
 
     if (!adminDb) {
       const fallbackId = `local-proj-${Date.now()}`;
@@ -182,6 +219,19 @@ projectRouter.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) =>
   try {
     const uid = req.user!.uid;
     const { id } = req.params;
+
+    const parseResult = updateProjectSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_project_data',
+          message: 'Dados de atualizacao do projeto invalidos.',
+          details: parseResult.error.issues,
+          correlationId: req.correlationId,
+        },
+      });
+    }
+
     const {
       title,
       description,
@@ -192,7 +242,7 @@ projectRouter.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) =>
       html,
       isFavorite,
       suggestedRefinements
-    } = req.body;
+    } = parseResult.data;
 
     if (!adminDb) return res.json({ success: true });
 

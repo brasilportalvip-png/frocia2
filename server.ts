@@ -41,6 +41,7 @@ import { adminAiRouter } from './server/routes/adminAiRoutes.js';
 import { projectRouter } from './server/routes/projectRoutes.js';
 import { siteBuilderRouter } from './server/routes/siteBuilderRoutes.js';
 import { healthRouter } from './server/routes/healthRoutes.js';
+import { selfEvolutionRouter } from './server/routes/selfEvolutionRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -139,6 +140,7 @@ export async function createApp() {
   app.use('/api', siteBuilderRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
+  app.use('/api/admin/self-evolution', selfEvolutionRouter);
   app.use('/api/admin/feature-flags', featureFlagRouter);
   app.use('/api/admin/disaster-recovery', portableRecoveryRouter);
   app.use('/api/imports', externalImportRouter);
@@ -535,29 +537,11 @@ export async function createApp() {
       const action = String(body.action || query.action || '');
       const type = String(body.type || query.type || '');
 
-      // RULE 2 & 3: Validate HMAC Signature with NO bypass
+      // RULE 2 & 3: Validate HMAC Signature BEFORE writing any data to database
       const isSignatureValid = MercadoPagoService.verifyWebhookSignature({
         xSignature,
         xRequestId,
         dataId,
-      });
-
-      const eventKeySeed = `mp:${dataId}:${action}:${xRequestId || 'none'}`;
-      const eventDocId = crypto.createHash('sha256').update(eventKeySeed).digest('hex');
-      const eventRef = adminDb.collection('payment_events').doc(eventDocId);
-
-      await eventRef.set({
-        provider: 'mercadopago',
-        providerEventId: dataId || null,
-        providerPaymentId: dataId || null,
-        action,
-        type,
-        requestId: xRequestId || null,
-        signatureValidated: isSignatureValid,
-        processingStatus: isSignatureValid ? 'received' : 'failed',
-        resultCode: isSignatureValid ? 'received' : 'invalid_signature',
-        correlationId: req.correlationId,
-        receivedAt: FieldValue.serverTimestamp(),
       });
 
       if (!isSignatureValid) {
@@ -570,6 +554,24 @@ export async function createApp() {
           },
         });
       }
+
+      const eventKeySeed = `mp:${dataId}:${action}:${xRequestId || 'none'}`;
+      const eventDocId = crypto.createHash('sha256').update(eventKeySeed).digest('hex');
+      const eventRef = adminDb.collection('payment_events').doc(eventDocId);
+
+      await eventRef.set({
+        provider: 'mercadopago',
+        providerEventId: dataId || null,
+        providerPaymentId: dataId || null,
+        action,
+        type,
+        requestId: xRequestId || null,
+        signatureValidated: true,
+        processingStatus: 'received',
+        resultCode: 'received',
+        correlationId: req.correlationId,
+        receivedAt: FieldValue.serverTimestamp(),
+      });
 
       if (!dataId) {
         await eventRef.update({ processingStatus: 'ignored', resultCode: 'missing_data_id' });
