@@ -38,6 +38,9 @@ import { conversationRouter } from './server/routes/conversationRoutes.js';
 import { memoryRouter } from './server/routes/memoryRoutes.js';
 import { knowledgeRouter } from './server/routes/knowledgeRoutes.js';
 import { adminAiRouter } from './server/routes/adminAiRoutes.js';
+import { projectRouter } from './server/routes/projectRoutes.js';
+import { siteBuilderRouter } from './server/routes/siteBuilderRoutes.js';
+import { healthRouter } from './server/routes/healthRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -127,23 +130,20 @@ export async function createApp() {
   app.use(correlationIdMiddleware);
 
   // Mount Sub-routers
+  app.use('/api', healthRouter);
   app.use('/api/internal', internalRouter);
   app.use('/api/conversations', conversationRouter);
+  app.use('/api/projects', projectRouter);
   app.use('/api/memories', memoryRouter);
   app.use('/api', knowledgeRouter);
-
-
+  app.use('/api', siteBuilderRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
-app.use('/api/admin/feature-flags', featureFlagRouter);
-app.use('/api/admin/disaster-recovery', portableRecoveryRouter);
-app.use('/api/imports', externalImportRouter);
+  app.use('/api/admin/feature-flags', featureFlagRouter);
+  app.use('/api/admin/disaster-recovery', portableRecoveryRouter);
+  app.use('/api/imports', externalImportRouter);
   app.use(
     '/api/ai',
-
-
-
-
     requireFeatureFlag('ai_chat'),
     aiRouter
   );
@@ -807,122 +807,8 @@ app.use('/api/imports', externalImportRouter);
     }
   });
 
-  // API Route: Generate Website (Protected & Credit Deducted: 200 Credits)
-  app.post('/api/generate-site', requireAuth, requireFeatureFlag('ai_chat'), async (req: AuthenticatedRequest, res) => {
-    const uid = req.user!.uid;
-    const SITE_COST = 200;
-    const idempotencyKey = req.body.idempotencyKey || `gen-${uid}-${Date.now()}`;
+  // Note: /api/generate-site and /api/refine-site are handled by siteBuilderRouter
 
-    try {
-      const {
-        prompt,
-        category = 'General',
-        colorPalette = 'Modern Blue',
-        tone = 'Professional',
-        features = [],
-        language = 'pt-BR',
-        modelName = 'gemini-3.6-flash'
-      } = req.body;
-
-      if (!prompt) {
-        return res.status(400).json({
-          error: {
-            code: 'missing_prompt',
-            message: 'O prompt do site e obrigatorio.',
-            correlationId: req.correlationId,
-          },
-        });
-      }
-
-      const reserveResult = await CreditWalletService.reserveCredits({
-        userId: uid,
-        amount: SITE_COST,
-        operation: 'Reserva para Generacao de Site Completo com IA (200 creditos)',
-        idempotencyKey,
-      });
-
-      try {
-        const ai = getGeminiClient();
-
-        const systemInstruction = `Voce e o froc.ia, o motor de Inteligencia Artificial especialista em design, front-end e criacao de sites modernos, responsivos e de altissima conversao.
-Responda estritamente em formato JSON valido.`;
-
-        const userMessage = `Crie o site para o seguinte projeto/negocio: "${prompt}". Categoria: ${category}. Paleta: ${colorPalette}.`;
-
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: userMessage,
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            temperature: 0.7,
-          },
-        });
-
-        const responseText = response.text || '';
-        const parsedData = JSON.parse(responseText);
-
-        await CreditWalletService.confirmConsumption({
-          userId: uid,
-          reservationId: reserveResult.reservationId,
-          amountConsumed: SITE_COST,
-          operation: 'Generacao de Site Completo com IA (200 creditos)',
-          idempotencyKey,
-        });
-
-        res.json(parsedData);
-      } catch (aiErr: any) {
-        await CreditWalletService.releaseReservation({
-          userId: uid,
-          reservationId: reserveResult.reservationId,
-          operation: 'Estorno por falha na generacao do site',
-          idempotencyKey,
-        });
-        throw aiErr;
-      }
-    } catch (error: any) {
-      console.error('Erro ao gerar site com froc.ia:', error);
-      const isInsufficient = error instanceof InsufficientCreditsError;
-      res.status(isInsufficient ? 402 : 500).json({
-        error: {
-          code: isInsufficient ? 'insufficient_credits' : 'ai_generation_error',
-          message: error.message || 'Erro ao comunicar com a inteligência artificial froc.ia.',
-          correlationId: req.correlationId,
-        },
-      });
-    }
-  });
-
-  // Legacy AI Route: Refine Site
-  app.post('/api/refine-site', requireAuth, requireFeatureFlag('ai_chat'), async (req: AuthenticatedRequest, res) => {
-    try {
-      const result = await AIExecutionService.execute(
-        {
-          userId: req.user!.uid,
-          mode: 'site-builder',
-          prompt: req.body.instructions || req.body.prompt || 'Refine o site atual',
-          responseFormat: 'json',
-          idempotencyKey: req.body.idempotencyKey,
-        },
-        req.correlationId
-      );
-      try {
-        const parsed = JSON.parse(result.text);
-        return res.json(parsed);
-      } catch {
-        return res.json({ resultText: result.text, consumedCredits: result.consumedCredits });
-      }
-    } catch (err: any) {
-      const isInsufficient = err instanceof InsufficientCreditsError;
-      return res.status(isInsufficient ? 402 : 500).json({
-        error: {
-          code: isInsufficient ? 'insufficient_credits' : 'ai_refine_failed',
-          message: err.message || 'Erro ao refinar site com froc.ia.',
-          correlationId: req.correlationId,
-        },
-      });
-    }
-  });
 
   // Legacy AI Route: AI Chat
   app.post('/api/ai-chat', requireAuth, requireFeatureFlag('ai_chat'), async (req: AuthenticatedRequest, res) => {
@@ -1121,6 +1007,17 @@ Responda estritamente em formato JSON valido.`;
       });
     }
   });
+
+    // Catch-all 404 handler for unknown /api routes
+    app.all('/api/*', (req: Request, res: Response) => {
+      return res.status(404).json({
+        error: {
+          code: 'api_route_not_found',
+          message: `A rota de API '${req.path}' não foi encontrada.`,
+          correlationId: (req as AuthenticatedRequest).correlationId,
+        },
+      });
+    });
 
     // Frontend local. Na Vercel, esta aplicação atende somente as rotas /api.
     if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {

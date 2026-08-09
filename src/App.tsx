@@ -171,14 +171,38 @@ export default function App() {
     });
   };
 
+  // Load user projects from backend API when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    const fetchUserProjects = async () => {
+      try {
+        const res = await apiClient<{ projects: GeneratedSite[] }>('/api/projects');
+        if (res.projects && res.projects.length > 0) {
+          setSavedSites(res.projects);
+          if (!activeSite) {
+            setActiveSite(res.projects[0]);
+          }
+        }
+      } catch (e) {
+        console.warn('Erro ao buscar projetos do servidor:', e);
+      }
+    };
+
+    fetchUserProjects();
+  }, [isAuthenticated]);
+
   // Generate Site with froc.ia AI
-  const handleGenerateSite = async (data: {
-    prompt: string;
-    category: string;
-    colorPalette: string;
-    tone: string;
-    features: string[];
-  }) => {
+  const handleGenerateSite = async (
+    data: {
+      prompt: string;
+      category: string;
+      colorPalette: string;
+      tone: string;
+      features: string[];
+    },
+    files: UploadedFile[] = []
+  ) => {
     if (!isAuthenticated) {
       setIsAuthOpen(true);
       setErrorMsg('É necessário fazer login para gerar projetos com a Froc.IA.');
@@ -189,16 +213,23 @@ export default function App() {
     setErrorMsg(null);
 
     try {
-      const result = await apiClient('/api/generate-site', {
+      const attachments = toAIAttachmentPayloads(files);
+
+      const result = await apiClient<{
+        siteTitle: string;
+        description: string;
+        html: string;
+        suggestedRefinements: string[];
+      }>('/api/generate-site', {
         method: 'POST',
         body: JSON.stringify({
           ...data,
+          attachments,
           modelName: selectedModel
         })
       });
 
-      const newSite: GeneratedSite = {
-        id: `froc-site-${Date.now()}`,
+      const sitePayload = {
         title: result.siteTitle || 'Novo Projeto Froc.IA',
         description: result.description || data.prompt,
         prompt: data.prompt,
@@ -206,13 +237,28 @@ export default function App() {
         colorPalette: data.colorPalette,
         tone: data.tone,
         html: result.html,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
         suggestedRefinements: result.suggestedRefinements || []
       };
 
-      setActiveSite(newSite);
-      const updatedList = [newSite, ...savedSites];
+      // Save project to backend
+      let createdProject: GeneratedSite;
+      try {
+        const saveRes = await apiClient<{ project: GeneratedSite }>('/api/projects', {
+          method: 'POST',
+          body: JSON.stringify(sitePayload)
+        });
+        createdProject = saveRes.project;
+      } catch (saveErr) {
+        createdProject = {
+          id: `froc-site-${Date.now()}`,
+          ...sitePayload,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+      }
+
+      setActiveSite(createdProject);
+      const updatedList = [createdProject, ...savedSites];
       saveSitesToStorage(updatedList);
 
       await refreshProfile();
@@ -221,7 +267,7 @@ export default function App() {
         {
           id: `msg-${Date.now()}`,
           sender: 'ai',
-          text: `🎉 Seu projeto "${newSite.title}" foi criado com sucesso! O que gostaria de personalizar a seguir?`,
+          text: `🎉 Seu projeto "${createdProject.title}" foi criado com sucesso! O que gostaria de personalizar a seguir?`,
           timestamp: Date.now()
         }
       ]);
@@ -269,6 +315,20 @@ export default function App() {
         html: result.html || activeSite.html,
         updatedAt: Date.now()
       };
+
+      if (activeSite.id && !activeSite.id.startsWith('local-')) {
+        try {
+          await apiClient(`/api/projects/${activeSite.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              html: updatedSite.html,
+              suggestedRefinements: result.suggestedRefinements || []
+            })
+          });
+        } catch (syncErr) {
+          console.warn('Erro ao sincronizar refinamento com servidor:', syncErr);
+        }
+      }
 
       setActiveSite(updatedSite);
       const updatedList = savedSites.map(s => s.id === updatedSite.id ? updatedSite : s);
@@ -620,7 +680,7 @@ export default function App() {
              
 
 
-              onSendMessage={async (text, mode) => {
+              onSendMessage={async (text, mode, files = []) => {
                 if (mode === 'Criador de projetos') {
                   await handleGenerateSite({
                     prompt: text,
@@ -632,13 +692,14 @@ export default function App() {
                       'Formulário',
                       'FAQ'
                     ]
-                  });
+                  }, files);
                   return;
                 }
 
                 await handleGeneralChat(
                   text,
-                  mode
+                  mode,
+                  files
                 );
               }}
 

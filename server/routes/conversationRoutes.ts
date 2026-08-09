@@ -227,6 +227,14 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
       return res.json({ message: { id: `msg-${Date.now()}`, conversationId, userId: uid, role, content, citations, createdAt: new Date().toISOString() } });
     }
 
+    // Validate conversation existence and ownership
+    const convSnap = await adminDb.collection('conversations').doc(conversationId).get();
+    if (!convSnap.exists || convSnap.data()?.userId !== uid) {
+      return res.status(404).json({
+        error: { code: 'conversation_not_found', message: 'Conversa nao encontrada ou sem acesso.', correlationId: req.correlationId },
+      });
+    }
+
     const ref = adminDb.collection('messages').doc();
     const now = FieldValue.serverTimestamp();
 
