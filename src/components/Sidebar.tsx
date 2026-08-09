@@ -729,27 +729,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               <div className="space-y-2">
-                {STARTER_TEMPLATES.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectTemplate(template);
-                      onCloseMobile?.();
-                    }}
-                    className="glass-card glass-panel-hover w-full rounded-2xl p-3 text-left"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-bold text-white">
-                        {template.title}
-                      </span>
-                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-300" />
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/42">
-                      {template.description}
-                    </p>
-                  </button>
-                ))}
+                {STARTER_TEMPLATES.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/10 p-4 text-center text-xs text-white/40">
+                    Nenhum modelo cadastrado.
+                  </div>
+                ) : (
+                  STARTER_TEMPLATES.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectTemplate(template);
+                        onCloseMobile?.();
+                      }}
+                      className="glass-card glass-panel-hover w-full rounded-2xl p-3 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-bold text-white">
+                          {template.title}
+                        </span>
+                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-300" />
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/42">
+                        {template.description}
+                      </p>
+                    </button>
+                  ))
+                )}
               </div>
             </section>
           )}

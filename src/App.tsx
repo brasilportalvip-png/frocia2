@@ -115,15 +115,40 @@ export default function App() {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
         const parsed: GeneratedSite[] = JSON.parse(stored);
-        const filtered = parsed.filter(s => s.id !== 'saas-tech' && !s.title?.includes('PulseFlow'));
+        const filtered = parsed.filter(s => s.id !== 'saas-tech' && !s.title?.toLowerCase().includes('pulseflow'));
         if (filtered.length > 0) {
           setSavedSites(filtered);
+          setActiveSite(filtered[0]);
+          return;
+        } else {
+          localStorage.removeItem(LOCAL_STORAGE_KEY);
         }
       }
     } catch (e) {
       console.warn('Erro ao ler localStorage:', e);
     }
-    setActiveSite(null);
+
+    // Default starter template if none saved
+    if (STARTER_TEMPLATES && STARTER_TEMPLATES.length > 0) {
+      const starter = STARTER_TEMPLATES[0];
+      const initialSite: GeneratedSite = {
+        id: starter.id,
+        title: starter.title,
+        description: starter.description,
+        prompt: starter.prompt,
+        category: starter.category,
+        colorPalette: starter.colorPalette,
+        tone: 'Profissional',
+        html: starter.sampleHtml,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      setActiveSite(initialSite);
+      setSavedSites([initialSite]);
+    } else {
+      setActiveSite(null);
+      setSavedSites([]);
+    }
   }, []);
 
   const saveSitesToStorage = (sites: GeneratedSite[]) => {

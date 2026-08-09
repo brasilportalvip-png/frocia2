@@ -65,23 +65,10 @@ export const AuthProvider: React.FC<{
   const createOrLoadProfile = async (
     fbUser: FirebaseUser
   ): Promise<UserProfile> => {
-    let token = '';
-    try {
-      token = await fbUser.getIdToken();
-    } catch (e) {
-      console.warn('Não foi possível obter token do FirebaseUser:', e);
-    }
-
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
     const response = await apiClient<ProfileResponse>(
       '/api/users/profile',
       {
         method: 'POST',
-        headers,
         body: JSON.stringify({
           displayName:
             fbUser.displayName?.trim() ||
