@@ -59,7 +59,15 @@ export class MercadoPagoService {
 
   public static isConfigured(): boolean {
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-    return Boolean(token && token.trim().length > 0 && !token.includes('MY_'));
+    const secret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
+    return Boolean(
+      token &&
+      token.trim().length > 0 &&
+      !token.includes('MY_') &&
+      secret &&
+      secret.trim().length > 0 &&
+      !secret.includes('MY_')
+    );
   }
 
   /**

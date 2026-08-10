@@ -156,31 +156,6 @@ export async function createApp() {
   const walletLimiter = createRateLimiter({ windowMs: 60 * 1000, max: 60, keyPrefix: 'wallet' });
 
   // Initialize Gemini Client safely
-  const getGeminiClient = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('A chave GEMINI_API_KEY nao foi configurada nos Segredos.');
-    }
-    return new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  };
-
-  // API Route: Health Check
-  app.get('/api/health', (req: AuthenticatedRequest, res) => {
-    res.json({
-      status: 'ok',
-      service: 'froc.ia backend',
-      correlationId: req.correlationId,
-      mercadoPagoConfigured: MercadoPagoService.isConfigured(),
-      firebaseConfigured: isFirebaseAdminConfigured(),
-    });
-  });
 
   // User Profile Routes
   app.get('/api/users/me', requireAuth, async (req: AuthenticatedRequest, res) => {

@@ -33,13 +33,14 @@ export const EnvSchema = z.object({
   GEMINI_REASONING_MODEL: z.string().default('gemini-3.1-pro-preview'),
   GEMINI_CODE_MODEL: z.string().default('gemini-3.1-pro-preview'),
   GEMINI_VISION_MODEL: z.string().default('gemini-3.6-flash'),
-  GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2-preview'),
+  GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.6-flash'),
 
   // Internal Cron & Maintenance
   INTERNAL_CRON_SECRET: z.string().optional(),
 
   // Firebase Admin SDK
+  FIREBASE_SERVICE_ACCOUNT_KEY: z.string().optional(),
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
@@ -65,9 +66,18 @@ export const EnvSchema = z.object({
       }
     };
 
-    checkRequired('FIREBASE_PROJECT_ID', 'FIREBASE_PROJECT_ID');
-    checkRequired('FIREBASE_CLIENT_EMAIL', 'FIREBASE_CLIENT_EMAIL');
-    checkRequired('FIREBASE_PRIVATE_KEY', 'FIREBASE_PRIVATE_KEY');
+    // Firebase Admin check: JSON key OR trio
+    const hasJsonAccount = Boolean(data.FIREBASE_SERVICE_ACCOUNT_KEY && data.FIREBASE_SERVICE_ACCOUNT_KEY.trim().length > 10);
+    const hasTrioAccount = Boolean(data.FIREBASE_PROJECT_ID && data.FIREBASE_CLIENT_EMAIL && data.FIREBASE_PRIVATE_KEY);
+    if (!hasJsonAccount && !hasTrioAccount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['FIREBASE_SERVICE_ACCOUNT_KEY'],
+        message: 'Credenciais do Firebase Admin (FIREBASE_SERVICE_ACCOUNT_KEY ou trio PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY) são obrigatórias em produção.',
+      });
+    }
+
+    checkRequired('GEMINI_API_KEY', 'GEMINI_API_KEY');
     checkRequired('MERCADO_PAGO_ACCESS_TOKEN', 'MERCADO_PAGO_ACCESS_TOKEN');
     checkRequired('MERCADO_PAGO_WEBHOOK_SECRET', 'MERCADO_PAGO_WEBHOOK_SECRET');
     checkRequired('INTERNAL_CRON_SECRET', 'INTERNAL_CRON_SECRET');

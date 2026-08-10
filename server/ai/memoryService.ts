@@ -98,10 +98,15 @@ export class MemoryService {
       return false;
     }
 
-    await docRef.update({
-      ...updates,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const cleanUpdates: Record<string, any> = {};
+    for (const [key, val] of Object.entries(updates)) {
+      if (val !== undefined) {
+        cleanUpdates[key] = val;
+      }
+    }
+    cleanUpdates.updatedAt = FieldValue.serverTimestamp();
+
+    await docRef.update(cleanUpdates);
 
     return true;
   }

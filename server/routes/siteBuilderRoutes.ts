@@ -121,15 +121,16 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
   try {
     await FeatureFlagService.assertEnabled('ai_chat');
   } catch (flagErr: any) {
-    if (flagErr instanceof FeatureFlagDisabledError) {
-      return res.status(503).json({
-        error: {
-          code: 'feature_temporarily_disabled',
-          message: 'Geração de sites por IA está temporariamente desativada.',
-          correlationId,
-        },
-      });
-    }
+    const isFlagDisabled = flagErr instanceof FeatureFlagDisabledError;
+    return res.status(503).json({
+      error: {
+        code: isFlagDisabled ? 'feature_temporarily_disabled' : 'feature_flag_check_failed',
+        message: isFlagDisabled
+          ? 'Geração de sites por IA está temporariamente desativada.'
+          : 'Não foi possível validar a disponibilidade do recurso.',
+        correlationId,
+      },
+    });
   }
 
   const idempotencyKey = req.body.idempotencyKey || `gen-site-${uid}-${Date.now()}`;
@@ -322,15 +323,16 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
   try {
     await FeatureFlagService.assertEnabled('ai_chat');
   } catch (flagErr: any) {
-    if (flagErr instanceof FeatureFlagDisabledError) {
-      return res.status(503).json({
-        error: {
-          code: 'feature_temporarily_disabled',
-          message: 'Refinamento de sites por IA está temporariamente desativado.',
-          correlationId,
-        },
-      });
-    }
+    const isFlagDisabled = flagErr instanceof FeatureFlagDisabledError;
+    return res.status(503).json({
+      error: {
+        code: isFlagDisabled ? 'feature_temporarily_disabled' : 'feature_flag_check_failed',
+        message: isFlagDisabled
+          ? 'Refinamento de sites por IA está temporariamente desativado.'
+          : 'Não foi possível validar a disponibilidade do recurso.',
+        correlationId,
+      },
+    });
   }
 
   const idempotencyKey = req.body.idempotencyKey || `ref-site-${uid}-${Date.now()}`;

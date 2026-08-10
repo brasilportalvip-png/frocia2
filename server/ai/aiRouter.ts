@@ -17,6 +17,8 @@ export class AIRouter {
       preferredModel,
     } = input;
 
+    const effectiveRequiresSearch = requiresSearch || mode === 'research';
+
     let selectedModel = env.GEMINI_DEFAULT_MODEL;
     let fallbackModels: string[] = [env.GEMINI_FALLBACK_MODEL, env.GEMINI_FAST_MODEL];
     let reasonCode = 'mode_default';
@@ -92,7 +94,7 @@ export class AIRouter {
       prompt,
       hasImages,
       requiresTools,
-      requiresSearch
+      effectiveRequiresSearch
     );
 
     return {

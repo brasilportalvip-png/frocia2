@@ -12,28 +12,46 @@ export class EmbeddingService {
    * Generates embedding vector for a given text snippet using Gemini Embedding API
    */
   static async generateEmbedding(text: string): Promise<number[]> {
+    const isProd = process.env.NODE_ENV === 'production';
     const client = this.getClient();
+
     if (!client) {
-      // Fallback pseudo-vector for offline/mock test environments
+      if (isProd) {
+        throw new Error('GEMINI_API_KEY não configurada. Não é permitido gerar pseudo-vetores em produção.');
+      }
       return this.generatePseudoVector(text);
     }
 
     try {
+      const modelName = env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
       const response = await client.models.embedContent({
-        model: env.GEMINI_EMBEDDING_MODEL,
+        model: modelName,
         contents: text,
       });
 
       const resAny = response as any;
-      if (resAny.embedding?.values) {
-        return resAny.embedding.values;
+      let values: number[] | null = null;
+
+      if (resAny.embedding?.values && Array.isArray(resAny.embedding.values)) {
+        values = resAny.embedding.values;
+      } else if (resAny.embeddings?.[0]?.values && Array.isArray(resAny.embeddings[0].values)) {
+        values = resAny.embeddings[0].values;
       }
-      if (resAny.embeddings?.[0]?.values) {
-        return resAny.embeddings[0].values;
+
+      if (values && values.length > 0 && values.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        return values;
+      }
+
+      if (isProd) {
+        throw new Error('Resposta da API de embedding inválida ou vazia.');
       }
       return this.generatePseudoVector(text);
-    } catch (err) {
-      console.warn('Erro ao gerar embedding no Gemini API, usando fallback:', err);
+    } catch (err: any) {
+      if (isProd) {
+        console.error('❌ Falha ao gerar embedding real em produção:', err?.message || err);
+        throw err;
+      }
+      console.warn('⚠️ Erro ao gerar embedding no Gemini API, usando fallback em desenvolvimento:', err?.message || err);
       return this.generatePseudoVector(text);
     }
   }

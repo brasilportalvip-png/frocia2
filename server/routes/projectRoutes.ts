@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
-import { adminDb } from '../lib/firebaseAdmin.js';
+import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 
 export const projectRouter = Router();
@@ -35,7 +35,15 @@ const updateProjectSchema = z.object({
 projectRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const uid = req.user!.uid;
-    if (!adminDb) return res.json({ projects: [] });
+    if (!isFirebaseAdminConfigured() || !adminDb) {
+      return res.status(503).json({
+        error: {
+          code: 'database_not_configured',
+          message: 'O banco de dados não está configurado para listar projetos.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
 
     const snap = await adminDb
       .collection('projects')
@@ -103,23 +111,12 @@ projectRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       suggestedRefinements,
     } = parseResult.data;
 
-    if (!adminDb) {
-      const fallbackId = `local-proj-${Date.now()}`;
-      return res.json({
-        project: {
-          id: fallbackId,
-          userId: uid,
-          title,
-          description,
-          prompt,
-          category,
-          colorPalette,
-          tone,
-          html,
-          isFavorite,
-          suggestedRefinements,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+    if (!isFirebaseAdminConfigured() || !adminDb) {
+      return res.status(503).json({
+        error: {
+          code: 'database_not_configured',
+          message: 'O banco de dados não está configurado para salvar projetos no servidor.',
+          correlationId: req.correlationId,
         },
       });
     }
@@ -244,7 +241,11 @@ projectRouter.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) =>
       suggestedRefinements
     } = parseResult.data;
 
-    if (!adminDb) return res.json({ success: true });
+    if (!isFirebaseAdminConfigured() || !adminDb) {
+      return res.status(503).json({
+        error: { code: 'database_not_configured', message: 'O banco de dados não está configurado.', correlationId: req.correlationId },
+      });
+    }
 
     const ref = adminDb.collection('projects').doc(id);
     const snap = await ref.get();
@@ -282,7 +283,11 @@ projectRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res)
     const uid = req.user!.uid;
     const { id } = req.params;
 
-    if (!adminDb) return res.json({ success: true });
+    if (!isFirebaseAdminConfigured() || !adminDb) {
+      return res.status(503).json({
+        error: { code: 'database_not_configured', message: 'O banco de dados não está configurado.', correlationId: req.correlationId },
+      });
+    }
 
     const ref = adminDb.collection('projects').doc(id);
     const snap = await ref.get();

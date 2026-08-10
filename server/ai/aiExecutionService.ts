@@ -134,6 +134,8 @@ export class AIExecutionService {
     let inputTokens = 0;
     let outputTokens = 0;
 
+    const enableSearchGrounding = mode === 'research' || route.reasonCode === 'mode_research_grounded';
+
     // 6. Execute with Primary Model and Fallback
     try {
       try {
@@ -143,6 +145,7 @@ export class AIExecutionService {
           userMessage: assembled.userMessage,
           attachments,
           responseFormat,
+          enableSearchGrounding,
         });
 
         aiResponseText = res.text;
@@ -169,11 +172,17 @@ export class AIExecutionService {
             userMessage: assembled.userMessage,
             attachments,
             responseFormat,
+            enableSearchGrounding,
           });
 
           aiResponseText = fbRes.text;
           inputTokens = fbRes.inputTokens;
           outputTokens = fbRes.outputTokens;
+
+          if (fbRes.groundingMetadata) {
+            const webCitations = CitationService.extractSearchGroundingCitations(fbRes.groundingMetadata);
+            citations.push(...webCitations);
+          }
 
           ModelHealthService.recordCall(modelToUse, Date.now() - startTime, true, false, true);
         } else {
