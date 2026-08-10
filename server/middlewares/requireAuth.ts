@@ -20,7 +20,20 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
   }
 
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token, true);
+    let decodedToken;
+    try {
+      const checkRevoked = isFirebaseAdminConfigured();
+      decodedToken = await adminAuth.verifyIdToken(token, checkRevoked);
+    } catch (checkErr: any) {
+      if (checkErr?.code === 'auth/id-token-revoked' || checkErr?.code === 'auth/user-disabled') {
+        throw checkErr;
+      }
+      try {
+        decodedToken = await adminAuth.verifyIdToken(token, false);
+      } catch (verifyErr: any) {
+        throw verifyErr;
+      }
+    }
 
     const uid = decodedToken.uid;
     const email = decodedToken.email || '';

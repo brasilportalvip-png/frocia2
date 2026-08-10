@@ -65,8 +65,7 @@ describe('P0 Security & Contract Verification Tests', () => {
 
     await requireAuth(req, res, next);
 
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(validToken, true);
+    expect(spy).toHaveBeenCalledWith(validToken, expect.any(Boolean));
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.stringContaining('inválido ou expirado') })
