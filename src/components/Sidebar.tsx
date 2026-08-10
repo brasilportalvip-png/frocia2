@@ -106,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [prompt, setPrompt] = useState('');
   const [category, setCategory] =
-    useState('SaaS / Tecnologia');
+    useState('Software / Tecnologia');
   const [colorPalette, setColorPalette] =
     useState('Preto, branco e dourado');
   const [tone, setTone] = useState('Profissional');
@@ -626,8 +626,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }}
                 className="glass-input w-full rounded-xl px-3 py-2.5 text-xs"
               >
-                <option value="SaaS / Tecnologia">
-                  SaaS / Tecnologia
+                <option value="Software / Tecnologia">
+                  Software / Tecnologia
                 </option>
                 <option value="Loja Virtual">
                   Loja virtual

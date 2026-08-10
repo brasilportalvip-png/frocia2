@@ -39,7 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
-  const categories = ['todos', 'SaaS / Tecnologia', 'Gastronomia & Restaurantes', 'Portfólio Pessoal', 'E-commerce', 'Sistema'];
+  const categories = ['todos', 'Software / Tecnologia', 'Gastronomia & Restaurantes', 'Portfólio Pessoal', 'E-commerce', 'Sistema'];
 
   const filteredSites = savedSites.filter((site) => {
     const matchesSearch = site.title.toLowerCase().includes(searchTerm.toLowerCase()) ||

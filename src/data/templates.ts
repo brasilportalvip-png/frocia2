@@ -3,13 +3,13 @@ import { SiteTemplate } from '../types';
 export const STARTER_TEMPLATES: SiteTemplate[] = [
   {
     id: 'template-saas-launch',
-    title: 'SaaS Platform & AI Tech',
+    title: 'Plataforma & Solução Web',
     category: 'Landing Page',
-    description: 'Landing page moderna de alta conversão para produtos de software, SaaS e Inteligência Artificial.',
+    description: 'Landing page moderna de alta conversão para produtos de software e soluções digitais.',
     badge: 'Popular',
     iconName: 'Rocket',
     colorPalette: 'Deep Blue & Neon Cyan',
-    prompt: 'Crie uma landing page moderna para uma plataforma SaaS de Inteligência Artificial com hero section, métricas, grade de recursos, depoimentos e tabela de preços.',
+    prompt: 'Crie uma landing page moderna para uma solução de software com hero section, métricas, grade de recursos, depoimentos e tabela de preços.',
     sampleHtml: `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>

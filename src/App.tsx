@@ -164,7 +164,7 @@ export default function App() {
     setNavMode('studio');
     handleGenerateSite({
       prompt,
-      category: 'SaaS / Tecnologia',
+      category: 'Software / Tecnologia',
       colorPalette: 'Frosted Purple & Neon Pink',
       tone: 'Moderno',
       features: ['Design Responsivo', 'Seção Hero', 'Recursos', 'Contato']
@@ -684,7 +684,7 @@ export default function App() {
                 if (mode === 'Criador de projetos') {
                   await handleGenerateSite({
                     prompt: text,
-                    category: 'SaaS / Tecnologia',
+                    category: 'Software / Tecnologia',
                     colorPalette: 'Cyber Purple & Gold',
                     tone: 'Profissional',
                     features: [
