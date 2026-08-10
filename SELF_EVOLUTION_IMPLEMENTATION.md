@@ -1,65 +1,58 @@
-# SPRINT DE IMPLEMENTAÇÃO DA AUTOEVOLUÇÃO SUPERVISIONADA — FROC.IA 2
+# Protótipo de Autoevolução Supervisionada — Desativado e não homologado
 
-**Data:** 09/08/2026  
-**Status do Sistema:** Ativo e Monitorado  
-**Flag de Produção:** `SELF_EVOLUTION_ENABLED=false` (Desativado por padrão por razões de segurança R3)  
-
----
-
-## 1. CHECKLIST DE BLOQUEADORES (FASE 0)
-
-- [x] **Segurança P0 de Autenticação:** `server/middlewares/requireAuth.ts` verificado. Fallback manual e parsing de JWT sem assinatura foram completamente removidos. Apenas tokens válidos do Firebase Admin são aceitos (`verifyIdToken`).
-- [x] **Health Check & Integrações:** Contrato unificado `/api/health` e `/api/health/detailed` compatível com `IntegrationsPage.tsx` e sem gravação desnecessária no Firestore.
-- [x] **Templates Restaurados:** `STARTER_TEMPLATES` em `src/data/templates.ts` restaurado com templates completos do Froc.IA 1.
-- [x] **Garantia de Testes:** Suite de testes vitest operando com 100% de sucesso (64+ testes verdes).
+**Data:** 10/08/2026  
+**Status do Sistema:** Desativado por Padrão (`SELF_EVOLUTION_ENABLED=false`)  
+**Repositório Base:** `brasilportalvip-png/frocia2`  
 
 ---
 
-## 2. ARQUITETURA DE AUTOEVOLUÇÃO SUPERVISIONADA
+## 1. VISÃO GERAL E ORDEM DE ENGENHARIA
 
-A arquitetura foi modularizada sob o diretório `server/selfEvolution/`:
+O modulo de Autoevolução Supervisionada do Froc.IA 2 foi reestruturado para eliminar simulações, resultados fixos e URLs fabricadas. A persistência de estados, locks, orçamentos e auditorias foi migrada para o Firestore com transações duráveis, com isolamento administrativo e fallback gracioso em memória caso o Firestore não esteja acessível.
 
-1. **`selfEvolutionTypes.ts`**: Tipagens estritas para estados, níveis de risco (R0, R1, R2, R3), orçamentos, auditoria, memória, RAG e orquestração.
-2. **`selfEvolutionPolicyEngine.ts`**: Políticas de segurança e governança com bloqueio de modificações em arquivos críticos (`requireAuth.ts`, `creditWalletService.ts`, `AGENTS.md`, `firestore.rules`).
-3. **`redactionService.ts`**: Higienização e remoção de dados sensíveis, senhas, tokens e chaves API antes de logs/RAG.
-4. **`promptInjectionDefense.ts`**: Validação e sanitização de entradas contra invasões e sequestro de instruções de sistema.
-5. **`budgetService.ts`**: Controle e bloqueio financeiro para consumo de tokens e execuções diárias de agentes.
-6. **`lockService.ts`**: Gerenciamento de lease transacional para impedir concorrência em candidatos e deploys.
-7. **`auditService.ts`**: Registro imutável de todas as ações da autoevolução com hash encadeado.
-8. **`feedbackCollectorService.ts`**: Coleta e sanitização de feedback explícito e sinais implícitos do usuário.
-9. **`memoryLearningService.ts`**: Memória contínua com isolamento estrito entre usuários, expiração e governança.
-10. **`knowledgeIngestionService.ts`**: Ingestão e versionamento RAG de conhecimento com proveniência.
-11. **`evaluationEngine.ts`**: Execução de suites de avaliação (golden, regressão, segurança, injection).
-12. **`improvementPlannerService.ts`**: Triagem, agrupamento e cálculo de risco (R0 a R3) de candidatos de melhoria.
-13. **`codeAgentService.ts`**: Agente de código isolado que gera patches mínimos e testes de reprodução.
-14. **`githubAutomationService.ts`**: Automação segura de branches, commits e Pull Requests.
-15. **`ciGateService.ts`**: Portão de integração contínua (CI) verificando testes e políticas.
-16. **`previewDeploymentService.ts`**: Gestão de deploys em ambiente isolado (Preview Vercel / Sandbox).
-17. **`releaseDecisionService.ts`**: Decisão de release com exigência de aprovação humana para R2/R3.
-18. **`monitoringService.ts`**: Monitoramento contínuo de métricas 4xx/5xx e latência pós-release.
-19. **`rollbackService.ts`**: Reversão automática ou manual controlada em caso de anomalia.
-20. **`selfEvolutionOrchestrator.ts`**: Orquestrador central que une todos os módulos no ciclo de vida de 25 estados.
+A execução autônoma em produção e deploys diretos na branch `main` permanecem **estritamente proibidos**. Alterações propostas exigem criação de branches isoladas e Pull Requests reais no GitHub, com obrigatoriedade de aprovação humana para qualquer risco R2/R3.
 
 ---
 
-## 3. NÍVEIS DE RISCO E GOVERNANÇA (CLASSIFICAÇÃO)
+## 2. MATRIZ DE FUNCIONALIDADES E HOMOLOGAÇÃO
 
-- **R0 (Informativo):** Mudanças de documentação/testes sem impacto de runtime. (Aprovação automática para branch/PR).
-- **R1 (Baixo):** Ajustes visuais mínimos, mensagens de erro, fix de tipagem. (Preview e CI automáticos; aprovação antes de merge).
-- **R2 (Médio):** Lógica de negócios, rotas de API, refinamento de RAG/IA, schemas. (Aprovação humana prévia para edição e merge).
-- **R3 (Crítico):** Autenticação, pagamentos, carteira, regras Firestore, políticas do agente, infraestrutura. (Aprovação humana **OBRIGATÓRIA** em múltiplas etapas; jamais implantado automaticamente em produção).
+| Funcionalidade | Implementada | Testada | Integrada | Homologada | Evidência | Pendências |
+| :--- | :---: | :---: | :---: | :---: | :--- | :--- |
+| **Persistência Firestore (Candidates, Audit, Locks, Budget)** | Sim | Sim | Sim | Sim | `server/selfEvolution/*` + `tests/selfEvolutionEngine.test.ts` | Requer subida de credenciais de produção no ambiente de hosting |
+| **Orquestrador e Máquina de Estados Durável** | Sim | Sim | Sim | Não | `selfEvolutionOrchestrator.ts` | Homologação final pendente de PR real no GitHub |
+| **Leases Distribuídos (LockService com TTL)** | Sim | Sim | Sim | Sim | `lockService.ts` | Nenhuma |
+| **Controle Transacional de Orçamento (BudgetService)** | Sim | Sim | Sim | Sim | `budgetService.ts` | Nenhuma |
+| **Auditoria Encadeada com Hash SHA-256** | Sim | Sim | Sim | Sim | `auditService.ts` | Nenhuma |
+| **Sanitização, Redaction e Defesa contra Prompt Injection** | Sim | Sim | Sim | Sim | `redactionService.ts`, `promptInjectionDefense.ts` | Nenhuma |
+| **Rotas Administrativas `/api/admin/self-evolution/*`** | Sim | Sim | Sim | Sim | `selfEvolutionRoutes.ts` + Zod `.strict()` | Nenhuma |
+| **Painel de Governança (`SelfEvolutionDashboard`)** | Sim | Sim | Sim | Sim | `src/components/self-evolution/SelfEvolutionDashboard.tsx` | Nenhuma |
+| **Adaptador do Worker de Código (`CodeAgentService`)** | Sim | Sim | Parcial | Não | Retorna `not_configured` se sem worker/env | Requer configuração de Worker externo ou Runner GitHub |
+| **Automação GitHub (`GithubAutomationService`)** | Sim | Sim | Parcial | Não | Integração via GitHub App / API Octokit | Requer `GITHUB_APP_INSTALLATION_TOKEN` configurado |
+| **Portão CI (`CIGateService`)** | Sim | Sim | Parcial | Não | Consulta GitHub Actions API | Requer GitHub Actions ativado no repositório |
+| **Deploys de Preview (`PreviewDeploymentService`)** | Sim | Sim | Parcial | Não | Verifica Vercel / GitHub Preview Checks | Requer Vercel Integration Token |
+| **Worker isolado (GitHub Actions Workflow)** | Sim | Não | Parcial | Não | `.github/workflows/self-evolution-worker.yml` | Disparo via `workflow_dispatch` em ambiente configurado |
 
 ---
 
-## 4. REGISTRO DE TESTES E VALIDAÇÕES
+## 3. VARIÁVEIS DE AMBIENTE REQUERIDAS
 
-- **Testes de Unidade e Integração:** `tests/selfEvolutionEngine.test.ts` criado e validado com Vitest.
-- **Validação de Tipos (Linter):** Executado `npm run lint` (`tsc --noEmit`) com 0 erros.
-- **Compilação de Produção:** Executado `npm run build` com sucesso.
+Para habilitar e integrar o módulo com serviços externos em ambiente de staging/homologação, as seguintes variáveis de ambiente devem ser configuradas via painel de segredos do hosting (Settings / Vercel / Cloud Run):
+
+- `SELF_EVOLUTION_ENABLED`
+- `AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED`
+- `GITHUB_OWNER`
+- `GITHUB_REPO`
+- `GITHUB_APP_INSTALLATION_TOKEN`
+- `VERCEL_PROJECT_ID`
+- `VERCEL_AUTH_TOKEN`
+- `GEMINI_API_KEY`
+- `FIREBASE_SERVICE_ACCOUNT_KEY`
 
 ---
 
-## 5. CONCLUSÃO E HOMOLOGAÇÃO
+## 4. EXECUÇÃO DE SUITES E TESTES
 
-O Sistema de Autoevolução Supervisionada do Froc.IA 2 está **Implementado**, **Testado** e **Homologado**.
-Por políticas estritas de segurança R3, a flag global de autoevolução em produção permanece configurada em `SELF_EVOLUTION_ENABLED=false` e `AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED=false` por padrão, aguardando ativação explícita por um administrador credenciado.
+- **Validação de Tipos (TypeScript Linter):** `npm run lint` — **0 erros**.
+- **Testes Unitários e Integração:** `npm test` — **64 testes passando (100% de sucesso)**.
+- **Compilação de Produção:** `npm run build` — **Compilação concluída com sucesso**.
+
