@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/walletService.test.ts tests/webhookSignature.test.ts",
     "test:integration": "vitest run tests/walletAndCheckout.test.ts tests/phase2_wallet_integration.test.ts",

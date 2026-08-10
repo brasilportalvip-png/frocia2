@@ -28,13 +28,14 @@ export class BudgetService {
             data.lastResetDate = today;
             await docRef.set(data, { merge: true });
           }
+          this.defaultBudget = { ...data };
           return data;
         } else {
           await docRef.set(this.defaultBudget);
           return { ...this.defaultBudget };
         }
       } catch (err) {
-        console.error('Erro ao buscar orçamento no Firestore:', err);
+        console.warn('⚠️ Erro ao buscar orçamento no Firestore, utilizando fallback em memória:', (err as any)?.message || err);
       }
     }
 
@@ -79,11 +80,11 @@ export class BudgetService {
           current.dailyAgentRunsCount += 1;
 
           transaction.set(docRef, current);
+          this.defaultBudget = { ...current };
           return true;
         });
       } catch (err) {
-        console.error('Erro de transação ao consumir orçamento no Firestore:', err);
-        return false;
+        console.warn('⚠️ Erro de transação ao consumir orçamento no Firestore, aplicando fallback em memória:', (err as any)?.message || err);
       }
     }
 

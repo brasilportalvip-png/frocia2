@@ -2,46 +2,73 @@ import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
-export const isFirebaseAdminConfigured = (): boolean => {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
+export function getServiceAccountCredentials(): { projectId: string; clientEmail: string; privateKey: string } | null {
+  const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (serviceAccountRaw) {
+    try {
+      const parsed = typeof serviceAccountRaw === 'string' ? JSON.parse(serviceAccountRaw) : serviceAccountRaw;
+      if (parsed.project_id && parsed.client_email && parsed.private_key) {
+        return {
+          projectId: parsed.project_id,
+          clientEmail: parsed.client_email,
+          privateKey: parsed.private_key.replace(/\\n/g, '\n'),
+        };
+      }
+    } catch (err: any) {
+      console.error('❌ Erro ao analisar FIREBASE_SERVICE_ACCOUNT_KEY:', err?.message || err);
+    }
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-  return Boolean(
+  const rawKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (
     projectId &&
     clientEmail &&
-    privateKey &&
+    rawKey &&
     !projectId.includes('MY_') &&
     !clientEmail.includes('MY_')
-  );
+  ) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey: rawKey.replace(/\\n/g, '\n'),
+    };
+  }
+
+  return null;
+}
+
+export const isFirebaseAdminConfigured = (): boolean => {
+  return getServiceAccountCredentials() !== null;
 };
+
+const DEFAULT_PROJECT_ID =
+  process.env.FIREBASE_PROJECT_ID ||
+  process.env.VITE_FIREBASE_PROJECT_ID ||
+  'frocia-e07a5';
 
 let app: App;
 
 if (!getApps().length) {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const rawKey = process.env.FIREBASE_PRIVATE_KEY;
+  const creds = getServiceAccountCredentials();
 
-  if (isFirebaseAdminConfigured() && rawKey) {
-    const privateKey = rawKey.replace(/\\n/g, '\n');
+  if (creds) {
     try {
       app = initializeApp({
-        credential: cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
+        credential: cert(creds),
       });
-      console.log(`✅ Firebase Admin SDK inicializado para o projeto: ${projectId}`);
+      console.log(`✅ Firebase Admin SDK inicializado com credenciais para o projeto: ${creds.projectId}`);
     } catch (error: any) {
       console.error('❌ Erro ao inicializar Firebase Admin SDK com credenciais:', error?.message || error);
-      app = initializeApp({ projectId: projectId || 'froc-ia-dev' });
+      app = initializeApp({ projectId: creds.projectId || DEFAULT_PROJECT_ID });
     }
   } else {
     if (process.env.NODE_ENV !== 'test') {
-      console.warn('⚠️ Credenciais completas do Firebase Admin não foram fornecidas. Inicializando modo fallback de projeto.');
+      console.warn(`⚠️ Credenciais completas do Firebase Admin não foram fornecidas. Inicializando modo fallback para o projeto: ${DEFAULT_PROJECT_ID}`);
     }
-    app = initializeApp({ projectId: projectId || 'froc-ia-dev' });
+    app = initializeApp({ projectId: DEFAULT_PROJECT_ID });
   }
 } else {
   app = getApps()[0];
@@ -54,3 +81,4 @@ export const adminAuth: Auth = getAuth(app);
 export const adminDb: Firestore = getFirestore(app);
 
 export default app;
+

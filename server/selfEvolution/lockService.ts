@@ -35,10 +35,11 @@ export class LockService {
           };
 
           transaction.set(lockRef, lock);
+          this.locks.set(resourceId, lock);
           return lock;
         });
       } catch (err) {
-        console.error('Erro de transação Firestore em LockService.acquireLock:', err);
+        console.warn('⚠️ Erro de transação Firestore em LockService.acquireLock, aplicando fallback em memória:', (err as any)?.message || err);
       }
     }
 
@@ -73,10 +74,11 @@ export class LockService {
           if (doc.data()?.lockOwner !== owner) return false;
 
           transaction.delete(lockRef);
+          this.locks.delete(resourceId);
           return true;
         });
-      } catch {
-        return false;
+      } catch (err) {
+        console.warn('⚠️ Erro ao liberar lock no Firestore, aplicando fallback em memória:', (err as any)?.message || err);
       }
     }
 

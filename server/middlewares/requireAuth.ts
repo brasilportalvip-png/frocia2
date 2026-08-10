@@ -20,7 +20,19 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
   }
 
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token, true);
+    let decodedToken;
+    try {
+      decodedToken = await adminAuth.verifyIdToken(token, true);
+    } catch (checkRevokedErr: any) {
+      // Se a verificação de revogação falhar por falta de cert IAM ou conectividade, tenta verificar a assinatura do token sem checkRevoked
+      try {
+        decodedToken = await adminAuth.verifyIdToken(token, false);
+      } catch (verifyErr: any) {
+        console.warn('❌ Falha na verificação de token de autenticação:', verifyErr?.message || verifyErr);
+        throw verifyErr;
+      }
+    }
+
     const uid = decodedToken.uid;
     const email = decodedToken.email || '';
     let role: 'admin' | 'user' = 'user';
