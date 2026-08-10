@@ -37,26 +37,27 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
     expect(sanitized).toContain('REMOVIDO POR TENTATIVA DE INJEÇÃO');
   });
 
-  it('should enforce daily credit budget limits', () => {
-    expect(BudgetService.canExecuteAgentRun(10)).toBe(true);
-    BudgetService.consumeBudget(500);
-    expect(BudgetService.canExecuteAgentRun(10)).toBe(false);
+  it('should enforce daily credit budget limits', async () => {
+    expect(await BudgetService.canExecuteAgentRun(10)).toBe(true);
+    await BudgetService.consumeBudget(500);
+    expect(await BudgetService.canExecuteAgentRun(10)).toBe(false);
   });
 
-  it('should handle lock leases correctly', () => {
-    const lock1 = LockService.acquireLock('resource-123', 'agent-1', 60000);
+  it('should handle lock leases correctly', async () => {
+    const resource = `res-${Date.now()}`;
+    const lock1 = await LockService.acquireLock(resource, 'agent-1', 60000);
     expect(lock1).not.toBeNull();
 
-    const lock2 = LockService.acquireLock('resource-123', 'agent-2', 60000);
+    const lock2 = await LockService.acquireLock(resource, 'agent-2', 60000);
     expect(lock2).toBeNull(); // Blocked while lock1 is held
 
-    LockService.releaseLock('resource-123', 'agent-1');
-    const lock3 = LockService.acquireLock('resource-123', 'agent-2', 60000);
+    await LockService.releaseLock(resource, 'agent-1');
+    const lock3 = await LockService.acquireLock(resource, 'agent-2', 60000);
     expect(lock3).not.toBeNull();
   });
 
-  it('should create audit log entries with chained sha256 hashes', () => {
-    const log1 = AuditService.logEvent({
+  it('should create audit log entries with chained sha256 hashes', async () => {
+    const log1 = await AuditService.logEvent({
       actor: 'admin1',
       action: 'test_action',
       resource: 'res1',
@@ -64,7 +65,7 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
       result: 'success',
     });
 
-    const log2 = AuditService.logEvent({
+    const log2 = await AuditService.logEvent({
       actor: 'admin1',
       action: 'test_action_2',
       resource: 'res2',
@@ -76,8 +77,8 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
     expect(log2.previousRecordHash).toBe(log1.recordHash);
   });
 
-  it('should create improvement candidate with proper risk level', () => {
-    const candidate = ImprovementPlannerService.createCandidate({
+  it('should create improvement candidate with proper risk level', async () => {
+    const candidate = await ImprovementPlannerService.createCandidate({
       title: 'Ajuste de Botão de Filtro',
       summary: 'Melhorar alinhamento no CSS',
       evidence: ['Usuário relatou desalinhamento no mobile'],
@@ -92,3 +93,4 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
     expect(candidate.state).toBe('detected');
   });
 });
+

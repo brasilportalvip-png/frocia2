@@ -51,7 +51,7 @@ export interface UserMemory {
   source: string;
   confidence: number;
   userApproved: boolean;
-  status: 'active' | 'archived' | 'expired';
+  status: 'active' | 'archived' | 'expired' | 'pending_consent';
   expiresAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -84,7 +84,7 @@ export interface KnowledgeDocument {
   permissions: string[];
   embeddingModel: string;
   embeddingDimension: number;
-  indexingState: 'pending' | 'indexed' | 'failed';
+  indexingState: 'pending' | 'indexed' | 'failed' | 'pending_configuration';
   updatedAt: string;
 }
 

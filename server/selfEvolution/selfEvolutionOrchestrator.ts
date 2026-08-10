@@ -8,7 +8,6 @@ import { GithubAutomationService } from './githubAutomationService.js';
 import { CIGateService } from './ciGateService.js';
 import { PreviewDeploymentService } from './previewDeploymentService.js';
 import { ReleaseDecisionService } from './releaseDecisionService.js';
-import { MonitoringService } from './monitoringService.js';
 import { RollbackService } from './rollbackService.js';
 import { CandidateState } from './selfEvolutionTypes.js';
 
@@ -17,7 +16,7 @@ export class SelfEvolutionOrchestrator {
     state: CandidateState;
     message: string;
   }> {
-    const candidate = ImprovementPlannerService.getCandidateById(candidateId);
+    const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) {
       return { state: 'failed', message: 'Candidato não encontrado.' };
     }
@@ -29,7 +28,7 @@ export class SelfEvolutionOrchestrator {
       };
     }
 
-    const lock = LockService.acquireLock(candidateId, actor);
+    const lock = await LockService.acquireLock(candidateId, actor);
     if (!lock) {
       return { state: candidate.state, message: 'Operação em andamento em outro processo (Lock ativo).' };
     }
@@ -37,8 +36,8 @@ export class SelfEvolutionOrchestrator {
     try {
       // Stage 1: Triage & Approval Check
       if (candidate.state === 'detected') {
-        ImprovementPlannerService.updateCandidateState(candidateId, 'triaged');
-        AuditService.logEvent({
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'triaged');
+        await AuditService.logEvent({
           actor,
           action: 'triage_candidate',
           resource: candidateId,
@@ -48,7 +47,7 @@ export class SelfEvolutionOrchestrator {
       }
 
       if (candidate.requiresApproval && candidate.state === 'triaged') {
-        ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_work_approval');
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_work_approval');
         return {
           state: 'awaiting_work_approval',
           message: `Aprovação humana necessária para candidato de risco ${candidate.riskLevel}.`,
@@ -57,46 +56,71 @@ export class SelfEvolutionOrchestrator {
 
       // Stage 2: Budget Check & Code Generation
       if (candidate.state === 'approved_for_work' || candidate.state === 'triaged') {
-        if (!BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits)) {
+        const canExecute = await BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits);
+        if (!canExecute) {
           return {
             state: candidate.state,
             message: 'Limite de orçamento diário ou mensal atingido.',
           };
         }
 
-        BudgetService.consumeBudget(candidate.estimatedCostCredits);
-        ImprovementPlannerService.updateCandidateState(candidateId, 'agent_running');
+        await BudgetService.consumeBudget(candidate.estimatedCostCredits);
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'agent_running');
 
-        const patch = CodeAgentService.generatePatchAndTest(candidate);
+        const patch = await CodeAgentService.generatePatchAndTest(candidate);
         if (!patch.success) {
-          ImprovementPlannerService.updateCandidateState(candidateId, 'tests_failed');
-          return { state: 'tests_failed', message: 'Falha na geração de patch do agente.' };
+          await ImprovementPlannerService.updateCandidateState(candidateId, 'tests_failed');
+          return {
+            state: 'tests_failed',
+            message: patch.errorMessage || 'Falha na geração de patch do agente (Worker não configurado ou erro).',
+          };
         }
 
-        ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
 
         // GitHub PR
-        const pr = GithubAutomationService.createBranchAndPR(candidate);
-        candidate.branchName = pr.branchName;
-        candidate.pullRequestUrl = pr.pullRequestUrl;
-        ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
-
-        // CI Check
-        const ci = CIGateService.runCIGate();
-        if (!ci.passed) {
-          ImprovementPlannerService.updateCandidateState(candidateId, 'ci_failed');
-          return { state: 'ci_failed', message: 'CI Gate reprovado.' };
+        const pr = await GithubAutomationService.createBranchAndPR(candidate);
+        if (!pr.success) {
+          return {
+            state: candidate.state,
+            message: pr.errorMessage || 'Falha ao criar branch e Pull Request no GitHub.',
+          };
         }
 
-        ImprovementPlannerService.updateCandidateState(candidateId, 'ci_passed');
+        candidate.branchName = pr.branchName;
+        candidate.pullRequestUrl = pr.pullRequestUrl;
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
+
+        // CI Check
+        const ci = await CIGateService.runCIGate(candidate.branchName);
+        if (ci.status === 'not_configured' || ci.status === 'pending') {
+          return {
+            state: candidate.state,
+            message: `CI Gate em estado: ${ci.status}. ${ci.details}`,
+          };
+        }
+
+        if (!ci.passed) {
+          await ImprovementPlannerService.updateCandidateState(candidateId, 'ci_failed');
+          return { state: 'ci_failed', message: `CI Gate reprovado: ${ci.details}` };
+        }
+
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'ci_passed');
 
         // Preview Deployment
-        const preview = PreviewDeploymentService.createPreviewDeployment(candidateId);
+        const preview = await PreviewDeploymentService.createPreviewDeployment(candidateId, candidate.branchName);
+        if (preview.status === 'not_configured' || preview.status === 'pending') {
+          return {
+            state: candidate.state,
+            message: `Preview Deployment em estado: ${preview.status}. ${preview.errorMessage || ''}`,
+          };
+        }
+
         candidate.previewUrl = preview.previewUrl;
-        ImprovementPlannerService.updateCandidateState(candidateId, 'preview_deployed');
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_deployed');
 
         if (candidate.riskLevel === 'R2' || candidate.riskLevel === 'R3') {
-          ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_release_approval');
+          await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_release_approval');
           return {
             state: 'awaiting_release_approval',
             message: 'Preview implantada. Aguardando aprovação humana final de release.',
@@ -109,12 +133,12 @@ export class SelfEvolutionOrchestrator {
         message: `Estado atual do candidato: ${candidate.state}`,
       };
     } finally {
-      LockService.releaseLock(candidateId, actor);
+      await LockService.releaseLock(candidateId, actor);
     }
   }
 
-  static approveRelease(candidateId: string, adminUid: string): { success: boolean; message: string } {
-    const candidate = ImprovementPlannerService.getCandidateById(candidateId);
+  static async approveRelease(candidateId: string, adminUid: string): Promise<{ success: boolean; message: string }> {
+    const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) return { success: false, message: 'Candidato não encontrado.' };
 
     const decision = ReleaseDecisionService.canReleaseToProduction(candidate, true);
@@ -122,8 +146,8 @@ export class SelfEvolutionOrchestrator {
       return { success: false, message: decision.reason };
     }
 
-    ImprovementPlannerService.updateCandidateState(candidateId, 'approved_for_release');
-    AuditService.logEvent({
+    await ImprovementPlannerService.updateCandidateState(candidateId, 'approved_for_release');
+    await AuditService.logEvent({
       actor: adminUid,
       action: 'approve_release',
       resource: candidateId,
@@ -135,14 +159,14 @@ export class SelfEvolutionOrchestrator {
     return { success: true, message: 'Release aprovada pelo administrador com sucesso.' };
   }
 
-  static executeEmergencyRollback(candidateId: string, adminUid: string, reason: string): {
+  static async executeEmergencyRollback(candidateId: string, adminUid: string, reason: string): Promise<{
     success: boolean;
     message: string;
-  } {
-    const result = RollbackService.executeRollback(candidateId, reason);
-    ImprovementPlannerService.updateCandidateState(candidateId, 'rolled_back');
+  }> {
+    const result = await RollbackService.executeRollback(candidateId, reason);
+    await ImprovementPlannerService.updateCandidateState(candidateId, 'rolled_back');
 
-    AuditService.logEvent({
+    await AuditService.logEvent({
       actor: adminUid,
       action: 'emergency_rollback',
       resource: candidateId,
@@ -154,3 +178,4 @@ export class SelfEvolutionOrchestrator {
     return { success: result.success, message: result.message };
   }
 }
+

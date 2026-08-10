@@ -1,11 +1,12 @@
 import crypto from 'crypto';
+import { adminDb } from '../lib/firebaseAdmin.js';
 import { ImprovementCandidate, RiskLevel } from './selfEvolutionTypes.js';
 import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 
 export class ImprovementPlannerService {
-  private static candidates: ImprovementCandidate[] = [];
+  private static inMemoryCandidates: ImprovementCandidate[] = [];
 
-  static createCandidate(params: {
+  static async createCandidate(params: {
     title: string;
     summary: string;
     evidence: string[];
@@ -14,7 +15,7 @@ export class ImprovementPlannerService {
     hypothesis: string;
     expectedBehavior: string;
     isSecurityComponent?: boolean;
-  }): ImprovementCandidate {
+  }): Promise<ImprovementCandidate> {
     const riskLevel: RiskLevel = SelfEvolutionPolicyEngine.classifyRisk(
       params.probableFiles,
       params.isSecurityComponent
@@ -46,23 +47,74 @@ export class ImprovementPlannerService {
       updatedAt: new Date().toISOString(),
     };
 
-    this.candidates.unshift(candidate);
+    if (adminDb) {
+      try {
+        await adminDb.collection('self_evolution_candidates').doc(candidate.id).set(candidate);
+      } catch (err) {
+        console.error('Erro ao salvar candidato no Firestore:', err);
+      }
+    }
+
+    this.inMemoryCandidates.unshift(candidate);
     return candidate;
   }
 
-  static getCandidates(limit: number = 50): ImprovementCandidate[] {
-    return this.candidates.slice(0, limit);
+  static async getCandidates(limit: number = 50): Promise<ImprovementCandidate[]> {
+    if (adminDb) {
+      try {
+        const snapshot = await adminDb
+          .collection('self_evolution_candidates')
+          .orderBy('createdAt', 'desc')
+          .limit(limit)
+          .get();
+
+        if (!snapshot.empty) {
+          return snapshot.docs.map((doc) => doc.data() as ImprovementCandidate);
+        }
+      } catch (err) {
+        console.error('Erro ao buscar candidatos no Firestore:', err);
+      }
+    }
+
+    return this.inMemoryCandidates.slice(0, limit);
   }
 
-  static getCandidateById(id: string): ImprovementCandidate | undefined {
-    return this.candidates.find((c) => c.id === id);
+  static async getCandidateById(id: string): Promise<ImprovementCandidate | undefined> {
+    if (adminDb) {
+      try {
+        const doc = await adminDb.collection('self_evolution_candidates').doc(id).get();
+        if (doc.exists) {
+          return doc.data() as ImprovementCandidate;
+        }
+      } catch (err) {
+        console.error('Erro ao buscar candidato por ID no Firestore:', err);
+      }
+    }
+
+    return this.inMemoryCandidates.find((c) => c.id === id);
   }
 
-  static updateCandidateState(id: string, newState: ImprovementCandidate['state']): boolean {
-    const candidate = this.getCandidateById(id);
+  static async updateCandidateState(id: string, newState: ImprovementCandidate['state']): Promise<boolean> {
+    const updatedAt = new Date().toISOString();
+
+    if (adminDb) {
+      try {
+        const docRef = adminDb.collection('self_evolution_candidates').doc(id);
+        const doc = await docRef.get();
+        if (doc.exists) {
+          await docRef.update({ state: newState, updatedAt });
+          return true;
+        }
+      } catch (err) {
+        console.error('Erro ao atualizar estado do candidato no Firestore:', err);
+      }
+    }
+
+    const candidate = this.inMemoryCandidates.find((c) => c.id === id);
     if (!candidate) return false;
     candidate.state = newState;
-    candidate.updatedAt = new Date().toISOString();
+    candidate.updatedAt = updatedAt;
     return true;
   }
 }
+

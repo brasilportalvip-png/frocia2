@@ -1,12 +1,13 @@
 import crypto from 'crypto';
+import { adminDb } from '../lib/firebaseAdmin.js';
 import { UserMemory, MemoryType } from './selfEvolutionTypes.js';
 import { RedactionService } from './redactionService.js';
 import { PromptInjectionDefense } from './promptInjectionDefense.js';
 
 export class MemoryLearningService {
-  private static memories: UserMemory[] = [];
+  private static inMemoryMemories: UserMemory[] = [];
 
-  static saveUserMemory(params: {
+  static async saveUserMemory(params: {
     userId: string;
     projectId?: string;
     conversationId?: string;
@@ -17,21 +18,13 @@ export class MemoryLearningService {
     confidence?: number;
     userApproved?: boolean;
     ttlDays?: number;
-  }): UserMemory {
+  }): Promise<UserMemory> {
     const rawRedacted = RedactionService.redactSensitiveData(params.content);
     const sanitized = PromptInjectionDefense.sanitizeUntrustedText(rawRedacted);
     const contentHash = crypto.createHash('sha256').update(`${params.userId}:${sanitized}`).digest('hex');
 
-    // Deduplication check
-    const existing = this.memories.find(
-      (m) => m.userId === params.userId && m.contentHash === contentHash && m.status === 'active'
-    );
-
-    if (existing) {
-      existing.usageCount += 1;
-      existing.lastUsedAt = new Date().toISOString();
-      return existing;
-    }
+    // Default consent is FALSE unless explicitly approved by user
+    const userApproved = params.userApproved === true;
 
     const now = new Date();
     let expiresAt: string | undefined;
@@ -51,8 +44,8 @@ export class MemoryLearningService {
       contentHash,
       source: params.source,
       confidence: params.confidence ?? 0.9,
-      userApproved: params.userApproved ?? true,
-      status: 'active',
+      userApproved,
+      status: userApproved ? 'active' : 'pending_consent',
       expiresAt,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -60,21 +53,63 @@ export class MemoryLearningService {
       usageCount: 1,
     };
 
-    this.memories.unshift(memory);
+    if (adminDb) {
+      try {
+        await adminDb.collection('self_evolution_memories').doc(memory.id).set(memory);
+      } catch (err) {
+        console.error('Erro ao salvar memória no Firestore:', err);
+      }
+    }
+
+    this.inMemoryMemories.unshift(memory);
     return memory;
   }
 
-  static getUserMemories(userId: string): UserMemory[] {
+  static async getUserMemories(userId: string): Promise<UserMemory[]> {
     const now = new Date().toISOString();
-    return this.memories.filter(
-      (m) => m.userId === userId && m.status === 'active' && (!m.expiresAt || m.expiresAt > now)
+
+    if (adminDb) {
+      try {
+        const snapshot = await adminDb
+          .collection('self_evolution_memories')
+          .where('userId', '==', userId)
+          .where('status', '==', 'active')
+          .where('userApproved', '==', true)
+          .get();
+
+        if (!snapshot.empty) {
+          return snapshot.docs
+            .map((doc) => doc.data() as UserMemory)
+            .filter((m) => !m.expiresAt || m.expiresAt > now);
+        }
+      } catch (err) {
+        console.error('Erro ao buscar memórias no Firestore:', err);
+      }
+    }
+
+    return this.inMemoryMemories.filter(
+      (m) => m.userId === userId && m.status === 'active' && m.userApproved && (!m.expiresAt || m.expiresAt > now)
     );
   }
 
-  static deleteUserMemory(userId: string, memoryId: string): boolean {
-    const index = this.memories.findIndex((m) => m.id === memoryId && m.userId === userId);
+  static async deleteUserMemory(userId: string, memoryId: string): Promise<boolean> {
+    if (adminDb) {
+      try {
+        const docRef = adminDb.collection('self_evolution_memories').doc(memoryId);
+        const doc = await docRef.get();
+        if (doc.exists && doc.data()?.userId === userId) {
+          await docRef.update({ status: 'archived', updatedAt: new Date().toISOString() });
+          return true;
+        }
+      } catch (err) {
+        console.error('Erro ao remover memória no Firestore:', err);
+      }
+    }
+
+    const index = this.inMemoryMemories.findIndex((m) => m.id === memoryId && m.userId === userId);
     if (index === -1) return false;
-    this.memories[index].status = 'archived';
+    this.inMemoryMemories[index].status = 'archived';
     return true;
   }
 }
+

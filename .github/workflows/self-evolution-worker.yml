@@ -1,0 +1,43 @@
+name: Self-Evolution Worker (Isolated Sandbox)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidateId:
+        description: 'Candidate ID for self-evolution'
+        required: true
+        type: string
+      riskLevel:
+        description: 'Risk Level (R1, R2, R3)'
+        required: true
+        default: 'R1'
+        type: string
+
+jobs:
+  code-agent-worker:
+    name: Code Agent Worker & Validation
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.riskLevel == 'R3' && 'production-approvals' || 'sandbox' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Typecheck
+        run: npm run typecheck
+
+      - name: Run Tests
+        run: npm test
+
+      - name: Security Audit
+        run: npm audit --audit-level=high || true
