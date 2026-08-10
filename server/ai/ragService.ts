@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
+import { env } from '../config/env.js';
 import { EmbeddingService } from './embeddingService.js';
 import { KnowledgeChunk } from './types/ai.js';
 
@@ -122,7 +123,7 @@ export class RAGService {
             chunkIndex: Number(data.chunkIndex || 0),
             contentHash: String(data.contentHash || ''),
             embeddingModel: String(
-              data.embeddingModel || 'gemini-embedding-2-preview'
+              data.embeddingModel || env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2'
             ),
             embeddingVersion: String(data.embeddingVersion || 'v1'),
             createdAt: timestampToIso(data.createdAt)
@@ -170,8 +171,8 @@ export class RAGService {
         text: chunkText,
         chunkIndex: index,
         contentHash,
-        embeddingModel: 'gemini-embedding-2-preview',
-        embeddingVersion: 'v1',
+        embeddingModel: env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2',
+        embeddingVersion: 'v2',
         embedding,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp()

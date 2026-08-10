@@ -120,7 +120,7 @@ if (parseResult.success) {
     GEMINI_REASONING_MODEL: process.env.GEMINI_REASONING_MODEL || 'gemini-3.1-pro-preview',
     GEMINI_CODE_MODEL: process.env.GEMINI_CODE_MODEL || 'gemini-3.1-pro-preview',
     GEMINI_VISION_MODEL: process.env.GEMINI_VISION_MODEL || 'gemini-3.6-flash',
-    GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2-preview',
+    GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2',
     GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash',
     INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET || 'froc_dev_cron_secret_unpredictable_local_key_32_bytes',
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,

@@ -28,7 +28,7 @@ describe('Base de Conhecimento e RAG', () => {
             section: 'Garantia',
             chunkIndex: 0,
             contentHash: 'hash-1',
-            embeddingModel: 'gemini-embedding-2-preview',
+            embeddingModel: 'gemini-embedding-2',
             embeddingVersion: 'v1',
             createdAt: '2026-08-08T00:00:00.000Z'
           },

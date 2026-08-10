@@ -88,7 +88,7 @@ export default function App() {
     email: '',
     avatarUrl: '',
     role: 'user',
-    plan: 'free',
+    plan: 'Teste',
     creditsRemaining: 0,
     creditsMax: 0,
     isAuthenticated: false,

@@ -60,14 +60,20 @@ export class MercadoPagoService {
   public static isConfigured(): boolean {
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     const secret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
-    return Boolean(
-      token &&
-      token.trim().length > 0 &&
-      !token.includes('MY_') &&
-      secret &&
-      secret.trim().length > 0 &&
-      !secret.includes('MY_')
-    );
+    const webhookUrl =
+      process.env.MERCADO_PAGO_WEBHOOK_URL ||
+      (process.env.APP_URL ? `${process.env.APP_URL}/api/webhooks/mercadopago` : undefined);
+
+    if (!token || token.trim().length === 0 || token.includes('MY_')) return false;
+    if (!secret || secret.trim().length === 0 || secret.includes('MY_')) return false;
+    if (!webhookUrl) return false;
+
+    try {
+      this.validateWebhookUrl(webhookUrl);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**

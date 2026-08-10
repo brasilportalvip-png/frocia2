@@ -154,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({
             <NavigationButton
               label="Froc.IA"
               icon={Sparkles}
-              active={navMode === 'studio'}
+              active={false}
               onClick={() => setNavMode('studio')}
             />
 

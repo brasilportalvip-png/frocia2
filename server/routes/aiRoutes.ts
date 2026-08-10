@@ -236,14 +236,19 @@ aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
 
   const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
 
+  const requiresSearch = mode === 'research';
+
   const route = AIRouter.route({
     mode,
     prompt: sanitizedPrompt,
     hasImages: attachments.some(
       (attachment) => attachment.type === 'image'
     ),
-    hasFiles: attachments.length > 0
+    hasFiles: attachments.length > 0,
+    requiresSearch,
   });
+
+  const enableSearchGrounding = requiresSearch || route.reasonCode === 'mode_research_grounded';
   const idempotencyKey = providedKey || `aistream-${uid}-${Date.now()}`;
 
   let reserveResult;
@@ -321,6 +326,7 @@ aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
       systemInstruction: assembled.systemInstruction,
       userMessage: assembled.userMessage,
       attachments,
+      enableSearchGrounding,
     });
 
     for await (const chunk of stream) {
@@ -338,7 +344,7 @@ aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
 
     const inputTokens = assembled.tokenCountEstimate;
     const outputTokens = CostService.estimateTokenCount(fullOutput);
-    const consumedCredits = CostService.calculateCreditCost(route.selectedModel, inputTokens, outputTokens);
+    const consumedCredits = CostService.calculateCreditCost(route.selectedModel, inputTokens, outputTokens, false, enableSearchGrounding);
 
     await CreditWalletService.confirmConsumption({
       userId: uid,
