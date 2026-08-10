@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { requireAuth } from '../server/middlewares/requireAuth.js';
 import { STARTER_TEMPLATES } from '../src/data/templates.js';
 import { adminAuth } from '../server/lib/firebaseAdmin.js';
 
 describe('P0 Security & Contract Verification Tests', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('should reject requests with missing authorization header', async () => {
     const req: any = { headers: {} };
     const res: any = {
@@ -41,6 +45,28 @@ describe('P0 Security & Contract Verification Tests', () => {
 
     await requireAuth(req, res, next);
 
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('inválido ou expirado') })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should verifyIdToken strictly with checkRevoked=true and fail on revocation', async () => {
+    const validToken = 'valid.jwt.token';
+    const req: any = { headers: { authorization: `Bearer ${validToken}` } };
+    const res: any = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+    };
+    const next = vi.fn();
+
+    const spy = vi.spyOn(adminAuth, 'verifyIdToken').mockRejectedValueOnce(new Error('Token revoked'));
+
+    await requireAuth(req, res, next);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(validToken, true);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.stringContaining('inválido ou expirado') })

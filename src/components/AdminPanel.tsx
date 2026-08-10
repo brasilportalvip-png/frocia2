@@ -19,6 +19,7 @@ import { EvaluationsModal } from './EvaluationsModal';
 import { ExecutionTracesModal } from './ExecutionTracesModal';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { DisasterRecoveryModal } from './DisasterRecoveryModal';
+import { SelfEvolutionDashboard } from './self-evolution/SelfEvolutionDashboard';
 import { apiClient } from '../services/apiClient';
 
 interface AdminPanelProps {
@@ -26,7 +27,7 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = () => {
-  const [activeTab, setActiveTab] = useState<'metrics' | 'models' | 'users' | 'audit'>('metrics');
+  const [activeTab, setActiveTab] = useState<'metrics' | 'models' | 'users' | 'audit' | 'selfEvolution'>('metrics');
   const [grantEmail, setGrantEmail] = useState('');
   const [grantAmount, setGrantAmount] = useState(100);
   const [grantReason, setGrantReason] = useState('Bônus/Suporte Administrativo');
@@ -176,6 +177,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
               }`}
             >
               Auditoria
+            </button>
+            <button
+              onClick={() => setActiveTab('selfEvolution')}
+              className={`px-3 py-1.5 rounded-xl transition-all ${
+                activeTab === 'selfEvolution' ? 'bg-purple-600 text-white' : 'text-white/60 hover:text-white'
+              }`}
+            >
+              Autoevolução
             </button>
           </div>
         </div>
@@ -393,6 +402,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Tab 5: Self Evolution */}
+        {activeTab === 'selfEvolution' && (
+          <SelfEvolutionDashboard />
         )}
 
         {/* Modals */}

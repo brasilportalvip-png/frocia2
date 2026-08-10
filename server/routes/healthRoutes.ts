@@ -1,19 +1,13 @@
 import { Router } from 'express';
-import { adminDb, adminAuth, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import { requireAdmin } from '../middlewares/requireAdmin.js';
 
 export const healthRouter = Router();
 
-// GET /api/health - Light ping check matching IntegrationsPage expectations
+// GET /api/health - Light ping check matching IntegrationsPage expectations (Público e Mínimo)
 healthRouter.get('/health', (req: AuthenticatedRequest, res) => {
-  const firebaseConfigured = isFirebaseAdminConfigured();
-  const mercadoPagoConfigured = Boolean(
-    process.env.MERCADO_PAGO_ACCESS_TOKEN && process.env.MERCADO_PAGO_ACCESS_TOKEN.trim().length > 5
-  );
-  const geminiConfigured = Boolean(
-    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
-  );
-
   return res.json({
     status: 'ok',
     healthy: true,
@@ -21,14 +15,11 @@ healthRouter.get('/health', (req: AuthenticatedRequest, res) => {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
     correlationId: req.correlationId || `corr-${Date.now()}`,
-    firebaseConfigured,
-    mercadoPagoConfigured,
-    geminiConfigured,
   });
 });
 
-// GET /api/health/detailed - Detailed subsystem status check
-healthRouter.get('/health/detailed', async (req: AuthenticatedRequest, res) => {
+// GET /api/health/detailed - Detailed subsystem status check (Somente Administrador)
+healthRouter.get('/health/detailed', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const timestamp = new Date().toISOString();
 
   const firestoreOk = Boolean(adminDb);

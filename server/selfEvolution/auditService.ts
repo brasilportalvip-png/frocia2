@@ -1,10 +1,36 @@
 import crypto from 'crypto';
-import { adminDb } from '../lib/firebaseAdmin.js';
+import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuditRecord, RiskLevel } from './selfEvolutionTypes.js';
 
 export class AuditService {
   private static inMemoryLogs: AuditRecord[] = [];
   private static lastHash: string = '0000000000000000000000000000000000000000000000000000000000000000';
+
+  private static isDbConfigured(): boolean {
+    return isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+  }
+
+  private static async getLatestHash(): Promise<string> {
+    if (this.isDbConfigured()) {
+      try {
+        const snapshot = await adminDb
+          .collection('self_evolution_audit_logs')
+          .orderBy('timestamp', 'desc')
+          .limit(1)
+          .get();
+
+        if (!snapshot.empty) {
+          const latestDoc = snapshot.docs[0].data() as AuditRecord;
+          if (latestDoc.recordHash) {
+            return latestDoc.recordHash;
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Erro ao buscar último hash da trilha no Firestore:', (err as any)?.message || err);
+      }
+    }
+    return this.lastHash;
+  }
 
   static async logEvent(params: {
     actor: string;
@@ -23,6 +49,64 @@ export class AuditService {
     const timestamp = new Date().toISOString();
     const id = `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
+    if (this.isDbConfigured()) {
+      const docRef = adminDb.collection('self_evolution_audit_logs').doc(id);
+      try {
+        return await adminDb.runTransaction(async (transaction) => {
+          // Busca o registro mais recente em transação para garantir encadeamento forte
+          const query = adminDb.collection('self_evolution_audit_logs').orderBy('timestamp', 'desc').limit(1);
+          const snapshot = await transaction.get(query);
+
+          let previousRecordHash = '0000000000000000000000000000000000000000000000000000000000000000';
+          if (!snapshot.empty) {
+            const latest = snapshot.docs[0].data() as AuditRecord;
+            if (latest.recordHash) {
+              previousRecordHash = latest.recordHash;
+            }
+          }
+
+          const rawToHash = JSON.stringify({
+            id,
+            actor: params.actor,
+            action: params.action,
+            resource: params.resource,
+            result: params.result,
+            timestamp,
+            previousHash: previousRecordHash,
+          });
+
+          const recordHash = crypto.createHash('sha256').update(rawToHash).digest('hex');
+
+          const record: AuditRecord = {
+            id,
+            actor: params.actor,
+            action: params.action,
+            resource: params.resource,
+            previousState: params.previousState ?? null,
+            newState: params.newState ?? null,
+            reason: params.reason ?? null,
+            riskLevel: params.riskLevel,
+            result: params.result,
+            correlationId: params.correlationId ?? null,
+            commitHash: params.commitHash ?? null,
+            prUrl: params.prUrl ?? null,
+            deployUrl: params.deployUrl ?? null,
+            previousRecordHash,
+            recordHash,
+            timestamp,
+          };
+
+          transaction.set(docRef, record);
+          this.lastHash = recordHash;
+          this.inMemoryLogs.unshift(record);
+          return record;
+        });
+      } catch (err) {
+        console.warn('⚠️ Transação do Firestore falhou para AuditLog, utilizando encadeamento local:', (err as any)?.message || err);
+      }
+    }
+
+    const previousRecordHash = await this.getLatestHash();
     const rawToHash = JSON.stringify({
       id,
       actor: params.actor,
@@ -30,7 +114,7 @@ export class AuditService {
       resource: params.resource,
       result: params.result,
       timestamp,
-      previousHash: this.lastHash,
+      previousHash: previousRecordHash,
     });
 
     const recordHash = crypto.createHash('sha256').update(rawToHash).digest('hex');
@@ -49,27 +133,18 @@ export class AuditService {
       commitHash: params.commitHash ?? null,
       prUrl: params.prUrl ?? null,
       deployUrl: params.deployUrl ?? null,
-      previousRecordHash: this.lastHash,
+      previousRecordHash,
       recordHash,
       timestamp,
     };
 
     this.lastHash = recordHash;
     this.inMemoryLogs.unshift(record);
-
-    if (adminDb) {
-      try {
-        await adminDb.collection('self_evolution_audit_logs').doc(id).set(record);
-      } catch (err) {
-        console.error('Erro ao salvar audit log no Firestore:', err);
-      }
-    }
-
     return record;
   }
 
   static async getAuditLogs(limit: number = 50): Promise<AuditRecord[]> {
-    if (adminDb) {
+    if (this.isDbConfigured()) {
       try {
         const snapshot = await adminDb
           .collection('self_evolution_audit_logs')
@@ -88,4 +163,3 @@ export class AuditService {
     return this.inMemoryLogs.slice(0, limit);
   }
 }
-

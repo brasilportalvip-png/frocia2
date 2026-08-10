@@ -1,5 +1,6 @@
-import { adminDb } from '../lib/firebaseAdmin.js';
+import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { SelfEvolutionBudget } from './selfEvolutionTypes.js';
+import { IBudgetRepository, FirestoreBudgetRepository, InMemoryBudgetRepository } from './repositories.js';
 
 export class BudgetService {
   private static defaultBudget: SelfEvolutionBudget = {
@@ -12,39 +13,28 @@ export class BudgetService {
     lastResetDate: new Date().toISOString().split('T')[0],
   };
 
-  static async getBudgetStatus(): Promise<SelfEvolutionBudget> {
-    const today = new Date().toISOString().split('T')[0];
+  private static repository: IBudgetRepository | null = null;
 
-    if (adminDb) {
-      try {
-        const docRef = adminDb.collection('self_evolution_budgets').doc('global');
-        const doc = await docRef.get();
-
-        if (doc.exists) {
-          const data = doc.data() as SelfEvolutionBudget;
-          if (data.lastResetDate !== today) {
-            data.dailyCreditsUsed = 0;
-            data.dailyAgentRunsCount = 0;
-            data.lastResetDate = today;
-            await docRef.set(data, { merge: true });
-          }
-          this.defaultBudget = { ...data };
-          return data;
-        } else {
-          await docRef.set(this.defaultBudget);
-          return { ...this.defaultBudget };
+  private static getRepo(): IBudgetRepository {
+    if (!this.repository) {
+      if (isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
+        this.repository = new FirestoreBudgetRepository(this.defaultBudget);
+      } else {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('Firestore adminDb não configurado em ambiente de produção para BudgetService.');
         }
-      } catch (err) {
-        console.warn('⚠️ Erro ao buscar orçamento no Firestore, utilizando fallback em memória:', (err as any)?.message || err);
+        this.repository = new InMemoryBudgetRepository(this.defaultBudget);
       }
     }
+    return this.repository;
+  }
 
-    if (this.defaultBudget.lastResetDate !== today) {
-      this.defaultBudget.dailyCreditsUsed = 0;
-      this.defaultBudget.dailyAgentRunsCount = 0;
-      this.defaultBudget.lastResetDate = today;
-    }
-    return { ...this.defaultBudget };
+  static setRepository(repo: IBudgetRepository): void {
+    this.repository = repo;
+  }
+
+  static async getBudgetStatus(): Promise<SelfEvolutionBudget> {
+    return await this.getRepo().getBudget();
   }
 
   static async canExecuteAgentRun(estimatedCredits: number = 10): Promise<boolean> {
@@ -57,51 +47,6 @@ export class BudgetService {
 
   static async consumeBudget(credits: number): Promise<boolean> {
     const today = new Date().toISOString().split('T')[0];
-
-    if (adminDb) {
-      try {
-        const docRef = adminDb.collection('self_evolution_budgets').doc('global');
-        return await adminDb.runTransaction(async (transaction) => {
-          const doc = await transaction.get(docRef);
-          let current: SelfEvolutionBudget = doc.exists ? (doc.data() as SelfEvolutionBudget) : { ...this.defaultBudget };
-
-          if (current.lastResetDate !== today) {
-            current.dailyCreditsUsed = 0;
-            current.dailyAgentRunsCount = 0;
-            current.lastResetDate = today;
-          }
-
-          if (current.dailyAgentRunsCount >= current.dailyMaxAgentRuns) return false;
-          if (current.dailyCreditsUsed + credits > current.dailyCreditLimit) return false;
-          if (current.monthlyCreditsUsed + credits > current.monthlyCreditLimit) return false;
-
-          current.dailyCreditsUsed += credits;
-          current.monthlyCreditsUsed += credits;
-          current.dailyAgentRunsCount += 1;
-
-          transaction.set(docRef, current);
-          this.defaultBudget = { ...current };
-          return true;
-        });
-      } catch (err) {
-        console.warn('⚠️ Erro de transação ao consumir orçamento no Firestore, aplicando fallback em memória:', (err as any)?.message || err);
-      }
-    }
-
-    if (this.defaultBudget.lastResetDate !== today) {
-      this.defaultBudget.dailyCreditsUsed = 0;
-      this.defaultBudget.dailyAgentRunsCount = 0;
-      this.defaultBudget.lastResetDate = today;
-    }
-
-    if (this.defaultBudget.dailyAgentRunsCount >= this.defaultBudget.dailyMaxAgentRuns) return false;
-    if (this.defaultBudget.dailyCreditsUsed + credits > this.defaultBudget.dailyCreditLimit) return false;
-    if (this.defaultBudget.monthlyCreditsUsed + credits > this.defaultBudget.monthlyCreditLimit) return false;
-
-    this.defaultBudget.dailyCreditsUsed += credits;
-    this.defaultBudget.monthlyCreditsUsed += credits;
-    this.defaultBudget.dailyAgentRunsCount += 1;
-    return true;
+    return await this.getRepo().consumeBudget(credits, today, this.defaultBudget);
   }
 }
-

@@ -1,110 +1,37 @@
-import { adminDb } from '../lib/firebaseAdmin.js';
+import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { LeaseLock } from './selfEvolutionTypes.js';
+import { ILockRepository, FirestoreLockRepository, InMemoryLockRepository } from './repositories.js';
 
 export class LockService {
-  private static locks: Map<string, LeaseLock> = new Map();
+  private static repository: ILockRepository | null = null;
 
-  static async acquireLock(resourceId: string, owner: string, ttlMs: number = 60000): Promise<LeaseLock | null> {
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + ttlMs).toISOString();
-
-    if (adminDb) {
-      try {
-        const lockRef = adminDb.collection('self_evolution_locks').doc(resourceId);
-
-        return await adminDb.runTransaction(async (transaction) => {
-          const doc = await transaction.get(lockRef);
-          if (doc.exists) {
-            const data = doc.data();
-            const currentExpiresAt = data?.lockExpiresAt ? new Date(data.lockExpiresAt) : new Date(0);
-            if (currentExpiresAt > now && data?.lockOwner !== owner) {
-              return null; // Lock held by another owner
-            }
-          }
-
-          const existingAttempt = doc.exists ? (doc.data()?.attempt || 0) : 0;
-          const lock: LeaseLock = {
-            id: `lock-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            resourceId,
-            lockOwner: owner,
-            lockedAt: now.toISOString(),
-            lockExpiresAt: expiresAt,
-            heartbeatAt: now.toISOString(),
-            attempt: existingAttempt + 1,
-            maxAttempts: 5,
-          };
-
-          transaction.set(lockRef, lock);
-          this.locks.set(resourceId, lock);
-          return lock;
-        });
-      } catch (err) {
-        console.warn('⚠️ Erro de transação Firestore em LockService.acquireLock, aplicando fallback em memória:', (err as any)?.message || err);
+  private static getRepo(): ILockRepository {
+    if (!this.repository) {
+      if (isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
+        this.repository = new FirestoreLockRepository();
+      } else {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('Firestore adminDb não configurado em ambiente de produção para LockService.');
+        }
+        this.repository = new InMemoryLockRepository();
       }
     }
+    return this.repository;
+  }
 
-    // Fallback if adminDb is offline
-    const existing = this.locks.get(resourceId);
-    if (existing && new Date(existing.lockExpiresAt) > now && existing.lockOwner !== owner) {
-      return null;
-    }
+  static setRepository(repo: ILockRepository): void {
+    this.repository = repo;
+  }
 
-    const lock: LeaseLock = {
-      id: `lock-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      resourceId,
-      lockOwner: owner,
-      lockedAt: now.toISOString(),
-      lockExpiresAt: expiresAt,
-      heartbeatAt: now.toISOString(),
-      attempt: (existing?.attempt || 0) + 1,
-      maxAttempts: 5,
-    };
-
-    this.locks.set(resourceId, lock);
-    return lock;
+  static async acquireLock(resourceId: string, owner: string, ttlMs: number = 60000): Promise<LeaseLock | null> {
+    return await this.getRepo().acquireLock(resourceId, owner, ttlMs);
   }
 
   static async releaseLock(resourceId: string, owner: string): Promise<boolean> {
-    if (adminDb) {
-      try {
-        const lockRef = adminDb.collection('self_evolution_locks').doc(resourceId);
-        return await adminDb.runTransaction(async (transaction) => {
-          const doc = await transaction.get(lockRef);
-          if (!doc.exists) return true;
-          if (doc.data()?.lockOwner !== owner) return false;
-
-          transaction.delete(lockRef);
-          this.locks.delete(resourceId);
-          return true;
-        });
-      } catch (err) {
-        console.warn('⚠️ Erro ao liberar lock no Firestore, aplicando fallback em memória:', (err as any)?.message || err);
-      }
-    }
-
-    const existing = this.locks.get(resourceId);
-    if (!existing) return true;
-    if (existing.lockOwner !== owner) return false;
-
-    this.locks.delete(resourceId);
-    return true;
+    return await this.getRepo().releaseLock(resourceId, owner);
   }
 
   static async isLocked(resourceId: string): Promise<boolean> {
-    if (adminDb) {
-      try {
-        const doc = await adminDb.collection('self_evolution_locks').doc(resourceId).get();
-        if (!doc.exists) return false;
-        const data = doc.data();
-        return new Date(data?.lockExpiresAt) > new Date();
-      } catch {
-        // fallback
-      }
-    }
-
-    const existing = this.locks.get(resourceId);
-    if (!existing) return false;
-    return new Date(existing.lockExpiresAt) > new Date();
+    return await this.getRepo().isLocked(resourceId);
   }
 }
-

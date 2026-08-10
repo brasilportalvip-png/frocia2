@@ -76,8 +76,6 @@ if (!getApps().length) {
 
 export const adminAuth: Auth = getAuth(app);
 
-// Os testes devem simular somente os serviços externos utilizados.
-// O runtime sempre utiliza o cliente oficial do Firestore.
 export const adminDb: Firestore = getFirestore(app);
 
 export default app;

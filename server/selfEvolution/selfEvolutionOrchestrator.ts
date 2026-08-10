@@ -37,6 +37,7 @@ export class SelfEvolutionOrchestrator {
       // Stage 1: Triage & Approval Check
       if (candidate.state === 'detected') {
         await ImprovementPlannerService.updateCandidateState(candidateId, 'triaged');
+        candidate.state = 'triaged';
         await AuditService.logEvent({
           actor,
           action: 'triage_candidate',
@@ -48,6 +49,7 @@ export class SelfEvolutionOrchestrator {
 
       if (candidate.requiresApproval && candidate.state === 'triaged') {
         await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_work_approval');
+        candidate.state = 'awaiting_work_approval';
         return {
           state: 'awaiting_work_approval',
           message: `Aprovação humana necessária para candidato de risco ${candidate.riskLevel}.`,
