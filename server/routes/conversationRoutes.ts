@@ -219,8 +219,8 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
     const { id: conversationId } = req.params;
     const { content, attachments = [], citations = [], executionId = null, model = null } = req.body;
 
-    // Allow role = 'user' or 'ai' / 'assistant'
-    const role = (req.body.role === 'ai' || req.body.role === 'assistant') ? 'ai' : 'user';
+    // Client messages created via POST /messages must always have role = 'user'
+    const role = 'user';
 
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
       return res.status(400).json({ error: { code: 'missing_content', message: 'Conteudo da mensagem e obrigatorio.', correlationId: req.correlationId } });

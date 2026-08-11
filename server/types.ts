@@ -4,6 +4,8 @@ export interface AuthenticatedUser {
   uid: string;
   email: string;
   role: 'admin' | 'user';
+  name?: string;
+  picture?: string;
 }
 
 export interface AuthenticatedRequest extends Request {

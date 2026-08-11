@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Lock, Mail, User, LogIn, KeyRound, Loader2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Lock, Mail, User, LogIn, KeyRound, Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 interface AuthModalProps {
@@ -13,11 +13,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen && !isSubmitting) {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isSubmitting]);
 
   if (!isOpen) return null;
 
@@ -83,12 +94,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 select-none">
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 select-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+    >
       <div className="w-full max-w-md glass-panel rounded-[32px] p-6 shadow-2xl border border-white/20 text-white space-y-6 relative">
         <button
           onClick={handleClose}
           className="absolute top-5 right-5 text-white/50 hover:text-white p-2 rounded-full glass-button transition-colors"
           disabled={isSubmitting}
+          aria-label="Fechar janela de autenticação"
         >
           <X className="w-4 h-4" />
         </button>
@@ -102,7 +119,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               referrerPolicy="no-referrer"
               className="h-10 w-auto object-contain filter drop-shadow"
             />
-            <span className="text-2xl font-black tracking-tight text-white">Froc.IA</span>
+            <span id="auth-modal-title" className="text-2xl font-black tracking-tight text-white">Froc.IA</span>
           </div>
           <p className="text-xs text-white/60">
             {mode === 'register' && 'Crie sua conta real para salvar seus projetos'}
@@ -178,14 +195,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   disabled={isSubmitting}
-                  className="w-full glass-input rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-white/40 focus:outline-none"
+                  className="w-full glass-input rounded-2xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-white/40 focus:outline-none"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors"
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
           )}

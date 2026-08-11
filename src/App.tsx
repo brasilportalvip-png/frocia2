@@ -231,21 +231,11 @@ export default function App() {
       };
 
       // Save project to backend
-      let createdProject: GeneratedSite;
-      try {
-        const saveRes = await apiClient<{ project: GeneratedSite }>('/api/projects', {
-          method: 'POST',
-          body: JSON.stringify(sitePayload)
-        });
-        createdProject = saveRes.project;
-      } catch (saveErr) {
-        createdProject = {
-          id: `froc-site-${Date.now()}`,
-          ...sitePayload,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-      }
+      const saveRes = await apiClient<{ project: GeneratedSite }>('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify(sitePayload)
+      });
+      const createdProject = saveRes.project;
 
       setActiveSite(createdProject);
       const updatedList = [createdProject, ...savedSites];
@@ -257,7 +247,7 @@ export default function App() {
         {
           id: `msg-${Date.now()}`,
           sender: 'ai',
-          text: `🎉 Seu projeto "${createdProject.title}" foi criado com sucesso! O que gostaria de personalizar a seguir?`,
+          text: `🎉 Seu projeto "${createdProject.title}" foi criado e salvo com sucesso! O que gostaria de personalizar a seguir?`,
           timestamp: Date.now()
         }
       ]);
@@ -594,6 +584,8 @@ export default function App() {
             onToggleFavorite={handleToggleFavorite}
             user={currentUser}
             onNavigateToPricing={() => setNavMode('pricing')}
+            onRefreshProfile={refreshProfile}
+            onLogout={logout}
           />
         )}
 

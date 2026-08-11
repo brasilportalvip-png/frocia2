@@ -161,53 +161,93 @@ export async function createApp() {
   app.get('/api/users/me', requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const uid = req.user!.uid;
-      let userDoc: any = null;
 
-      if (isFirebaseAdminConfigured()) {
-        const docRef = await adminDb.collection('users').doc(uid).get();
-        if (docRef.exists) {
-          userDoc = docRef.data();
-        }
+      if (!isFirebaseAdminConfigured() || !adminDb) {
+        return res.status(503).json({
+          error: {
+            code: 'database_unavailable',
+            message: 'Banco de dados temporariamente indisponível no servidor.',
+            correlationId: req.correlationId,
+          },
+        });
       }
 
       const wallet = await CreditWalletService.getBalance(uid);
+      const userRef = adminDb.collection('users').doc(uid);
+      const docSnap = await userRef.get();
 
-      if (!userDoc) {
+      if (!docSnap.exists) {
+        // Auto-provision initial profile with welcome credits
+        const now = new Date();
+        const initialProfileData = {
+          uid,
+          email: req.user!.email || '',
+          displayName: req.user!.email ? req.user!.email.split('@')[0] : 'Usuário',
+          name: req.user!.email ? req.user!.email.split('@')[0] : 'Usuário',
+          avatarUrl: req.user!.picture || '',
+          role: req.user!.role || 'user',
+          plan: 'Inicial',
+          creditsAvailable: 100,
+          creditsRemaining: 100,
+          creditsReserved: 0,
+          creditsPurchased: 0,
+          creditsConsumed: 0,
+          creditsRefunded: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await userRef.set(initialProfileData);
+
         return res.json({
           profile: {
             id: uid,
-            name: req.user!.email ? req.user!.email.split('@')[0] : 'Usuário',
-            email: req.user!.email,
-            avatarUrl: '',
-            role: req.user!.role || 'user',
-            plan: 'Inicial',
-            creditsRemaining: wallet.available,
-            creditsMax: wallet.available,
-            creditsReserved: wallet.reserved,
+            uid,
+            name: initialProfileData.displayName,
+            email: initialProfileData.email,
+            avatarUrl: initialProfileData.avatarUrl,
+            role: initialProfileData.role,
+            plan: initialProfileData.plan,
+            creditsRemaining: 100,
+            creditsMax: 100,
+            creditsReserved: 0,
             isAuthenticated: true,
           },
         });
       }
 
+      const userDoc = docSnap.data() || {};
+
       return res.json({
         profile: {
           id: uid,
-          name: userDoc.displayName || userDoc.name || 'Usuário',
+          uid,
+          name: userDoc.displayName || userDoc.name || (req.user!.email ? req.user!.email.split('@')[0] : 'Usuário'),
           email: userDoc.email || req.user!.email,
-          avatarUrl: userDoc.avatarUrl || '',
+          avatarUrl: userDoc.avatarUrl || req.user!.picture || '',
           role: userDoc.role || 'user',
           plan: userDoc.plan || 'Inicial',
           creditsRemaining: wallet.available,
-          creditsMax: wallet.available,
+          creditsMax: userDoc.creditsAvailable || wallet.available,
           creditsReserved: wallet.reserved,
           isAuthenticated: true,
         },
       });
     } catch (err: any) {
+      console.error('❌ Error in GET /api/users/me:', err);
+      if (err.name === 'WalletUnavailableError') {
+        return res.status(503).json({
+          error: {
+            code: 'wallet_unavailable',
+            message: err.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
       res.status(500).json({
         error: {
           code: 'profile_fetch_failed',
-          message: 'Erro ao buscar perfil do usuario.',
+          message: 'Erro ao buscar perfil do usuário.',
           correlationId: req.correlationId,
         },
       });
@@ -218,69 +258,101 @@ export async function createApp() {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email;
-      const { displayName } = req.body;
+      const { displayName, avatarUrl } = req.body;
 
-      const wallet = await CreditWalletService.getBalance(uid);
-
-      let userProfile = {
-        id: uid,
-        uid,
-        email,
-        displayName: displayName || (email ? email.split('@')[0] : 'Usuário'),
-        name: displayName || (email ? email.split('@')[0] : 'Usuário'),
-        role: 'user' as const,
-        plan: 'Inicial' as const,
-        creditsRemaining: wallet.available,
-        creditsMax: wallet.available,
-        creditsReserved: wallet.reserved,
-        isAuthenticated: true,
-      };
-
-      if (isFirebaseAdminConfigured()) {
-        try {
-          const userRef = adminDb.collection('users').doc(uid);
-          const docSnap = await userRef.get();
-
-          if (docSnap.exists) {
-            const existingData = docSnap.data();
-            userProfile = {
-              id: uid,
-              uid,
-              email: existingData?.email || email,
-              displayName: existingData?.displayName || existingData?.name || userProfile.displayName,
-              name: existingData?.displayName || existingData?.name || userProfile.displayName,
-              role: existingData?.role || 'user',
-              plan: existingData?.plan || 'Inicial',
-              creditsRemaining: wallet.available,
-              creditsMax: wallet.available,
-              creditsReserved: wallet.reserved,
-              isAuthenticated: true,
-            };
-          } else {
-            const now = new Date();
-            await userRef.set({
-              uid,
-              email,
-              displayName: userProfile.displayName,
-              role: 'user',
-              plan: 'free',
-              creditsAvailable: 0,
-              creditsRemaining: 0,
-              creditsReserved: 0,
-              creditsPurchased: 0,
-              creditsConsumed: 0,
-              creditsRefunded: 0,
-              createdAt: now,
-              updatedAt: now,
-            });
-          }
-        } catch (dbError) {
-          console.warn('⚠️ Firestore error in /api/users/profile, using token profile:', dbError);
-        }
+      if (!isFirebaseAdminConfigured() || !adminDb) {
+        return res.status(503).json({
+          error: {
+            code: 'database_unavailable',
+            message: 'Banco de dados temporariamente indisponível no servidor.',
+            correlationId: req.correlationId,
+          },
+        });
       }
 
-      return res.json({ profile: userProfile });
+      const wallet = await CreditWalletService.getBalance(uid);
+      const userRef = adminDb.collection('users').doc(uid);
+      const docSnap = await userRef.get();
+
+      let finalDisplayName = displayName || (email ? email.split('@')[0] : 'Usuário');
+      let finalAvatarUrl = avatarUrl || req.user!.picture || '';
+
+      if (docSnap.exists) {
+        const existingData = docSnap.data() || {};
+        finalDisplayName = displayName || existingData.displayName || existingData.name || finalDisplayName;
+        finalAvatarUrl = avatarUrl || existingData.avatarUrl || finalAvatarUrl;
+
+        await userRef.update({
+          displayName: finalDisplayName,
+          name: finalDisplayName,
+          avatarUrl: finalAvatarUrl,
+          updatedAt: new Date(),
+        });
+
+        return res.json({
+          profile: {
+            id: uid,
+            uid,
+            name: finalDisplayName,
+            email: existingData.email || email,
+            avatarUrl: finalAvatarUrl,
+            role: existingData.role || 'user',
+            plan: existingData.plan || 'Inicial',
+            creditsRemaining: wallet.available,
+            creditsMax: existingData.creditsAvailable || wallet.available,
+            creditsReserved: wallet.reserved,
+            isAuthenticated: true,
+          },
+        });
+      } else {
+        const now = new Date();
+        const newProfileData = {
+          uid,
+          email: email || '',
+          displayName: finalDisplayName,
+          name: finalDisplayName,
+          avatarUrl: finalAvatarUrl,
+          role: 'user',
+          plan: 'Inicial',
+          creditsAvailable: 100,
+          creditsRemaining: 100,
+          creditsReserved: 0,
+          creditsPurchased: 0,
+          creditsConsumed: 0,
+          creditsRefunded: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await userRef.set(newProfileData);
+
+        return res.json({
+          profile: {
+            id: uid,
+            uid,
+            name: finalDisplayName,
+            email: email || '',
+            avatarUrl: finalAvatarUrl,
+            role: 'user',
+            plan: 'Inicial',
+            creditsRemaining: 100,
+            creditsMax: 100,
+            creditsReserved: 0,
+            isAuthenticated: true,
+          },
+        });
+      }
     } catch (err: any) {
+      console.error('❌ Error in POST /api/users/profile:', err);
+      if (err.name === 'WalletUnavailableError') {
+        return res.status(503).json({
+          error: {
+            code: 'wallet_unavailable',
+            message: err.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
       res.status(500).json({
         error: {
           code: 'profile_update_failed',

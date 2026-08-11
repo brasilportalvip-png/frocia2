@@ -352,12 +352,21 @@ export const Header: React.FC<HeaderProps> = ({
                 {user.name.split(' ')[0]}
               </span>
 
-              <span className="flex h-7 w-7 items-center justify-center rounded-full border border-amber-100/35 bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 text-xs font-black text-black">
-                {user.name
-                  .trim()
-                  .charAt(0)
-                  .toUpperCase() || 'U'}
-              </span>
+              {user.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.name}
+                  referrerPolicy="no-referrer"
+                  className="h-7 w-7 rounded-full object-cover border border-amber-300/40"
+                />
+              ) : (
+                <span className="flex h-7 w-7 items-center justify-center rounded-full border border-amber-100/35 bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 text-xs font-black text-black">
+                  {user.name
+                    .trim()
+                    .charAt(0)
+                    .toUpperCase() || 'U'}
+                </span>
+              )}
             </button>
 
             {onLogout && (

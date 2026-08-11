@@ -244,7 +244,40 @@ export class AIExecutionService {
       }
     }
 
-    // 9. Finalize Trace
+    // 9. Persist messages in conversation if conversationId is set
+    if (adminDb && conversationId) {
+      try {
+        const userMsgRef = adminDb.collection('messages').doc();
+        await userMsgRef.set({
+          conversationId,
+          userId,
+          role: 'user',
+          content: prompt,
+          attachments: attachments || [],
+          createdAt: FieldValue.serverTimestamp(),
+        });
+
+        const aiMsgRef = adminDb.collection('messages').doc();
+        await aiMsgRef.set({
+          conversationId,
+          userId,
+          role: 'ai',
+          content: aiResponseText,
+          citations: citations || [],
+          executionId,
+          model: modelToUse,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+
+        await adminDb.collection('conversations').doc(conversationId).set({
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (msgErr) {
+        console.warn('⚠️ Error saving conversation messages in AIExecutionService:', msgErr);
+      }
+    }
+
+    // 10. Finalize Trace
     await ExecutionTraceService.updateTrace(executionId, {
       status: 'completed',
       inputTokens,

@@ -2,6 +2,13 @@ import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 
+export class WalletUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WalletUnavailableError';
+  }
+}
+
 export class InsufficientCreditsError extends Error {
   constructor(message: string) {
     super(message);
@@ -141,14 +148,7 @@ export class CreditWalletService {
    */
   static async getBalance(userId: string): Promise<WalletBalance> {
     if (!adminDb) {
-      return {
-        available: 0,
-        reserved: 0,
-        purchased: 0,
-        consumed: 0,
-        refunded: 0,
-        updatedAt: new Date().toISOString(),
-      };
+      throw new WalletUnavailableError('Banco de dados indisponível (adminDb não inicializado).');
     }
 
     try {
@@ -180,15 +180,8 @@ export class CreditWalletService {
           : new Date().toISOString(),
       };
     } catch (error) {
-      console.warn('⚠️ Firestore read failed in CreditWalletService.getBalance, returning zero balance fallback:', error);
-      return {
-        available: 0,
-        reserved: 0,
-        purchased: 0,
-        consumed: 0,
-        refunded: 0,
-        updatedAt: new Date().toISOString(),
-      };
+      console.error('❌ Firestore read failed in CreditWalletService.getBalance:', error);
+      throw new WalletUnavailableError('Serviço de carteira e saldo temporariamente indisponível.');
     }
   }
 
