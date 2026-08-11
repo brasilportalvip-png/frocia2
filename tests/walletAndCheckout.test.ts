@@ -44,10 +44,11 @@ describe('Phase 2 Financial & Checkout Tests', () => {
 
     it('should validate valid admin grant credits input', () => {
       const valid = AdminGrantCreditsInputSchema.safeParse({
-        userEmail: 'user@example.com',
-        amount: 250,
-        reason: 'Concessão manual de teste',
-      });
+  userEmail: 'user@example.com',
+  amount: 250,
+  reason: 'Concessão manual de teste',
+  idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
+});
       expect(valid.success).toBe(true);
     });
 

@@ -136,8 +136,24 @@ service cloud.firestore {
 
     // Projects Collection
     match /projects/{projectId} {
-      allow read, create, update, delete: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-    }
+  allow create: if isAuthenticated() && (
+    request.resource.data.userId == request.auth.uid ||
+    isAdmin()
+  );
+
+  allow read, delete: if isAuthenticated() && (
+    resource.data.userId == request.auth.uid ||
+    isAdmin()
+  );
+
+  allow update: if isAuthenticated() && (
+    isAdmin() ||
+    (
+      resource.data.userId == request.auth.uid &&
+      request.resource.data.userId == request.auth.uid
+    )
+  );
+}
 
     // Media Generations & Jobs
     match /media_generations/{genId} {

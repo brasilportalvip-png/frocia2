@@ -162,7 +162,21 @@ export async function apiClient<T = any>(
       ...options,
       headers,
     });
-  } catch {
+   } catch (error) {
+    if (
+      options.signal?.aborted ||
+      (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      )
+    ) {
+      throw new ApiClientError(
+        'Requisição cancelada pelo usuário.',
+        499,
+        'request_aborted'
+      );
+    }
+
     throw new ApiClientError(
       'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.',
       0,

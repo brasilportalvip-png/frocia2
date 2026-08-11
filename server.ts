@@ -25,6 +25,11 @@ import {
   InvalidAmountError,
   IdempotencyConflictError
 } from './server/services/creditWalletService.js';
+
+
+import { UserAdminService } from './server/services/userAdminService.js';
+
+
 import {
   MercadoPagoService,
   PaymentProviderConfigurationError,
@@ -1181,32 +1186,34 @@ export async function createApp() {
       }
 
       const { userEmail, userId, amount, reason, idempotencyKey: providedKey } = parseResult.data;
-      let targetUid = userId || '';
+      
 
-      if (!targetUid && userEmail) {
-        const snap = await adminDb
-          .collection('users')
-          .where('email', '==', userEmail.toLowerCase())
-          .limit(1)
-          .get();
 
-        if (!snap.empty) {
-          targetUid = snap.docs[0].id;
-        } else {
-          try {
-            const fbUser = await adminAuth.getUserByEmail(userEmail);
-            targetUid = fbUser.uid;
-          } catch (authErr) {
-            return res.status(404).json({
-              error: {
-                code: 'user_not_found',
-                message: `Usuario com e-mail ${userEmail} nao foi localizado.`,
-                correlationId: req.correlationId,
-              },
-            });
-          }
-        }
-      }
+let targetUid = '';
+
+try {
+  if (userId) {
+    const canonicalUser = await adminAuth.getUser(userId);
+    targetUid = canonicalUser.uid;
+  } else if (userEmail) {
+    const canonicalUser =
+      await UserAdminService.resolveCanonicalUserByEmail(userEmail);
+
+    targetUid = canonicalUser.uid;
+  }
+} catch {
+  return res.status(404).json({
+    error: {
+      code: 'user_not_found',
+      message: 'Usuario de destino nao foi localizado no Firebase Authentication.',
+      correlationId: req.correlationId,
+    },
+  });
+}
+
+
+
+
 
       if (!targetUid) {
         return res.status(400).json({
@@ -1279,7 +1286,11 @@ export async function createApp() {
     });
 
     // Frontend local. Na Vercel, esta aplicação atende somente as rotas /api.
-    if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    if (
+  process.env.NODE_ENV !== 'production' &&
+  process.env.NODE_ENV !== 'test' &&
+  !process.env.VERCEL
+) {
     const require = createRequire(import.meta.url);
     const vitePackageName = ['vi', 'te'].join('');
     const { createServer: createViteServer } = require(
@@ -1291,7 +1302,10 @@ export async function createApp() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else if (!process.env.VERCEL) {
+  } else if (
+  process.env.NODE_ENV !== 'test' &&
+  !process.env.VERCEL
+) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -1342,8 +1356,10 @@ async function startLocalServer() {
     console.error('❌ Uncaught Exception:', error);
   });
 }
-
-if (!process.env.VERCEL) {
+if (
+  !process.env.VERCEL &&
+  process.env.NODE_ENV !== 'test'
+) {
   startLocalServer().catch((error) => {
     console.error('❌ Falha ao iniciar servidor local:', error);
     process.exit(1);

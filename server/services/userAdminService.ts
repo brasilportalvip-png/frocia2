@@ -1,4 +1,8 @@
-import { adminAuth, adminDb } from '../lib/firebaseAdmin.js';
+import {
+  adminAuth,
+  adminDb,
+  isFirebaseAdminConfigured,
+} from '../lib/firebaseAdmin.js';
 
 export interface EmailDuplicateAuditReport {
   timestamp: string;
@@ -46,9 +50,9 @@ export class UserAdminService {
       duplicateGroups: [],
     };
 
-    if (!adminDb) {
-      return report;
-    }
+   if (!isFirebaseAdminConfigured()) {
+  return report;
+}
 
     try {
       const snapshot = await adminDb.collection('users').get();
