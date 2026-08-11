@@ -134,6 +134,26 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Projects Collection
+    match /projects/{projectId} {
+      allow read, create, update, delete: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Media Generations & Jobs
+    match /media_generations/{genId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false; // Backend write only
+    }
+    match /media_jobs/{jobId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false; // Backend write only
+    }
+
+    // Self Evolution Config
+    match /self_evolution_config/{configId} {
+      allow read, write: if isAdmin();
+    }
+
     // Fallback: Deny all other collections by default
     match /{document=**} {
       allow read, write: if false;

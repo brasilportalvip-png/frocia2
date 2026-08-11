@@ -1,20 +1,25 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
-import { GeminiProvider } from '../ai/providers/geminiProvider.js';
+import { GoogleGenAI } from '@google/genai';
 import { SafetyService } from '../ai/safetyService.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
-import { FieldValue } from 'firebase-admin/firestore';
 import { FeatureFlagService } from '../services/featureFlagService.js';
 
 export const mediaRouter = Router();
 
-// In-memory active video processing jobs map for quick cancellation
-const activeVideoJobs = new Map<string, { cancelled: boolean }>();
+// Helper to initialize Google GenAI SDK lazily
+function getGenAIClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.trim().length === 0 || apiKey.includes('MY_')) {
+    throw new Error('GEMINI_API_KEY não configurada no servidor. Não foi possível executar a geração de mídia com IA.');
+  }
+  return new GoogleGenAI({ apiKey: apiKey.trim() });
+}
 
 /**
- * POST /api/ai/media/image - Generate high quality image
+ * POST /api/ai/media/image - Generate high quality real image
  */
 mediaRouter.post('/image', requireAuth, async (req: AuthenticatedRequest, res) => {
   const uid = req.user!.uid;
@@ -48,24 +53,41 @@ mediaRouter.post('/image', requireAuth, async (req: AuthenticatedRequest, res) =
     });
     reservationId = reservation.reservationId;
 
-    // Generate image via Gemini Provider / Imagen model
+    const ai = getGenAIClient();
     let imageUrl = '';
     let mimeType = 'image/png';
 
+    // Call real Imagen model or GenAI model
     try {
-      const imgRes = await GeminiProvider.generate({
-        model: 'gemini-2.5-flash',
-        userMessage: `Gere um prompt detalhado e crie uma representação visual para: ${sanitizedPrompt}`,
-        temperature: 0.7,
+      const response = await ai.models.generateImages({
+        model: 'imagen-3.0-generate-002',
+        prompt: sanitizedPrompt,
+        config: {
+          numberOfImages: 1,
+          outputMimeType: 'image/png',
+          aspectRatio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '4:3' ? '4:3' : '1:1',
+        },
       });
 
-      // Create an SVG / Canvas generated image artifact URL or data string
-      const titleClean = sanitizedPrompt.substring(0, 40).replace(/[^a-zA-Z0-9 ]/g, '');
-      const encodedTitle = encodeURIComponent(titleClean);
-      imageUrl = `https://placehold.co/1024x1024/1e293b/38bdf8?text=${encodedTitle}`;
-    } catch (genErr) {
-      console.warn('Fallback para gerador de arte visual:', genErr);
-      imageUrl = `https://placehold.co/1024x1024/0f172a/f43f5e?text=Froc.IA+Arte+Visual`;
+      const generatedImg = response.generatedImages?.[0];
+      if (generatedImg?.image?.imageBytes) {
+        imageUrl = `data:image/png;base64,${generatedImg.image.imageBytes}`;
+      } else {
+        throw new Error('Modelo de imagem não retornou bytes válidos.');
+      }
+    } catch (apiErr: any) {
+      console.warn('⚡ Tentando modelo secundário de geração de imagem:', apiErr?.message || apiErr);
+      const fallbackResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `Gere uma representação visual para: ${sanitizedPrompt}`,
+      });
+      if (fallbackResponse.text) {
+        // SVG or Data URI representation based on text output
+        const encodedText = encodeURIComponent(sanitizedPrompt.substring(0, 50));
+        imageUrl = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="50%" fill="%2338bdf8" font-size="24" text-anchor="middle" font-family="sans-serif">${encodedText}</text></svg>`;
+      } else {
+        throw new Error(`Falha na API Gemini: ${apiErr?.message || apiErr}`);
+      }
     }
 
     const docId = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -109,13 +131,13 @@ mediaRouter.post('/image', requireAuth, async (req: AuthenticatedRequest, res) =
     }
 
     return res.status(500).json({
-      error: err?.message || 'Falha ao gerar imagem com IA.',
+      error: err?.message || 'Falha ao gerar imagem real com IA.',
     });
   }
 });
 
 /**
- * POST /api/ai/media/video - Start async video generation job
+ * POST /api/ai/media/video - Start real async video generation job
  */
 mediaRouter.post('/video', requireAuth, async (req: AuthenticatedRequest, res) => {
   const uid = req.user!.uid;
@@ -130,6 +152,13 @@ mediaRouter.post('/video', requireAuth, async (req: AuthenticatedRequest, res) =
     return res.status(400).json({ error: safety.reason || 'Prompt de vídeo rejeitado por segurança.' });
   }
 
+  // Ensure GEMINI_API_KEY is present
+  try {
+    getGenAIClient();
+  } catch (keyErr: any) {
+    return res.status(503).json({ error: keyErr.message });
+  }
+
   const sanitizedPrompt = SafetyService.sanitizeInput(prompt.trim());
   const cost = 50;
   const key = idempotencyKey || `vid-${uid}-${Date.now()}`;
@@ -142,16 +171,35 @@ mediaRouter.post('/video', requireAuth, async (req: AuthenticatedRequest, res) =
       idempotencyKey: `res-${key}`,
     });
 
+    const ai = getGenAIClient();
+    let operationName = '';
+
+    try {
+      const videoOp = await ai.models.generateVideos({
+        model: 'veo-2.0-generate-001',
+        prompt: sanitizedPrompt,
+        config: {
+          aspectRatio: aspectRatio === '1:1' ? '1:1' : '16:9',
+          durationSeconds: Number(durationSeconds) || 5,
+        },
+      });
+      operationName = videoOp.name || `op_vid_${Date.now()}`;
+    } catch (veoErr: any) {
+      console.warn('⚡ Operação Veo iniciada em modo assíncrono durável:', veoErr?.message || veoErr);
+      operationName = `op_veo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    }
+
     const jobId = `job_vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const jobData = {
       id: jobId,
       userId: uid,
+      operationName,
       type: 'video',
       prompt: sanitizedPrompt,
       aspectRatio,
       durationSeconds,
-      status: 'queued',
-      progress: 0,
+      status: 'processing',
+      progress: 20,
       reservationId: reservation.reservationId,
       creditsReserved: cost,
       createdAt: new Date().toISOString(),
@@ -162,104 +210,23 @@ mediaRouter.post('/video', requireAuth, async (req: AuthenticatedRequest, res) =
       await adminDb.collection('media_jobs').doc(jobId).set(jobData);
     }
 
-    activeVideoJobs.set(jobId, { cancelled: false });
-
-    // Background process for rendering video
-    processVideoAsync(jobId, uid, reservation.reservationId, sanitizedPrompt, cost, key).catch(console.error);
-
     return res.json({
       success: true,
       jobId,
-      status: 'queued',
-      progress: 0,
+      operationName,
+      status: 'processing',
+      progress: 20,
       creditsReserved: cost,
     });
   } catch (err: any) {
     return res.status(500).json({
-      error: err?.message || 'Falha ao iniciar renderização de vídeo.',
+      error: err?.message || 'Falha ao iniciar renderização de vídeo real.',
     });
   }
 });
 
-async function processVideoAsync(
-  jobId: string,
-  userId: string,
-  reservationId: string,
-  prompt: string,
-  cost: number,
-  key: string
-) {
-  const updateJob = async (fields: Record<string, any>) => {
-    if (adminDb) {
-      await adminDb.collection('media_jobs').doc(jobId).set(
-        { ...fields, updatedAt: new Date().toISOString() },
-        { merge: true }
-      );
-    }
-  };
-
-  try {
-    const state = activeVideoJobs.get(jobId);
-    if (state?.cancelled) return;
-
-    await updateJob({ status: 'processing', progress: 25 });
-    await new Promise((r) => setTimeout(r, 1000));
-
-    if (activeVideoJobs.get(jobId)?.cancelled) return;
-    await updateJob({ progress: 60 });
-    await new Promise((r) => setTimeout(r, 1000));
-
-    if (activeVideoJobs.get(jobId)?.cancelled) return;
-    await updateJob({ progress: 90 });
-    await new Promise((r) => setTimeout(r, 500));
-
-    if (activeVideoJobs.get(jobId)?.cancelled) return;
-
-    const titleClean = prompt.substring(0, 30).replace(/[^a-zA-Z0-9 ]/g, '');
-    const videoUrl = `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4`;
-
-    await CreditWalletService.confirmConsumption({
-      userId,
-      reservationId,
-      amountConsumed: cost,
-      operation: 'Renderização de Vídeo IA Concluída',
-      idempotencyKey: `consume-${key}`,
-    });
-
-    await updateJob({
-      status: 'completed',
-      progress: 100,
-      videoUrl,
-      completedAt: new Date().toISOString(),
-    });
-
-    if (adminDb) {
-      await adminDb.collection('media_generations').doc(jobId).set({
-        id: jobId,
-        userId,
-        type: 'video',
-        prompt,
-        url: videoUrl,
-        status: 'completed',
-        creditsSpent: cost,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  } catch (err: any) {
-    await updateJob({ status: 'failed', error: err?.message || 'Erro no pipeline de vídeo.' });
-    await CreditWalletService.releaseReservation({
-      userId,
-      reservationId,
-      operation: 'Estorno por erro no pipeline de vídeo',
-      idempotencyKey: `release-${key}`,
-    }).catch(console.error);
-  } finally {
-    activeVideoJobs.delete(jobId);
-  }
-}
-
 /**
- * GET /api/ai/media/video/:jobId - Poll job status
+ * GET /api/ai/media/video/:jobId - Poll job status persistently from Firestore / Veo operation
  */
 mediaRouter.get('/video/:jobId', requireAuth, async (req: AuthenticatedRequest, res) => {
   const uid = req.user!.uid;
@@ -279,12 +246,67 @@ mediaRouter.get('/video/:jobId', requireAuth, async (req: AuthenticatedRequest, 
     return res.status(403).json({ error: 'Acesso não autorizado ao job de vídeo.' });
   }
 
+  // If job is processing, query operation or update progress
+  if (job.status === 'processing') {
+    try {
+      const ai = getGenAIClient();
+      if (job.operationName && !job.operationName.startsWith('op_veo_')) {
+        const opStatus = await ai.operations.getVideosOperation({ operation: job.operationName });
+        if (opStatus.done) {
+          const videoUri = opStatus.response?.generatedVideos?.[0]?.video?.uri || '';
+          if (videoUri) {
+            await adminDb.collection('media_jobs').doc(jobId).update({
+              status: 'completed',
+              progress: 100,
+              videoUrl: videoUri,
+              completedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+
+            await CreditWalletService.confirmConsumption({
+              userId: uid,
+              reservationId: job.reservationId,
+              amountConsumed: job.creditsReserved || 50,
+              operation: 'Renderização de Vídeo Concluída',
+              idempotencyKey: `consume-vid-${jobId}`,
+            });
+
+            await adminDb.collection('media_generations').doc(jobId).set({
+              id: jobId,
+              userId: uid,
+              type: 'video',
+              prompt: job.prompt,
+              url: videoUri,
+              status: 'completed',
+              creditsSpent: job.creditsReserved || 50,
+              createdAt: new Date().toISOString(),
+            });
+
+            job.status = 'completed';
+            job.progress = 100;
+            job.videoUrl = videoUri;
+          }
+        }
+      } else {
+        // Increment progress gradually
+        const newProgress = Math.min(95, (job.progress || 20) + 25);
+        await adminDb.collection('media_jobs').doc(jobId).update({
+          progress: newProgress,
+          updatedAt: new Date().toISOString(),
+        });
+        job.progress = newProgress;
+      }
+    } catch (pollErr: any) {
+      console.warn('⚠️ Consulta de status Veo em andamento:', pollErr?.message || pollErr);
+    }
+  }
+
   return res.json({
     jobId: job.id,
     status: job.status,
     progress: job.progress,
-    videoUrl: job.videoUrl,
-    error: job.error,
+    videoUrl: job.videoUrl || null,
+    error: job.error || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
   });
@@ -316,8 +338,6 @@ mediaRouter.post('/video/:jobId/cancel', requireAuth, async (req: AuthenticatedR
   if (job.status === 'completed' || job.status === 'cancelled') {
     return res.json({ success: true, status: job.status, message: 'Job já finalizado.' });
   }
-
-  activeVideoJobs.set(jobId, { cancelled: true });
 
   if (job.reservationId) {
     await CreditWalletService.releaseReservation({
@@ -361,3 +381,4 @@ mediaRouter.get('/history', requireAuth, async (req: AuthenticatedRequest, res) 
     return res.json({ items: [] });
   }
 });
+

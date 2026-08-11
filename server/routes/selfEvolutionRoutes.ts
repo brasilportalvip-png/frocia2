@@ -152,6 +152,7 @@ selfEvolutionRouter.post('/emergency-stop', requireAuth, requireAdmin, async (re
 
   const previousState = process.env.SELF_EVOLUTION_ENABLED ?? 'true';
   process.env.SELF_EVOLUTION_ENABLED = 'false';
+  SelfEvolutionPolicyEngine.setSystemEnabled(false);
 
   if (adminDb) {
     try {

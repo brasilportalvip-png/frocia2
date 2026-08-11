@@ -56,7 +56,16 @@ export class SelfEvolutionPolicyEngine {
     return 'R0';
   }
 
+  private static systemEnabledOverride: boolean | null = null;
+
+  static setSystemEnabled(enabled: boolean): void {
+    this.systemEnabledOverride = enabled;
+  }
+
   static isSelfEvolutionEnabled(): boolean {
+    if (this.systemEnabledOverride !== null) {
+      return this.systemEnabledOverride;
+    }
     return process.env.SELF_EVOLUTION_ENABLED === 'true';
   }
 

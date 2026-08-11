@@ -24,15 +24,8 @@ deployRouter.post('/github', requireAuth, async (req: AuthenticatedRequest, res)
 
   try {
     if (!token) {
-      // Return clear configuration requirement or simulation info
-      const mockUrl = `https://github.com/${owner}/${cleanRepoName}`;
-      return res.json({
-        success: true,
-        repoUrl: mockUrl,
-        branch,
-        commitSha: `commit-${Date.now()}`,
-        status: 'published',
-        message: 'Repositório criado e arquivos sincronizados no GitHub.',
+      return res.status(503).json({
+        error: 'Segredo de autenticação do GitHub (GITHUB_TOKEN) não configurado no ambiente de servidor.',
       });
     }
 
@@ -106,14 +99,8 @@ deployRouter.post('/vercel', requireAuth, async (req: AuthenticatedRequest, res)
 
   try {
     if (!vercelToken) {
-      const mockDeploymentUrl = `https://${cleanProjectName}.vercel.app`;
-      return res.json({
-        success: true,
-        deploymentId: `dep-${Date.now()}`,
-        deploymentUrl: mockDeploymentUrl,
-        status: 'READY',
-        inspectUrl: `https://vercel.com/dashboard/deployments`,
-        message: 'Deploy concluído na Vercel.',
+      return res.status(503).json({
+        error: 'Token de autenticação da Vercel (VERCEL_TOKEN) não configurado no ambiente de servidor.',
       });
     }
 
@@ -169,10 +156,45 @@ deployRouter.post('/vercel', requireAuth, async (req: AuthenticatedRequest, res)
  */
 deployRouter.post('/rollback', requireAuth, async (req: AuthenticatedRequest, res) => {
   const { projectId, deploymentId } = req.body || {};
+  const vercelToken = process.env.VERCEL_TOKEN;
 
-  return res.json({
-    success: true,
-    message: 'Rollback executado com sucesso. Instância restaurada para a versão homologada anterior.',
-    deploymentId: deploymentId || `dep-prev-${Date.now()}`,
-  });
+  if (!vercelToken) {
+    return res.status(503).json({
+      error: 'Token da Vercel (VERCEL_TOKEN) não configurado para realizar rollback.',
+    });
+  }
+
+  if (!deploymentId) {
+    return res.status(400).json({
+      error: 'ID do deployment (deploymentId) é obrigatório para realizar o rollback.',
+    });
+  }
+
+  try {
+    const response = await fetch(`https://api.vercel.com/v13/deployments/${deploymentId}/rollback`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${vercelToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      return res.status(response.status).json({
+        error: `Falha no rollback na Vercel: ${errData.error?.message || response.statusText}`,
+      });
+    }
+
+    const data = await response.json();
+    return res.json({
+      success: true,
+      message: 'Rollback executado com sucesso na Vercel.',
+      deploymentId: data.id || deploymentId,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      error: `Erro ao executar rollback: ${err?.message || err}`,
+    });
+  }
 });
