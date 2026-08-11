@@ -14,12 +14,14 @@ import {
   CreditCard,
   Mail,
   CheckCircle,
+  AlertCircle,
   Save,
   Loader2,
   LogOut
 } from 'lucide-react';
 import { GeneratedSite, UserProfile } from '../types';
 import { apiClient } from '../services/apiClient';
+import { useAuth } from '../context/AuthContext';
 
 interface DashboardProps {
   savedSites: GeneratedSite[];
@@ -44,6 +46,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onRefreshProfile,
   onLogout
 }) => {
+  const { sendVerificationEmail, updateUserProfile, profileError } = useAuth();
   const [activeTab, setActiveTab] = useState<'projects' | 'profile'>('projects');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
@@ -53,8 +56,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [displayName, setDisplayName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
   const [profileErrorMsg, setProfileErrorMsg] = useState<string | null>(null);
+  const [avatarLoadError, setAvatarLoadError] = useState(false);
 
   const categories = ['todos', 'Software / Tecnologia', 'Gastronomia & Restaurantes', 'Portfólio Pessoal', 'E-commerce', 'Sistema'];
 
@@ -66,24 +71,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return matchesSearch && matchesCategory && matchesFavorite;
   });
 
+  const handleResendVerification = async () => {
+    setIsSendingVerification(true);
+    setProfileSuccessMsg(null);
+    setProfileErrorMsg(null);
+    try {
+      await sendVerificationEmail();
+      setProfileSuccessMsg('E-mail de verificação enviado com sucesso! Verifique sua caixa de entrada.');
+    } catch (err: any) {
+      setProfileErrorMsg(err.message || 'Erro ao enviar e-mail de verificação.');
+    } finally {
+      setIsSendingVerification(false);
+    }
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingProfile(true);
     setProfileSuccessMsg(null);
     setProfileErrorMsg(null);
 
+    const cleanName = displayName.replace(/[\x00-\x1F\x7F]/g, '').trim();
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      setProfileErrorMsg('O nome deve conter entre 2 e 80 caracteres.');
+      setIsSavingProfile(false);
+      return;
+    }
+
+    const cleanAvatar = avatarUrl.trim();
+    if (cleanAvatar && (!cleanAvatar.startsWith('https://') || cleanAvatar.length > 2048)) {
+      setProfileErrorMsg('A URL do avatar deve começar com https:// e ter no máximo 2048 caracteres.');
+      setIsSavingProfile(false);
+      return;
+    }
+
     try {
-      await apiClient('/api/users/profile', {
-        method: 'POST',
-        body: JSON.stringify({
-          displayName: displayName.trim(),
-          avatarUrl: avatarUrl.trim()
-        })
-      });
-      if (onRefreshProfile) {
-        await onRefreshProfile();
-      }
+      await updateUserProfile(cleanName, cleanAvatar);
       setProfileSuccessMsg('Perfil atualizado com sucesso!');
+      setAvatarLoadError(false);
     } catch (err: any) {
       setProfileErrorMsg(err.message || 'Erro ao salvar alterações no perfil.');
     } finally {
@@ -94,6 +119,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 text-white p-6 md:p-8 custom-scrollbar">
       <div className="max-w-7xl mx-auto space-y-8">
+        {profileError && (
+          <div className="p-4 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{profileError}</span>
+            </div>
+            {onRefreshProfile && (
+              <button
+                type="button"
+                onClick={() => onRefreshProfile()}
+                className="px-3 py-1.5 rounded-xl bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 font-bold"
+              >
+                Tentar novamente
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Navigation Tabs Header */}
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-3">
@@ -140,15 +183,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {/* User Overview Card */}
             <div className="md:col-span-1 glass-panel p-6 rounded-[32px] border border-white/10 space-y-6 text-center">
               <div className="relative inline-block mx-auto">
-                {user.avatarUrl ? (
+                {user.avatarUrl && !avatarLoadError ? (
                   <img
                     src={user.avatarUrl}
                     alt={user.name}
+                    referrerPolicy="no-referrer"
+                    onError={() => setAvatarLoadError(true)}
                     className="w-24 h-24 rounded-full object-cover border-2 border-amber-300/50 mx-auto shadow-xl"
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-purple-600 to-pink-600 border-2 border-amber-300/50 flex items-center justify-center text-3xl font-black text-white mx-auto shadow-xl">
-                    {user.name.charAt(0).toUpperCase() || 'U'}
+                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 border-2 border-amber-300/50 flex items-center justify-center text-3xl font-black text-black mx-auto shadow-xl">
+                    {user.name.trim().charAt(0).toUpperCase() || 'U'}
                   </div>
                 )}
               </div>
@@ -174,11 +219,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span className="font-bold text-emerald-400">{user.creditsRemaining} créditos</span>
                 </div>
 
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-white/60">Status da Conta:</span>
-                  <span className="font-semibold text-emerald-400 flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5" /> Ativa & Verificada
-                  </span>
+                <div className="flex justify-between items-start text-xs">
+                  <span className="text-white/60 pt-0.5">E-mail:</span>
+                  {user.emailVerified ? (
+                    <span className="font-semibold text-emerald-400 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" /> E-mail verificado
+                    </span>
+                  ) : (
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="font-semibold text-amber-400 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5" /> E-mail não verificado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResendVerification}
+                        disabled={isSendingVerification}
+                        className="text-[10px] text-amber-300 hover:underline flex items-center gap-1 mt-1"
+                      >
+                        {isSendingVerification ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                        <span>Reenviar e-mail de verificação</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -242,7 +304,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-white/70 mb-1.5">URL da Foto de Perfil (Opcional)</label>
+                  <label className="block text-xs font-semibold text-white/70 mb-1.5">URL da Foto de Perfil (Opcional - https://...)</label>
                   <input
                     type="url"
                     value={avatarUrl}

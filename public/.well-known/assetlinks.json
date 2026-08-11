@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "br.com.frocia.app",
+      "sha256_cert_fingerprints": [
+        "10:C3:7E:8E:B0:81:BE:68:5B:3F:8E:A4:44:A2:EB:6E:94:FB:0D:FA:49:BD:A8:10:98:8C:FE:1B:3E:68:9B:C1"
+      ]
+    }
+  }
+]

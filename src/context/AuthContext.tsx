@@ -12,6 +12,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   sendPasswordResetEmail,
+  sendEmailVerification,
   signOut,
   updateProfile
 } from 'firebase/auth';
@@ -29,6 +30,7 @@ interface AuthContextType {
   loading: boolean;
   isAuthenticated: boolean;
   isAdmin: boolean;
+  profileError: string | null;
   register: (
     name: string,
     email: string,
@@ -42,6 +44,8 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  sendVerificationEmail: () => Promise<void>;
+  updateUserProfile: (displayName: string, avatarUrl: string) => Promise<void>;
   getIdToken: () => Promise<string | null>;
 }
 
@@ -61,6 +65,8 @@ export const AuthProvider: React.FC<{
     useState<UserProfile | null>(null);
   const [loading, setLoading] =
     useState<boolean>(true);
+  const [profileError, setProfileError] =
+    useState<string | null>(null);
 
   const createOrLoadProfile = async (
     fbUser: FirebaseUser
@@ -73,7 +79,8 @@ export const AuthProvider: React.FC<{
           displayName:
             fbUser.displayName?.trim() ||
             fbUser.email?.split('@')[0] ||
-            'Usuário'
+            'Usuário',
+          avatarUrl: fbUser.photoURL || ''
         })
       }
     );
@@ -104,6 +111,7 @@ export const AuthProvider: React.FC<{
 
         setLoading(true);
         setFirebaseUser(fbUser);
+        setProfileError(null);
 
         try {
           if (!fbUser) {
@@ -117,14 +125,27 @@ export const AuthProvider: React.FC<{
           if (!cancelled) {
             setProfile(syncedProfile);
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error(
             'Erro ao sincronizar perfil no backend:',
             error
           );
 
           if (!cancelled) {
-            setProfile(null);
+            setProfileError('Serviço temporariamente indisponível');
+            // Keep a basic fallback profile if firebaseUser exists so we don't do silent logout
+            setProfile({
+              id: fbUser.uid,
+              name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',
+              email: fbUser.email || '',
+              avatarUrl: fbUser.photoURL || '',
+              role: 'user',
+              plan: 'Inicial',
+              creditsRemaining: 100,
+              creditsMax: 100,
+              isAuthenticated: true,
+              emailVerified: fbUser.emailVerified
+            });
           }
         } finally {
           if (!cancelled) {
@@ -146,17 +167,49 @@ export const AuthProvider: React.FC<{
       return;
     }
 
-    const response = await apiClient<ProfileResponse>(
-      '/api/users/me'
-    );
-
-    if (!response?.profile) {
-      throw new Error(
-        'O servidor não retornou o perfil atualizado.'
+    setProfileError(null);
+    try {
+      const response = await apiClient<ProfileResponse>(
+        '/api/users/me'
       );
+
+      if (!response?.profile) {
+        throw new Error(
+          'O servidor não retornou o perfil atualizado.'
+        );
+      }
+
+      setProfile(response.profile);
+    } catch (err: any) {
+      setProfileError('Serviço temporariamente indisponível');
+    }
+  };
+
+  const sendVerificationEmail = async (): Promise<void> => {
+    if (!auth.currentUser) {
+      throw new Error('Nenhum usuário autenticado.');
+    }
+    await sendEmailVerification(auth.currentUser);
+  };
+
+  const updateUserProfile = async (displayName: string, avatarUrl: string): Promise<void> => {
+    if (!auth.currentUser) {
+      throw new Error('Nenhum usuário autenticado.');
     }
 
-    setProfile(response.profile);
+    await updateProfile(auth.currentUser, {
+      displayName,
+      photoURL: avatarUrl || undefined,
+    });
+
+    const response = await apiClient<ProfileResponse>('/api/users/profile', {
+      method: 'POST',
+      body: JSON.stringify({ displayName, avatarUrl })
+    });
+
+    if (response?.profile) {
+      setProfile(response.profile);
+    }
   };
 
   const getIdToken =
@@ -312,12 +365,15 @@ export const AuthProvider: React.FC<{
         loading,
         isAuthenticated,
         isAdmin,
+        profileError,
         register,
         login,
         loginWithGoogle,
         logout,
         resetPassword,
         refreshProfile,
+        sendVerificationEmail,
+        updateUserProfile,
         getIdToken
       }}
     >

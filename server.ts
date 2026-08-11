@@ -172,57 +172,24 @@ export async function createApp() {
         });
       }
 
+      const provisionResult = await CreditWalletService.provisionUserWithWelcomeCredits({
+        userId: uid,
+        email: req.user!.email || '',
+        displayName: req.user!.name || (req.user!.email ? req.user!.email.split('@')[0] : 'Usuário'),
+        avatarUrl: req.user!.picture || '',
+        role: req.user!.role || 'user',
+      });
+
       const wallet = await CreditWalletService.getBalance(uid);
       const userRef = adminDb.collection('users').doc(uid);
       const docSnap = await userRef.get();
-
-      if (!docSnap.exists) {
-        // Auto-provision initial profile with welcome credits
-        const now = new Date();
-        const initialProfileData = {
-          uid,
-          email: req.user!.email || '',
-          displayName: req.user!.email ? req.user!.email.split('@')[0] : 'Usuário',
-          name: req.user!.email ? req.user!.email.split('@')[0] : 'Usuário',
-          avatarUrl: req.user!.picture || '',
-          role: req.user!.role || 'user',
-          plan: 'Inicial',
-          creditsAvailable: 100,
-          creditsRemaining: 100,
-          creditsReserved: 0,
-          creditsPurchased: 0,
-          creditsConsumed: 0,
-          creditsRefunded: 0,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await userRef.set(initialProfileData);
-
-        return res.json({
-          profile: {
-            id: uid,
-            uid,
-            name: initialProfileData.displayName,
-            email: initialProfileData.email,
-            avatarUrl: initialProfileData.avatarUrl,
-            role: initialProfileData.role,
-            plan: initialProfileData.plan,
-            creditsRemaining: 100,
-            creditsMax: 100,
-            creditsReserved: 0,
-            isAuthenticated: true,
-          },
-        });
-      }
-
-      const userDoc = docSnap.data() || {};
+      const userDoc = docSnap.exists ? (docSnap.data() || {}) : {};
 
       return res.json({
         profile: {
           id: uid,
           uid,
-          name: userDoc.displayName || userDoc.name || (req.user!.email ? req.user!.email.split('@')[0] : 'Usuário'),
+          name: userDoc.displayName || userDoc.name || provisionResult.profile.displayName,
           email: userDoc.email || req.user!.email,
           avatarUrl: userDoc.avatarUrl || req.user!.picture || '',
           role: userDoc.role || 'user',
@@ -231,6 +198,7 @@ export async function createApp() {
           creditsMax: userDoc.creditsAvailable || wallet.available,
           creditsReserved: wallet.reserved,
           isAuthenticated: true,
+          emailVerified: req.user!.emailVerified === true,
         },
       });
     } catch (err: any) {
@@ -258,7 +226,7 @@ export async function createApp() {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email;
-      const { displayName, avatarUrl } = req.body;
+      let { displayName, avatarUrl } = req.body;
 
       if (!isFirebaseAdminConfigured() || !adminDb) {
         return res.status(503).json({
@@ -270,6 +238,49 @@ export async function createApp() {
         });
       }
 
+      if (displayName !== undefined && displayName !== null) {
+        if (typeof displayName !== 'string') {
+          return res.status(400).json({
+            error: { code: 'invalid_profile_input', message: 'O nome de exibição deve ser um texto.', correlationId: req.correlationId }
+          });
+        }
+        displayName = displayName.replace(/[\x00-\x1F\x7F]/g, '').trim();
+        if (displayName.length < 2 || displayName.length > 80) {
+          return res.status(400).json({
+            error: { code: 'invalid_profile_input', message: 'O nome deve ter entre 2 e 80 caracteres.', correlationId: req.correlationId }
+          });
+        }
+      }
+
+      if (avatarUrl !== undefined && avatarUrl !== null && avatarUrl !== '') {
+        if (typeof avatarUrl !== 'string') {
+          return res.status(400).json({
+            error: { code: 'invalid_profile_input', message: 'A URL do avatar deve ser um texto.', correlationId: req.correlationId }
+          });
+        }
+        avatarUrl = avatarUrl.trim();
+        if (avatarUrl.length > 2048) {
+          return res.status(400).json({
+            error: { code: 'invalid_profile_input', message: 'A URL do avatar excede o limite de 2048 caracteres.', correlationId: req.correlationId }
+          });
+        }
+        if (!avatarUrl.startsWith('https://')) {
+          return res.status(400).json({
+            error: { code: 'invalid_profile_input', message: 'A URL do avatar deve utilizar o protocolo HTTPS.', correlationId: req.correlationId }
+          });
+        }
+      } else {
+        avatarUrl = '';
+      }
+
+      await CreditWalletService.provisionUserWithWelcomeCredits({
+        userId: uid,
+        email: email || '',
+        displayName: displayName || req.user!.name || (email ? email.split('@')[0] : 'Usuário'),
+        avatarUrl: avatarUrl || req.user!.picture || '',
+        role: req.user!.role || 'user',
+      });
+
       const wallet = await CreditWalletService.getBalance(uid);
       const userRef = adminDb.collection('users').doc(uid);
       const docSnap = await userRef.get();
@@ -280,7 +291,7 @@ export async function createApp() {
       if (docSnap.exists) {
         const existingData = docSnap.data() || {};
         finalDisplayName = displayName || existingData.displayName || existingData.name || finalDisplayName;
-        finalAvatarUrl = avatarUrl || existingData.avatarUrl || finalAvatarUrl;
+        finalAvatarUrl = avatarUrl !== undefined ? avatarUrl : (existingData.avatarUrl || finalAvatarUrl);
 
         await userRef.update({
           displayName: finalDisplayName,
@@ -302,43 +313,15 @@ export async function createApp() {
             creditsMax: existingData.creditsAvailable || wallet.available,
             creditsReserved: wallet.reserved,
             isAuthenticated: true,
+            emailVerified: req.user!.emailVerified === true,
           },
         });
       } else {
-        const now = new Date();
-        const newProfileData = {
-          uid,
-          email: email || '',
-          displayName: finalDisplayName,
-          name: finalDisplayName,
-          avatarUrl: finalAvatarUrl,
-          role: 'user',
-          plan: 'Inicial',
-          creditsAvailable: 100,
-          creditsRemaining: 100,
-          creditsReserved: 0,
-          creditsPurchased: 0,
-          creditsConsumed: 0,
-          creditsRefunded: 0,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await userRef.set(newProfileData);
-
-        return res.json({
-          profile: {
-            id: uid,
-            uid,
-            name: finalDisplayName,
-            email: email || '',
-            avatarUrl: finalAvatarUrl,
-            role: 'user',
-            plan: 'Inicial',
-            creditsRemaining: 100,
-            creditsMax: 100,
-            creditsReserved: 0,
-            isAuthenticated: true,
+        return res.status(503).json({
+          error: {
+            code: 'user_not_found',
+            message: 'Perfil do usuário não encontrado para atualização.',
+            correlationId: req.correlationId,
           },
         });
       }
@@ -356,7 +339,7 @@ export async function createApp() {
       res.status(500).json({
         error: {
           code: 'profile_update_failed',
-          message: 'Erro ao criar ou atualizar perfil.',
+          message: 'Erro ao atualizar perfil.',
           correlationId: req.correlationId,
         },
       });
@@ -383,9 +366,27 @@ export async function createApp() {
   // Protected: Wallet Balance
   app.get('/api/wallet', requireAuth, walletLimiter, async (req: AuthenticatedRequest, res) => {
     try {
+      if (!isFirebaseAdminConfigured() || !adminDb) {
+        return res.status(503).json({
+          error: {
+            code: 'database_unavailable',
+            message: 'Banco de dados temporariamente indisponível no servidor.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
       const balance = await CreditWalletService.getBalance(req.user!.uid);
       res.json(balance);
     } catch (err: any) {
+      if (err.name === 'WalletUnavailableError') {
+        return res.status(503).json({
+          error: {
+            code: 'wallet_unavailable',
+            message: err.message || 'Serviço de carteira indisponível.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
       res.status(500).json({
         error: {
           code: 'wallet_balance_failed',
@@ -399,6 +400,15 @@ export async function createApp() {
   // Protected: Wallet Transaction History
   app.get('/api/wallet/transactions', requireAuth, walletLimiter, async (req: AuthenticatedRequest, res) => {
     try {
+      if (!isFirebaseAdminConfigured() || !adminDb) {
+        return res.status(503).json({
+          error: {
+            code: 'database_unavailable',
+            message: 'Banco de dados temporariamente indisponível no servidor.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
       const uid = req.user!.uid;
       const limit = Math.min(Number(req.query.limit || 20), 100);
 
@@ -426,6 +436,15 @@ export async function createApp() {
       res.json({ transactions });
     } catch (err: any) {
       console.error('Erro ao buscar extrato de transacoes:', err);
+      if (err.name === 'WalletUnavailableError') {
+        return res.status(503).json({
+          error: {
+            code: 'wallet_unavailable',
+            message: err.message || 'Serviço de carteira indisponível.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
       res.status(500).json({
         error: {
           code: 'wallet_history_failed',

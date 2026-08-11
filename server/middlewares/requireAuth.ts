@@ -55,6 +55,9 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     req.user = {
       uid,
       email,
+      name: decodedToken.name || (email ? email.split('@')[0] : 'Usuário'),
+      picture: decodedToken.picture || '',
+      emailVerified: decodedToken.email_verified === true,
       role,
     };
 

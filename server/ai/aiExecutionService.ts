@@ -63,6 +63,14 @@ export class AIExecutionService {
 
     const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
 
+    // Validate conversation existence & ownership if conversationId is provided
+    if (adminDb && conversationId) {
+      const convSnap = await adminDb.collection('conversations').doc(conversationId).get();
+      if (!convSnap.exists || convSnap.data()?.userId !== userId) {
+        throw new Error('Conversa não encontrada ou não pertence ao usuário.');
+      }
+    }
+
     // 2. Route Model
     const route = AIRouter.route({
       mode,
@@ -247,21 +255,24 @@ export class AIExecutionService {
     // 9. Persist messages in conversation if conversationId is set
     if (adminDb && conversationId) {
       try {
-        const userMsgRef = adminDb.collection('messages').doc();
-        await userMsgRef.set({
+        const batch = adminDb.batch();
+
+        const userMsgRef = adminDb.collection('messages').doc(`msg_usr_${executionId}`);
+        batch.set(userMsgRef, {
           conversationId,
           userId,
           role: 'user',
           content: prompt,
           attachments: attachments || [],
+          executionId,
           createdAt: FieldValue.serverTimestamp(),
         });
 
-        const aiMsgRef = adminDb.collection('messages').doc();
-        await aiMsgRef.set({
+        const aiMsgRef = adminDb.collection('messages').doc(`msg_ast_${executionId}`);
+        batch.set(aiMsgRef, {
           conversationId,
           userId,
-          role: 'ai',
+          role: 'assistant',
           content: aiResponseText,
           citations: citations || [],
           executionId,
@@ -269,11 +280,14 @@ export class AIExecutionService {
           createdAt: FieldValue.serverTimestamp(),
         });
 
-        await adminDb.collection('conversations').doc(conversationId).set({
+        const convRef = adminDb.collection('conversations').doc(conversationId);
+        batch.update(convRef, {
           updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-      } catch (msgErr) {
-        console.warn('⚠️ Error saving conversation messages in AIExecutionService:', msgErr);
+        });
+
+        await batch.commit();
+      } catch (msgErr: any) {
+        console.error('⚠️ Error saving conversation messages in AIExecutionService:', msgErr);
       }
     }
 

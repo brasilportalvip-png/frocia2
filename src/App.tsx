@@ -20,6 +20,7 @@ const CostEstimationModal = lazy(() => import('./components/CostEstimationModal'
 import {
   GeneratedSite,
   ChatMessage,
+  Conversation,
   ViewMode,
   DeviceView,
   SiteTemplate,
@@ -81,6 +82,11 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState<boolean>(false);
+  const [conversationsError, setConversationsError] = useState<string | null>(null);
+  const [messagesLoading, setMessagesLoading] = useState<boolean>(false);
+
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(() => {
     try {
       return localStorage.getItem('frocia_active_conversation_id');
@@ -88,6 +94,139 @@ export default function App() {
       return null;
     }
   });
+
+  const fetchConversations = async () => {
+    if (!isAuthenticated) return;
+    setConversationsLoading(true);
+    setConversationsError(null);
+    try {
+      const res = await apiClient<{ conversations: Conversation[] }>('/api/conversations');
+      setConversations(res.conversations || []);
+    } catch (err: any) {
+      console.warn('Erro ao buscar conversas:', err);
+      setConversationsError('Não foi possível carregar o histórico de conversas.');
+    } finally {
+      setConversationsLoading(false);
+    }
+  };
+
+  const loadMessagesForConversation = async (convId: string): Promise<boolean> => {
+    setMessagesLoading(true);
+    try {
+      const res = await apiClient<{
+        messages: Array<{
+          id: string;
+          role: string;
+          content: string;
+          createdAt: string;
+          citations?: Array<{ title: string; uri: string; snippet?: string }>;
+        }>;
+      }>(`/api/conversations/${convId}/messages`);
+
+      if (res.messages) {
+        const mapped: ChatMessage[] = res.messages.map((m) => ({
+          id: m.id,
+          sender: m.role === 'user' ? 'user' : 'ai',
+          text: m.content,
+          timestamp: new Date(m.createdAt).getTime(),
+          citations: m.citations
+        }));
+        setChatMessages(mapped);
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      console.warn(`Erro ao carregar mensagens da conversa ${convId}:`, err);
+      return false;
+    } finally {
+      setMessagesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setConversations([]);
+      return;
+    }
+
+    fetchConversations();
+
+    if (currentConversationId) {
+      loadMessagesForConversation(currentConversationId).then((success) => {
+        if (!success) {
+          setCurrentConversationId(null);
+          try {
+            localStorage.removeItem('frocia_active_conversation_id');
+          } catch (e) {}
+          setChatMessages([]);
+        }
+      });
+    }
+  }, [isAuthenticated]);
+
+  const handleNewChat = async () => {
+    if (!isAuthenticated) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    try {
+      const res = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Nova Conversa',
+          mode: 'smart'
+        })
+      });
+
+      if (res.conversation) {
+        setCurrentConversationId(res.conversation.id);
+        try {
+          localStorage.setItem('frocia_active_conversation_id', res.conversation.id);
+        } catch (e) {}
+        setConversations((prev) => [res.conversation, ...prev]);
+        setChatMessages([]);
+        setActiveSite(null);
+        setErrorMsg(null);
+      }
+    } catch (err: any) {
+      console.error('Erro ao criar conversa:', err);
+      setErrorMsg('Não foi possível iniciar uma nova conversa.');
+    }
+  };
+
+  const handleSelectConversation = async (convId: string) => {
+    setCurrentConversationId(convId);
+    try {
+      localStorage.setItem('frocia_active_conversation_id', convId);
+    } catch (e) {}
+
+    const success = await loadMessagesForConversation(convId);
+    if (!success) {
+      setCurrentConversationId(null);
+      try {
+        localStorage.removeItem('frocia_active_conversation_id');
+      } catch (e) {}
+      setChatMessages([]);
+    }
+  };
+
+  const handleDeleteConversation = async (convId: string) => {
+    try {
+      await apiClient(`/api/conversations/${convId}`, { method: 'DELETE' });
+      setConversations((prev) => prev.filter((c) => c.id !== convId));
+
+      if (currentConversationId === convId) {
+        setCurrentConversationId(null);
+        try {
+          localStorage.removeItem('frocia_active_conversation_id');
+        } catch (e) {}
+        setChatMessages([]);
+      }
+    } catch (err: any) {
+      console.error('Erro ao deletar conversa:', err);
+    }
+  };
 
   // Fallback user object for components expecting UserProfile
   const currentUser: UserProfile = authUser || {
@@ -377,6 +516,30 @@ export default function App() {
     setErrorMsg(null);
 
     try {
+      let activeConvId = currentConversationId;
+
+      if (!activeConvId) {
+        try {
+          const convRes = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+            method: 'POST',
+            body: JSON.stringify({
+              title: prompt.slice(0, 30) || 'Nova Conversa',
+              mode: apiMode
+            })
+          });
+          if (convRes.conversation) {
+            activeConvId = convRes.conversation.id;
+            setCurrentConversationId(activeConvId);
+            try {
+              localStorage.setItem('frocia_active_conversation_id', activeConvId);
+            } catch (e) {}
+            setConversations((prev) => [convRes.conversation, ...prev]);
+          }
+        } catch (convErr) {
+          console.warn('Erro ao criar registro da conversa no servidor:', convErr);
+        }
+      }
+
       const knowledgeBaseIds = Array.from(
         new Set(
           files
@@ -411,6 +574,7 @@ export default function App() {
         body: JSON.stringify({
           prompt,
           mode: apiMode,
+          conversationId: activeConvId || undefined,
           attachments,
           knowledgeBaseIds,
           idempotencyKey:
@@ -646,7 +810,7 @@ export default function App() {
                 setIsMobileSidebarOpen(false);
               }}
               onNewChat={() => {
-                handleNewSite();
+                handleNewChat();
                 setIsMobileSidebarOpen(false);
               }}
               isGenerating={isGenerating}
@@ -654,6 +818,13 @@ export default function App() {
               savedSites={savedSites}
               activeSite={activeSite}
               chatMessages={chatMessages}
+              conversations={conversations}
+              currentConversationId={currentConversationId}
+              onSelectConversation={handleSelectConversation}
+              onDeleteConversation={handleDeleteConversation}
+              conversationsLoading={conversationsLoading}
+              conversationsError={conversationsError}
+              onRetryConversations={fetchConversations}
               errorMsg={errorMsg}
               isOpenMobile={isMobileSidebarOpen}
               onCloseMobile={() => setIsMobileSidebarOpen(false)}

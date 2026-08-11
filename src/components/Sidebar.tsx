@@ -35,6 +35,7 @@ import {
 import {
   AppNavigationMode,
   ChatMessage,
+  Conversation,
   GeneratedSite,
   KnowledgeBase,
   SiteTemplate,
@@ -79,6 +80,13 @@ interface SidebarProps {
   savedSites: GeneratedSite[];
   activeSite: GeneratedSite | null;
   chatMessages: ChatMessage[];
+  conversations?: Conversation[];
+  currentConversationId?: string | null;
+  onSelectConversation?: (id: string) => void;
+  onDeleteConversation?: (id: string) => void;
+  conversationsLoading?: boolean;
+  conversationsError?: string | null;
+  onRetryConversations?: () => void;
   errorMsg: string | null;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
@@ -95,11 +103,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isRefining,
   savedSites,
   activeSite,
+  conversations = [],
+  currentConversationId = null,
+  onSelectConversation,
+  onDeleteConversation,
+  conversationsLoading = false,
+  conversationsError = null,
+  onRetryConversations,
   errorMsg,
   isOpenMobile = false,
   onCloseMobile,
   onNavigate
 }) => {
+  const [historyTab, setHistoryTab] = useState<'conversations' | 'projects'>('conversations');
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   useEffect(() => {
@@ -569,6 +585,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto border-t border-white/8 px-3 py-4">
           {activeSection === 'history' && (
             <section className="space-y-3">
+              {/* History Sub-tabs */}
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setHistoryTab('conversations')}
+                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                    historyTab === 'conversations'
+                      ? 'bg-amber-300/15 text-amber-300 border border-amber-300/30'
+                      : 'text-white/50 hover:text-white'
+                  }`}
+                >
+                  Conversas ({conversations.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryTab('projects')}
+                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                    historyTab === 'projects'
+                      ? 'bg-amber-300/15 text-amber-300 border border-amber-300/30'
+                      : 'text-white/50 hover:text-white'
+                  }`}
+                >
+                  Projetos ({savedSites.length})
+                </button>
+              </div>
+
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-white/35" />
 
@@ -578,7 +620,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onChange={(event) => {
                     setSearchQuery(event.target.value);
                   }}
-                  placeholder="Pesquisar projetos..."
+                  placeholder={historyTab === 'conversations' ? "Pesquisar conversas..." : "Pesquisar projetos..."}
                   className="glass-input w-full rounded-xl py-2 pl-9 pr-8 text-xs"
                 />
 
@@ -593,39 +635,122 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
               </div>
 
-              <div className="space-y-1">
-                {filteredSites.map((site) => (
-                  <button
-                    key={site.id}
-                    type="button"
-                    onClick={() => {
-                      onLoadSavedSite(site);
-                      onCloseMobile?.();
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-xl border p-2.5 text-left text-xs transition-all ${
-                      activeSite?.id === site.id
-                        ? 'froc-menu-active'
-                        : 'border-transparent text-white/58 hover:bg-white/5 hover:text-white'
-                    }`}
-                  >
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-300/75" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {site.title || 'Projeto sem título'}
-                    </span>
-                    {site.isFavorite && (
-                      <span className="text-amber-300">★</span>
-                    )}
-                  </button>
-                ))}
+              {historyTab === 'conversations' ? (
+                <div className="space-y-1">
+                  {conversationsLoading ? (
+                    <div className="flex items-center justify-center py-8 text-white/40 gap-2">
+                      <span className="animate-spin text-amber-300">⏳</span>
+                      <span className="text-xs">Carregando conversas...</span>
+                    </div>
+                  ) : conversationsError ? (
+                    <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs space-y-2 text-center">
+                      <p>{conversationsError}</p>
+                      {onRetryConversations && (
+                        <button
+                          type="button"
+                          onClick={onRetryConversations}
+                          className="px-3 py-1 rounded-lg bg-rose-500/30 hover:bg-rose-500/40 text-white text-[10px] font-bold"
+                        >
+                          Tentar novamente
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {conversations
+                        .filter((conv) => {
+                          const norm = searchQuery.trim().toLowerCase();
+                          return !norm || conv.title.toLowerCase().includes(norm);
+                        })
+                        .map((conv) => (
+                          <div
+                            key={conv.id}
+                            className={`group flex items-center justify-between rounded-xl border p-2 text-left text-xs transition-all ${
+                              currentConversationId === conv.id
+                                ? 'froc-menu-active border-amber-300/30'
+                                : 'border-transparent text-white/60 hover:bg-white/5 hover:text-white'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectConversation?.(conv.id);
+                                onCloseMobile?.();
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-2 pr-1"
+                            >
+                              <MessageSquare className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
+                              <span className="min-w-0 flex-1 truncate font-medium">
+                                {conv.title || 'Nova Conversa'}
+                              </span>
+                            </button>
 
-                {filteredSites.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/10 px-4 py-7 text-center text-[11px] text-white/35">
-                    {searchQuery
-                      ? 'Nenhum projeto encontrado.'
-                      : 'Seus projetos aparecerão aqui.'}
-                  </div>
-                )}
-              </div>
+                            {onDeleteConversation && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteConversation(conv.id);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/20 text-white/40 hover:text-rose-300 transition-all"
+                                title="Excluir conversa"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+
+                      {conversations.length === 0 && (
+                        <div className="rounded-2xl border border-dashed border-white/10 px-4 py-7 text-center text-[11px] text-white/35 space-y-2">
+                          <p>{searchQuery ? 'Nenhuma conversa encontrada.' : 'Nenhuma conversa salva ainda.'}</p>
+                          <button
+                            type="button"
+                            onClick={handleNewConversation}
+                            className="px-3 py-1.5 rounded-xl bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 text-[10px] font-bold"
+                          >
+                            Nova conversa
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredSites.map((site) => (
+                    <button
+                      key={site.id}
+                      type="button"
+                      onClick={() => {
+                        onLoadSavedSite(site);
+                        onCloseMobile?.();
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-xl border p-2.5 text-left text-xs transition-all ${
+                        activeSite?.id === site.id
+                          ? 'froc-menu-active'
+                          : 'border-transparent text-white/58 hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-300/75" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {site.title || 'Projeto sem título'}
+                      </span>
+                      {site.isFavorite && (
+                        <span className="text-amber-300">★</span>
+                      )}
+                    </button>
+                  ))}
+
+                  {filteredSites.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-white/10 px-4 py-7 text-center text-[11px] text-white/35">
+                      {searchQuery
+                        ? 'Nenhum projeto encontrado.'
+                        : 'Seus projetos aparecerão aqui.'}
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           )}
 

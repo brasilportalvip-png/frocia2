@@ -29,6 +29,22 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   isHtmlUpdate?: boolean;
+  citations?: Array<{
+    title: string;
+    uri: string;
+    snippet?: string;
+  }>;
+}
+
+export interface Conversation {
+  id: string;
+  userId: string;
+  title: string;
+  mode: string;
+  summary?: string;
+  projectId?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SiteTemplate {
@@ -54,6 +70,7 @@ export interface UserProfile {
   creditsMax: number;
   creditsReserved?: number;
   isAuthenticated: boolean;
+  emailVerified?: boolean;
 }
 
 export interface AIModelConfig {

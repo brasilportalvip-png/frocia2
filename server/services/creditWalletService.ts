@@ -115,6 +115,14 @@ export interface GrantCreditsByAdminParams {
   idempotencyKey: string;
 }
 
+export interface ProvisionUserParams {
+  userId: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string;
+  role?: 'admin' | 'user';
+}
+
 export function hashKey(prefix: string, key: string): string {
   return crypto.createHash('sha256').update(`${prefix}:${key}`).digest('hex');
 }
@@ -878,6 +886,165 @@ export class CreditWalletService {
       });
 
       return { success: true, availableAfter };
+    });
+  }
+
+  /**
+   * Provision user profile with welcome credits (100 credits) using transactional ledger with key `welcome-credit:${userId}`.
+   */
+  static async provisionUserWithWelcomeCredits(params: ProvisionUserParams): Promise<{
+    profile: {
+      uid: string;
+      email: string;
+      displayName: string;
+      avatarUrl: string;
+      role: 'admin' | 'user';
+      plan: string;
+      creditsAvailable: number;
+      creditsReserved: number;
+    };
+    credited: boolean;
+  }> {
+    if (!adminDb) {
+      throw new WalletUnavailableError('Banco de dados indisponível (adminDb não inicializado).');
+    }
+
+    const { userId, email, displayName, avatarUrl = '', role = 'user' } = params;
+    const idempotencyKey = `welcome-credit:${userId}`;
+    const txDocId = hashKey('wallet:welcome', idempotencyKey);
+    const payloadHash = hashKey('payload:welcome', JSON.stringify({ userId, email, idempotencyKey }));
+
+    return adminDb.runTransaction(async (transaction) => {
+      const txRef = adminDb.collection('credit_transactions').doc(txDocId);
+      const txSnap = await transaction.get(txRef);
+
+      const userRef = adminDb.collection('users').doc(userId);
+      const userSnap = await transaction.get(userRef);
+
+      if (txSnap.exists && userSnap.exists) {
+        const uData = userSnap.data() || {};
+        const avail = Number(uData.creditsAvailable ?? uData.creditsRemaining ?? 100);
+        const resv = Number(uData.creditsReserved ?? 0);
+        return {
+          profile: {
+            uid: userId,
+            email: uData.email || email,
+            displayName: uData.displayName || uData.name || displayName,
+            avatarUrl: uData.avatarUrl || avatarUrl,
+            role: uData.role || role,
+            plan: uData.plan || 'Inicial',
+            creditsAvailable: avail,
+            creditsReserved: resv,
+          },
+          credited: false,
+        };
+      }
+
+      let availableBefore = 0;
+      let reservedBefore = 0;
+      let purchasedBefore = 0;
+      let consumedBefore = 0;
+      let refundedBefore = 0;
+      let existingData: any = {};
+
+      if (userSnap.exists) {
+        existingData = userSnap.data() || {};
+        availableBefore = Number(existingData.creditsAvailable ?? existingData.creditsRemaining ?? 0);
+        reservedBefore = Number(existingData.creditsReserved ?? 0);
+        purchasedBefore = Number(existingData.creditsPurchased ?? 0);
+        consumedBefore = Number(existingData.creditsConsumed ?? 0);
+        refundedBefore = Number(existingData.creditsRefunded ?? 0);
+
+        if (existingData.welcomeCredited === true || txSnap.exists) {
+          return {
+            profile: {
+              uid: userId,
+              email: existingData.email || email,
+              displayName: existingData.displayName || existingData.name || displayName,
+              avatarUrl: existingData.avatarUrl || avatarUrl,
+              role: existingData.role || role,
+              plan: existingData.plan || 'Inicial',
+              creditsAvailable: availableBefore,
+              creditsReserved: reservedBefore,
+            },
+            credited: false,
+          };
+        }
+      }
+
+      const WELCOME_AMOUNT = 100;
+      const availableAfter = availableBefore + WELCOME_AMOUNT;
+
+      assertWalletInvariants({
+        creditsAvailable: availableAfter,
+        creditsReserved: reservedBefore,
+        creditsPurchased: purchasedBefore,
+        creditsConsumed: consumedBefore,
+        creditsRefunded: refundedBefore,
+      });
+
+      const now = new Date();
+      const profileToSave = {
+        uid: userId,
+        email: existingData.email || email || '',
+        displayName: existingData.displayName || existingData.name || displayName,
+        name: existingData.displayName || existingData.name || displayName,
+        avatarUrl: existingData.avatarUrl || avatarUrl,
+        role: existingData.role || role,
+        plan: existingData.plan || 'Inicial',
+        planId: 'plan_inicial',
+        creditsAvailable: availableAfter,
+        creditsRemaining: availableAfter,
+        creditsReserved: reservedBefore,
+        creditsPurchased: purchasedBefore,
+        creditsConsumed: consumedBefore,
+        creditsRefunded: refundedBefore,
+        welcomeCredited: true,
+        createdAt: existingData.createdAt || now,
+        updatedAt: now,
+      };
+
+      if (userSnap.exists) {
+        transaction.update(userRef, {
+          creditsAvailable: availableAfter,
+          creditsRemaining: availableAfter,
+          welcomeCredited: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      } else {
+        transaction.set(userRef, profileToSave);
+      }
+
+      transaction.set(txRef, {
+        userId,
+        paymentDocumentId: null,
+        providerPaymentId: null,
+        type: 'welcome_grant',
+        amount: WELCOME_AMOUNT,
+        balanceBefore: availableBefore,
+        balanceAfter: availableAfter,
+        reservedBefore,
+        reservedAfter: reservedBefore,
+        operation: 'Créditos de boas-vindas',
+        payloadHash,
+        status: 'confirmed',
+        idempotencyKey,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      return {
+        profile: {
+          uid: userId,
+          email: profileToSave.email,
+          displayName: profileToSave.displayName,
+          avatarUrl: profileToSave.avatarUrl,
+          role: profileToSave.role as 'admin' | 'user',
+          plan: profileToSave.plan,
+          creditsAvailable: availableAfter,
+          creditsReserved: reservedBefore,
+        },
+        credited: true,
+      };
     });
   }
 }
