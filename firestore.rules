@@ -23,9 +23,15 @@ service cloud.firestore {
         && (!('creditsAvailable' in request.resource.data) || request.resource.data.creditsAvailable == 0);
       allow update: if isOwner(userId)
         && request.resource.data.role == resource.data.role
+        && (!('email' in resource.data) || !('email' in request.resource.data) || request.resource.data.email == resource.data.email)
+        && (!('uid' in resource.data) || !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid)
+        && (!('plan' in resource.data) || !('plan' in request.resource.data) || request.resource.data.plan == resource.data.plan)
         && (!('creditsAvailable' in request.resource.data) || request.resource.data.creditsAvailable == resource.data.creditsAvailable)
         && (!('creditsRemaining' in request.resource.data) || request.resource.data.creditsRemaining == resource.data.creditsRemaining)
-        && (!('creditsReserved' in request.resource.data) || request.resource.data.creditsReserved == resource.data.creditsReserved);
+        && (!('creditsReserved' in request.resource.data) || request.resource.data.creditsReserved == resource.data.creditsReserved)
+        && (!('creditsPurchased' in request.resource.data) || request.resource.data.creditsPurchased == resource.data.creditsPurchased)
+        && (!('creditsConsumed' in request.resource.data) || request.resource.data.creditsConsumed == resource.data.creditsConsumed)
+        && (!('creditsRefunded' in request.resource.data) || request.resource.data.creditsRefunded == resource.data.creditsRefunded);
       allow delete: if isAdmin();
     }
 

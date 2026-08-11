@@ -33,7 +33,12 @@ import {
 import { STARTER_TEMPLATES } from './data/templates';
 import { X, Loader2, ShieldAlert } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'frocia_saved_sites_v1';
+const LOCAL_STORAGE_KEY_PREFIX = 'frocia_saved_sites_v1';
+
+function getPartitionedKey(prefix: string, uid: string): string {
+  const safeUid = uid && uid.trim().length > 0 ? uid : 'guest';
+  return `${prefix}_${safeUid}`;
+}
 
 const CHAT_MODE_TO_AI_MODE: Partial<
   Record<
@@ -87,13 +92,7 @@ export default function App() {
   const [conversationsError, setConversationsError] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState<boolean>(false);
 
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('frocia_active_conversation_id');
-    } catch {
-      return null;
-    }
-  });
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
   const fetchConversations = async () => {
     if (!isAuthenticated) return;
@@ -143,26 +142,86 @@ export default function App() {
     }
   };
 
+  // Fallback user object for components expecting UserProfile
+  const currentUser: UserProfile = authUser || {
+    id: 'guest',
+    name: 'Visitante',
+    email: '',
+    avatarUrl: '',
+    role: 'user',
+    plan: 'Teste',
+    creditsRemaining: 0,
+    creditsMax: 0,
+    isAuthenticated: false,
+  };
+
+  // Zero in-memory state and load user-partitioned data whenever account switches
   useEffect(() => {
+    const userUid = currentUser.id || 'guest';
+    const activeConvKey = getPartitionedKey('frocia_active_conv', userUid);
+    const savedSitesKey = getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, userUid);
+
+    // Clean legacy unpartitioned global keys if present
+    try {
+      localStorage.removeItem('frocia_active_conversation_id');
+      localStorage.removeItem('frocia_saved_sites_v1');
+    } catch {}
+
+    // Strictly zero in-memory state before loading new account data
+    setChatMessages([]);
+    setConversations([]);
+    setSavedSites([]);
+    setActiveSite(null);
+    setErrorMsg(null);
+
     if (!isAuthenticated) {
-      setConversations([]);
+      setCurrentConversationId(null);
+      // Load guest saved sites if present
+      try {
+        const stored = localStorage.getItem(savedSitesKey);
+        if (stored) {
+          const parsed: GeneratedSite[] = JSON.parse(stored);
+          if (parsed && parsed.length > 0) {
+            setSavedSites(parsed);
+            setActiveSite(parsed[0]);
+          }
+        }
+      } catch {}
       return;
     }
 
+    // Load partition key for active conversation
+    const savedConvId = localStorage.getItem(activeConvKey);
+    setCurrentConversationId(savedConvId);
+
     fetchConversations();
 
-    if (currentConversationId) {
-      loadMessagesForConversation(currentConversationId).then((success) => {
+    if (savedConvId) {
+      loadMessagesForConversation(savedConvId).then((success) => {
         if (!success) {
           setCurrentConversationId(null);
           try {
-            localStorage.removeItem('frocia_active_conversation_id');
+            localStorage.removeItem(activeConvKey);
           } catch (e) {}
           setChatMessages([]);
         }
       });
     }
-  }, [isAuthenticated]);
+
+    // Load partitioned saved sites
+    try {
+      const stored = localStorage.getItem(savedSitesKey);
+      if (stored) {
+        const parsed: GeneratedSite[] = JSON.parse(stored);
+        if (parsed && parsed.length > 0) {
+          setSavedSites(parsed);
+          setActiveSite(parsed[0]);
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao ler localStorage do usuário:', e);
+    }
+  }, [currentUser.id, isAuthenticated]);
 
   const handleNewChat = async () => {
     if (!isAuthenticated) {
@@ -182,7 +241,8 @@ export default function App() {
       if (res.conversation) {
         setCurrentConversationId(res.conversation.id);
         try {
-          localStorage.setItem('frocia_active_conversation_id', res.conversation.id);
+          const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
+          localStorage.setItem(activeConvKey, res.conversation.id);
         } catch (e) {}
         setConversations((prev) => [res.conversation, ...prev]);
         setChatMessages([]);
@@ -197,21 +257,23 @@ export default function App() {
 
   const handleSelectConversation = async (convId: string) => {
     setCurrentConversationId(convId);
+    const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
     try {
-      localStorage.setItem('frocia_active_conversation_id', convId);
+      localStorage.setItem(activeConvKey, convId);
     } catch (e) {}
 
     const success = await loadMessagesForConversation(convId);
     if (!success) {
       setCurrentConversationId(null);
       try {
-        localStorage.removeItem('frocia_active_conversation_id');
+        localStorage.removeItem(activeConvKey);
       } catch (e) {}
       setChatMessages([]);
     }
   };
 
   const handleDeleteConversation = async (convId: string) => {
+    const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
     try {
       await apiClient(`/api/conversations/${convId}`, { method: 'DELETE' });
       setConversations((prev) => prev.filter((c) => c.id !== convId));
@@ -219,26 +281,13 @@ export default function App() {
       if (currentConversationId === convId) {
         setCurrentConversationId(null);
         try {
-          localStorage.removeItem('frocia_active_conversation_id');
+          localStorage.removeItem(activeConvKey);
         } catch (e) {}
         setChatMessages([]);
       }
     } catch (err: any) {
       console.error('Erro ao deletar conversa:', err);
     }
-  };
-
-  // Fallback user object for components expecting UserProfile
-  const currentUser: UserProfile = authUser || {
-    id: 'guest',
-    name: 'Visitante',
-    email: '',
-    avatarUrl: '',
-    role: 'user',
-    plan: 'Teste',
-    creditsRemaining: 0,
-    creditsMax: 0,
-    isAuthenticated: false,
   };
 
   // Cost Estimation Modal State
@@ -256,34 +305,11 @@ export default function App() {
     onConfirm: () => {}
   });
 
-  // Initialize saved sites from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (stored) {
-        const parsed: GeneratedSite[] = JSON.parse(stored);
-        const filtered = parsed.filter(s => s.id !== 'saas-tech' && !s.title?.toLowerCase().includes('pulseflow') && !s.title?.toLowerCase().includes('plataforma & solução web'));
-        if (filtered.length > 0) {
-          setSavedSites(filtered);
-          setActiveSite(filtered[0]);
-          return;
-        } else {
-          localStorage.removeItem(LOCAL_STORAGE_KEY);
-        }
-      }
-    } catch (e) {
-      console.warn('Erro ao ler localStorage:', e);
-    }
-
-    // Default when no saved site exists: clean start with no active site
-    setActiveSite(null);
-    setSavedSites([]);
-  }, []);
-
   const saveSitesToStorage = (sites: GeneratedSite[]) => {
     setSavedSites(sites);
+    const savedSitesKey = getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, currentUser.id);
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sites));
+      localStorage.setItem(savedSitesKey, JSON.stringify(sites));
     } catch (e) {
       console.warn('Erro ao salvar no localStorage:', e);
     }

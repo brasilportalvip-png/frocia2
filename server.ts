@@ -42,6 +42,7 @@ import { adminAiRouter } from './server/routes/adminAiRoutes.js';
 import { projectRouter } from './server/routes/projectRoutes.js';
 import { siteBuilderRouter } from './server/routes/siteBuilderRoutes.js';
 import { healthRouter } from './server/routes/healthRoutes.js';
+import { capabilityRouter } from './server/routes/capabilityRoutes.js';
 import { selfEvolutionRouter } from './server/routes/selfEvolutionRoutes.js';
 
 
@@ -133,6 +134,7 @@ export async function createApp() {
 
   // Mount Sub-routers
   app.use('/api', healthRouter);
+  app.use('/api', capabilityRouter);
   app.use('/api/internal', internalRouter);
   app.use('/api/conversations', conversationRouter);
   app.use('/api/projects', projectRouter);

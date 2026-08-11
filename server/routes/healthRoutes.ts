@@ -7,6 +7,51 @@ import { requireAdmin } from '../middlewares/requireAdmin.js';
 
 export const healthRouter = Router();
 
+// GET /live - Minimal liveness probe (Public)
+healthRouter.get(['/live', '/api/live'], (req: AuthenticatedRequest, res) => {
+  return res.status(200).json({
+    status: 'live',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// GET /ready - Deep readiness probe for Kubernetes / Cloud Run ingress (Public, 503 if unavailable)
+healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res) => {
+  const timestamp = new Date().toISOString();
+  const authConfigured = isFirebaseAdminConfigured();
+  const geminiConfigured = Boolean(
+    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
+  );
+
+  let firestoreReachable = false;
+  if (authConfigured && adminDb) {
+    try {
+      const pingDoc = adminDb.collection('_healthcheck').doc('ping');
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 3000)
+      );
+      await Promise.race([pingDoc.get(), timeoutPromise]);
+      firestoreReachable = true;
+    } catch {
+      firestoreReachable = false;
+    }
+  }
+
+  const isReady = firestoreReachable && geminiConfigured;
+  const statusCode = isReady ? 200 : 503;
+
+  return res.status(statusCode).json({
+    status: isReady ? 'ready' : 'not_ready',
+    timestamp,
+    checks: {
+      auth: authConfigured,
+      firestore: firestoreReachable,
+      gemini: geminiConfigured,
+      mercadoPago: MercadoPagoService.isConfigured(),
+    },
+  });
+});
+
 // GET /api/health - Light ping check matching IntegrationsPage expectations (Público e Mínimo)
 healthRouter.get('/health', (req: AuthenticatedRequest, res) => {
   const firebaseConfigured = isFirebaseAdminConfigured();
