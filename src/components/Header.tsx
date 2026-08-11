@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   Maximize2,
+  Menu,
   Monitor,
   Plus,
   ShieldCheck,
@@ -47,6 +48,7 @@ interface HeaderProps {
   user: UserProfile;
   onOpenAuth: () => void;
   onLogout?: () => void;
+  onToggleMobileMenu?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -65,7 +67,8 @@ export const Header: React.FC<HeaderProps> = ({
   siteTitle,
   user,
   onOpenAuth,
-  onLogout
+  onLogout,
+  onToggleMobileMenu
 }) => {
   const [logoFailed, setLogoFailed] = useState(false);
 
@@ -88,7 +91,19 @@ export const Header: React.FC<HeaderProps> = ({
     >
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-amber-300/20 to-transparent" />
 
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        {onToggleMobileMenu && (
+          <button
+            type="button"
+            onClick={onToggleMobileMenu}
+            className="glass-button flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-amber-300 hover:text-white lg:hidden"
+            aria-label="Abrir menu de navegação"
+            title="Abrir menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => setNavMode('studio')}

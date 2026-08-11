@@ -96,10 +96,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   savedSites,
   activeSite,
   errorMsg,
+  isOpenMobile = false,
   onCloseMobile,
   onNavigate
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpenMobile) {
+        onCloseMobile?.();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpenMobile, onCloseMobile]);
   const [activeSection, setActiveSection] =
     useState<SidebarSection>('history');
   const [searchQuery, setSearchQuery] = useState('');
@@ -415,68 +426,93 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   return (
-    <aside
-      className={`relative z-30 flex h-full shrink-0 select-none flex-col overflow-visible border-r border-amber-300/15 bg-[#070707] text-white shadow-[12px_0_45px_rgba(0,0,0,0.28)] transition-[width] duration-300 ${
-        isCollapsed
-          ? 'w-[72px]'
-          : 'w-[310px] lg:w-[330px]'
-      }`}
-      aria-label="Menu principal da Froc.IA"
-    >
-      <div className="pointer-events-none absolute right-0 top-0 h-48 w-px bg-gradient-to-b from-amber-300/50 via-amber-300/10 to-transparent" />
+    <>
+      {isOpenMobile && (
+        <div
+          className="fixed inset-0 z-40 bg-black/75 backdrop-blur-sm lg:hidden transition-opacity"
+          onClick={onCloseMobile}
+          aria-hidden="true"
+        />
+      )}
 
-      <div
-        className={`flex min-h-20 shrink-0 items-center border-b border-white/8 ${
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex h-full select-none flex-col overflow-visible border-r border-amber-300/15 bg-[#070707] text-white shadow-[12px_0_45px_rgba(0,0,0,0.28)] transition-all duration-300 lg:relative lg:z-30 lg:translate-x-0 ${
+          isOpenMobile ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        } ${
           isCollapsed
-            ? 'justify-center px-2'
-            : 'justify-between px-4'
+            ? 'w-[72px]'
+            : 'w-[88vw] max-w-[320px] lg:w-[330px]'
         }`}
+        aria-label="Menu principal da Froc.IA"
       >
-        {!isCollapsed && (
-          <div className="flex min-w-0 items-center gap-3">
-            <MascotWidget
-              size="sm"
-              quote=""
-              showBadge={false}
-            />
+        <div className="pointer-events-none absolute right-0 top-0 h-48 w-px bg-gradient-to-b from-amber-300/50 via-amber-300/10 to-transparent" />
 
-            <div className="min-w-0">
-              <div className="froc-gold-gradient-text truncate text-lg font-black tracking-tight">
-                Froc.IA
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-white/45">
-                <span className="froc-status-dot h-1.5 w-1.5 rounded-full bg-amber-300" />
-                <span>Inteligência ativa</span>
+        <div
+          className={`flex min-h-20 shrink-0 items-center border-b border-white/8 ${
+            isCollapsed
+              ? 'justify-center px-2'
+              : 'justify-between px-4'
+          }`}
+        >
+          {!isCollapsed && (
+            <div className="flex min-w-0 items-center gap-3">
+              <MascotWidget
+                size="sm"
+                quote=""
+                showBadge={false}
+              />
+
+              <div className="min-w-0">
+                <div className="froc-gold-gradient-text truncate text-lg font-black tracking-tight">
+                  Froc.IA
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-white/45">
+                  <span className="froc-status-dot h-1.5 w-1.5 rounded-full bg-amber-300" />
+                  <span>Inteligência ativa</span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => {
-            setIsCollapsed((current) => !current);
-            setIsSupportOpen(false);
-          }}
-          className="glass-button rounded-xl p-2.5"
-          title={
-            isCollapsed
-              ? 'Expandir menu'
-              : 'Recolher menu'
-          }
-          aria-label={
-            isCollapsed
-              ? 'Expandir menu'
-              : 'Recolher menu'
-          }
-        >
-          {isCollapsed ? (
-            <ChevronRight className="h-4 w-4 text-amber-300" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
           )}
-        </button>
-      </div>
+
+          <div className="flex items-center gap-1">
+            {onCloseMobile && (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                className="glass-button rounded-xl p-2.5 lg:hidden text-white/60 hover:text-white"
+                title="Fechar menu"
+                aria-label="Fechar menu"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsCollapsed((current) => !current);
+                setIsSupportOpen(false);
+              }}
+              className="glass-button hidden lg:flex rounded-xl p-2.5"
+              title={
+                isCollapsed
+                  ? 'Expandir menu'
+                  : 'Recolher menu'
+              }
+              aria-label={
+                isCollapsed
+                  ? 'Expandir menu'
+                  : 'Recolher menu'
+              }
+            >
+              {isCollapsed ? (
+                <ChevronRight className="h-4 w-4 text-amber-300" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
 
       <div className="shrink-0 p-3">
         <button
@@ -1049,6 +1085,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }}
       />
     </aside>
+  </>
   );
 };
 

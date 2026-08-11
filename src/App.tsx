@@ -80,6 +80,14 @@ export default function App() {
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('frocia_active_conversation_id');
+    } catch {
+      return null;
+    }
+  });
 
   // Fallback user object for components expecting UserProfile
   const currentUser: UserProfile = authUser || {
@@ -115,7 +123,7 @@ export default function App() {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
         const parsed: GeneratedSite[] = JSON.parse(stored);
-        const filtered = parsed.filter(s => s.id !== 'saas-tech' && !s.title?.toLowerCase().includes('pulseflow'));
+        const filtered = parsed.filter(s => s.id !== 'saas-tech' && !s.title?.toLowerCase().includes('pulseflow') && !s.title?.toLowerCase().includes('plataforma & solução web'));
         if (filtered.length > 0) {
           setSavedSites(filtered);
           setActiveSite(filtered[0]);
@@ -128,27 +136,9 @@ export default function App() {
       console.warn('Erro ao ler localStorage:', e);
     }
 
-    // Default starter template if none saved
-    if (STARTER_TEMPLATES && STARTER_TEMPLATES.length > 0) {
-      const starter = STARTER_TEMPLATES[0];
-      const initialSite: GeneratedSite = {
-        id: starter.id,
-        title: starter.title,
-        description: starter.description,
-        prompt: starter.prompt,
-        category: starter.category,
-        colorPalette: starter.colorPalette,
-        tone: 'Profissional',
-        html: starter.sampleHtml,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      setActiveSite(initialSite);
-      setSavedSites([initialSite]);
-    } else {
-      setActiveSite(null);
-      setSavedSites([]);
-    }
+    // Default when no saved site exists: clean start with no active site
+    setActiveSite(null);
+    setSavedSites([]);
   }, []);
 
   const saveSitesToStorage = (sites: GeneratedSite[]) => {
@@ -582,6 +572,7 @@ export default function App() {
         user={currentUser}
         onOpenAuth={() => setIsAuthOpen(true)}
         onLogout={logout}
+        onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
       {/* Main Container View Switcher */}
@@ -660,16 +651,23 @@ export default function App() {
                   htmlPreview: site.html
                 });
                 setIsArtifactOpen(true);
+                setIsMobileSidebarOpen(false);
               }}
-              onNewChat={handleNewSite}
+              onNewChat={() => {
+                handleNewSite();
+                setIsMobileSidebarOpen(false);
+              }}
               isGenerating={isGenerating}
               isRefining={isRefining}
               savedSites={savedSites}
               activeSite={activeSite}
-                           chatMessages={chatMessages}
+              chatMessages={chatMessages}
               errorMsg={errorMsg}
+              isOpenMobile={isMobileSidebarOpen}
+              onCloseMobile={() => setIsMobileSidebarOpen(false)}
               onNavigate={(mode) => {
                 setNavMode(mode);
+                setIsMobileSidebarOpen(false);
               }}
               isAdmin={isAdmin}
             />

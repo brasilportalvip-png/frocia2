@@ -140,10 +140,7 @@ export class CreditWalletService {
    * Reads current user wallet balance from Firestore users/{userId}.
    */
   static async getBalance(userId: string): Promise<WalletBalance> {
-    const userRef = adminDb.collection('users').doc(userId);
-    const snap = await userRef.get();
-
-    if (!snap.exists) {
+    if (!adminDb) {
       return {
         available: 0,
         reserved: 0,
@@ -154,19 +151,45 @@ export class CreditWalletService {
       };
     }
 
-    const data = snap.data() || {};
-    return {
-      available: Number(data.creditsAvailable ?? data.creditsRemaining ?? 0),
-      reserved: Number(data.creditsReserved ?? 0),
-      purchased: Number(data.creditsPurchased ?? 0),
-      consumed: Number(data.creditsConsumed ?? 0),
-      refunded: Number(data.creditsRefunded ?? 0),
-      updatedAt: data.updatedAt
-        ? data.updatedAt.toDate
-          ? data.updatedAt.toDate().toISOString()
-          : new Date(data.updatedAt).toISOString()
-        : new Date().toISOString(),
-    };
+    try {
+      const userRef = adminDb.collection('users').doc(userId);
+      const snap = await userRef.get();
+
+      if (!snap.exists) {
+        return {
+          available: 0,
+          reserved: 0,
+          purchased: 0,
+          consumed: 0,
+          refunded: 0,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      const data = snap.data() || {};
+      return {
+        available: Number(data.creditsAvailable ?? data.creditsRemaining ?? 0),
+        reserved: Number(data.creditsReserved ?? 0),
+        purchased: Number(data.creditsPurchased ?? 0),
+        consumed: Number(data.creditsConsumed ?? 0),
+        refunded: Number(data.creditsRefunded ?? 0),
+        updatedAt: data.updatedAt
+          ? data.updatedAt.toDate
+            ? data.updatedAt.toDate().toISOString()
+            : new Date(data.updatedAt).toISOString()
+          : new Date().toISOString(),
+      };
+    } catch (error) {
+      console.warn('⚠️ Firestore read failed in CreditWalletService.getBalance, returning zero balance fallback:', error);
+      return {
+        available: 0,
+        reserved: 0,
+        purchased: 0,
+        consumed: 0,
+        refunded: 0,
+        updatedAt: new Date().toISOString(),
+      };
+    }
   }
 
   /**

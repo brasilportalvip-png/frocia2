@@ -180,7 +180,7 @@ export async function createApp() {
             email: req.user!.email,
             avatarUrl: '',
             role: req.user!.role || 'user',
-            plan: 'free',
+            plan: 'Inicial',
             creditsRemaining: wallet.available,
             creditsMax: wallet.available,
             creditsReserved: wallet.reserved,
@@ -196,7 +196,7 @@ export async function createApp() {
           email: userDoc.email || req.user!.email,
           avatarUrl: userDoc.avatarUrl || '',
           role: userDoc.role || 'user',
-          plan: userDoc.plan || 'free',
+          plan: userDoc.plan || 'Inicial',
           creditsRemaining: wallet.available,
           creditsMax: wallet.available,
           creditsReserved: wallet.reserved,
@@ -229,7 +229,7 @@ export async function createApp() {
         displayName: displayName || (email ? email.split('@')[0] : 'Usuário'),
         name: displayName || (email ? email.split('@')[0] : 'Usuário'),
         role: 'user' as const,
-        plan: 'free' as const,
+        plan: 'Inicial' as const,
         creditsRemaining: wallet.available,
         creditsMax: wallet.available,
         creditsReserved: wallet.reserved,
@@ -237,41 +237,45 @@ export async function createApp() {
       };
 
       if (isFirebaseAdminConfigured()) {
-        const userRef = adminDb.collection('users').doc(uid);
-        const docSnap = await userRef.get();
+        try {
+          const userRef = adminDb.collection('users').doc(uid);
+          const docSnap = await userRef.get();
 
-        if (docSnap.exists) {
-          const existingData = docSnap.data();
-          userProfile = {
-            id: uid,
-            uid,
-            email: existingData?.email || email,
-            displayName: existingData?.displayName || existingData?.name || displayName,
-            name: existingData?.displayName || existingData?.name || displayName,
-            role: existingData?.role || 'user',
-            plan: existingData?.plan || 'free',
-            creditsRemaining: wallet.available,
-            creditsMax: wallet.available,
-            creditsReserved: wallet.reserved,
-            isAuthenticated: true,
-          };
-        } else {
-          const now = new Date();
-          await userRef.set({
-            uid,
-            email,
-            displayName: userProfile.displayName,
-            role: 'user',
-            plan: 'free',
-            creditsAvailable: 0,
-            creditsRemaining: 0,
-            creditsReserved: 0,
-            creditsPurchased: 0,
-            creditsConsumed: 0,
-            creditsRefunded: 0,
-            createdAt: now,
-            updatedAt: now,
-          });
+          if (docSnap.exists) {
+            const existingData = docSnap.data();
+            userProfile = {
+              id: uid,
+              uid,
+              email: existingData?.email || email,
+              displayName: existingData?.displayName || existingData?.name || userProfile.displayName,
+              name: existingData?.displayName || existingData?.name || userProfile.displayName,
+              role: existingData?.role || 'user',
+              plan: existingData?.plan || 'Inicial',
+              creditsRemaining: wallet.available,
+              creditsMax: wallet.available,
+              creditsReserved: wallet.reserved,
+              isAuthenticated: true,
+            };
+          } else {
+            const now = new Date();
+            await userRef.set({
+              uid,
+              email,
+              displayName: userProfile.displayName,
+              role: 'user',
+              plan: 'free',
+              creditsAvailable: 0,
+              creditsRemaining: 0,
+              creditsReserved: 0,
+              creditsPurchased: 0,
+              creditsConsumed: 0,
+              creditsRefunded: 0,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        } catch (dbError) {
+          console.warn('⚠️ Firestore error in /api/users/profile, using token profile:', dbError);
         }
       }
 

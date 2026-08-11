@@ -124,7 +124,20 @@ export const AuthProvider: React.FC<{
           );
 
           if (!cancelled) {
-            setProfile(null);
+            // Fallback: create a client-side profile from FirebaseUser when backend profile endpoint fails
+            const fallbackProfile: UserProfile = {
+              id: fbUser.uid,
+              name: fbUser.displayName?.trim() || fbUser.email?.split('@')[0] || 'Usuário',
+              email: fbUser.email || '',
+              avatarUrl: fbUser.photoURL || '',
+              role: 'user',
+              plan: 'Inicial',
+              creditsRemaining: 0,
+              creditsMax: 0,
+              creditsReserved: 0,
+              isAuthenticated: true,
+            };
+            setProfile(fallbackProfile);
           }
         } finally {
           if (!cancelled) {
