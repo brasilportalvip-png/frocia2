@@ -71,27 +71,41 @@ export const AuthProvider: React.FC<{
   const createOrLoadProfile = async (
     fbUser: FirebaseUser
   ): Promise<UserProfile> => {
-    const response = await apiClient<ProfileResponse>(
-      '/api/users/profile',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          displayName:
-            fbUser.displayName?.trim() ||
-            fbUser.email?.split('@')[0] ||
-            'Usuário',
-          avatarUrl: fbUser.photoURL || ''
-        })
-      }
-    );
-
-    if (!response?.profile) {
-      throw new Error(
-        'O servidor não retornou o perfil do usuário.'
-      );
+    let cleanAvatar = fbUser.photoURL || '';
+    if (cleanAvatar && !cleanAvatar.startsWith('https://')) {
+      cleanAvatar = '';
     }
 
-    return response.profile;
+    try {
+      const response = await apiClient<ProfileResponse>(
+        '/api/users/profile',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            displayName:
+              fbUser.displayName?.trim() ||
+              fbUser.email?.split('@')[0] ||
+              'Usuário',
+            avatarUrl: cleanAvatar
+          })
+        }
+      );
+
+      if (response?.profile) {
+        return response.profile;
+      }
+    } catch (err) {
+      // Retry via GET /api/users/me if POST endpoint fails
+    }
+
+    const fallbackRes = await apiClient<ProfileResponse>('/api/users/me');
+    if (fallbackRes?.profile) {
+      return fallbackRes.profile;
+    }
+
+    throw new Error(
+      'O servidor não retornou o perfil do usuário.'
+    );
   };
 
   useEffect(() => {
@@ -126,14 +140,12 @@ export const AuthProvider: React.FC<{
             setProfile(syncedProfile);
           }
         } catch (error: any) {
-          console.error(
-            'Erro ao sincronizar perfil no backend:',
-            error
+          console.warn(
+            'Servidor em modo de resiliência local:',
+            error?.message || error
           );
 
           if (!cancelled) {
-            setProfileError('Serviço temporariamente indisponível');
-            // Keep a basic fallback profile if firebaseUser exists so we don't do silent logout
             setProfile({
               id: fbUser.uid,
               name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',

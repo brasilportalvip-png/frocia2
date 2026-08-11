@@ -317,11 +317,39 @@ export async function createApp() {
           },
         });
       } else {
-        return res.status(503).json({
-          error: {
-            code: 'user_not_found',
-            message: 'Perfil do usuário não encontrado para atualização.',
-            correlationId: req.correlationId,
+        const profileToSave = {
+          uid,
+          email: email || '',
+          displayName: finalDisplayName,
+          name: finalDisplayName,
+          avatarUrl: finalAvatarUrl,
+          role: req.user!.role || 'user',
+          plan: 'Inicial',
+          planId: 'plan_inicial',
+          creditsAvailable: wallet.available,
+          creditsRemaining: wallet.available,
+          creditsReserved: wallet.reserved,
+          welcomeCredited: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        await userRef.set(profileToSave, { merge: true });
+
+        return res.json({
+          profile: {
+            id: uid,
+            uid,
+            name: finalDisplayName,
+            email: email || '',
+            avatarUrl: finalAvatarUrl,
+            role: req.user!.role || 'user',
+            plan: 'Inicial',
+            creditsRemaining: wallet.available,
+            creditsMax: wallet.available,
+            creditsReserved: wallet.reserved,
+            isAuthenticated: true,
+            emailVerified: req.user!.emailVerified === true,
           },
         });
       }

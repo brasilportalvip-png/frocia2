@@ -40,8 +40,12 @@ export function getServiceAccountCredentials(): { projectId: string; clientEmail
   return null;
 }
 
-export const isFirebaseAdminConfigured = (): boolean => {
+export function hasFullServiceAccountCredentials(): boolean {
   return getServiceAccountCredentials() !== null;
+}
+
+export const isFirebaseAdminConfigured = (): boolean => {
+  return hasFullServiceAccountCredentials() || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 };
 
 const DEFAULT_PROJECT_ID =

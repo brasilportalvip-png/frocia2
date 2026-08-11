@@ -1,4 +1,4 @@
-import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { hasFullServiceAccountCredentials } from '../lib/firebaseAdmin.js';
 import { SelfEvolutionBudget } from './selfEvolutionTypes.js';
 import { IBudgetRepository, FirestoreBudgetRepository, InMemoryBudgetRepository } from './repositories.js';
 
@@ -17,7 +17,7 @@ export class BudgetService {
 
   private static getRepo(): IBudgetRepository {
     if (!this.repository) {
-      if (isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
+      if (hasFullServiceAccountCredentials() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
         this.repository = new FirestoreBudgetRepository(this.defaultBudget);
       } else {
         if (process.env.NODE_ENV === 'production') {

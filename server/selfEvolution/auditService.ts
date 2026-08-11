@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { adminDb, hasFullServiceAccountCredentials } from '../lib/firebaseAdmin.js';
 import { AuditRecord, RiskLevel } from './selfEvolutionTypes.js';
 
 export class AuditService {
@@ -7,7 +7,7 @@ export class AuditService {
   private static lastHash: string = '0000000000000000000000000000000000000000000000000000000000000000';
 
   private static isDbConfigured(): boolean {
-    return isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+    return hasFullServiceAccountCredentials() || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
   }
 
   private static async getLatestHash(): Promise<string> {

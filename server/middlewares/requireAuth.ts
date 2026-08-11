@@ -15,7 +15,7 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     return res.status(401).json({ error: 'Token de autenticação ausente.' });
   }
 
-  if (!isFirebaseAdminConfigured() && process.env.NODE_ENV === 'production') {
+  if (!adminAuth) {
     return res.status(503).json({ error: 'Servidor de autenticação Firebase Admin não configurado.' });
   }
 
@@ -41,7 +41,7 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
 
     if (decodedToken.role === 'admin' || decodedToken.admin === true) {
       role = 'admin';
-    } else if (adminDb) {
+    } else if (isFirebaseAdminConfigured() && adminDb) {
       try {
         const userDoc = await adminDb.collection('users').doc(uid).get();
         if (userDoc.exists && userDoc.data()?.role === 'admin') {

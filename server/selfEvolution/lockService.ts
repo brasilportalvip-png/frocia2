@@ -1,4 +1,4 @@
-import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { hasFullServiceAccountCredentials } from '../lib/firebaseAdmin.js';
 import { LeaseLock } from './selfEvolutionTypes.js';
 import { ILockRepository, FirestoreLockRepository, InMemoryLockRepository } from './repositories.js';
 
@@ -7,7 +7,7 @@ export class LockService {
 
   private static getRepo(): ILockRepository {
     if (!this.repository) {
-      if (isFirebaseAdminConfigured() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
+      if (hasFullServiceAccountCredentials() || Boolean(process.env.FIRESTORE_EMULATOR_HOST)) {
         this.repository = new FirestoreLockRepository();
       } else {
         if (process.env.NODE_ENV === 'production') {
