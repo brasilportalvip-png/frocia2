@@ -4,6 +4,7 @@ import express, {
   Response
 } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { GoogleGenAI } from '@google/genai';
@@ -1107,6 +1108,26 @@ export async function createApp() {
       });
     }
   });
+
+    // Serve technical SEO & asset files directly with correct Content-Type headers
+    const servePublicFile = (filePath: string, contentType: string) => {
+      return (req: Request, res: Response) => {
+        const fullPath = path.resolve(process.cwd(), filePath);
+        const distPath = path.resolve(process.cwd(), 'dist', path.basename(filePath));
+        const targetPath = fs.existsSync(fullPath) ? fullPath : distPath;
+
+        if (fs.existsSync(targetPath)) {
+          res.setHeader('Content-Type', contentType);
+          return res.status(200).sendFile(targetPath);
+        }
+        return res.status(404).send('File not found');
+      };
+    };
+
+    app.get('/sitemap.xml', servePublicFile('public/sitemap.xml', 'application/xml; charset=utf-8'));
+    app.get('/sitemap-index.xml', servePublicFile('public/sitemap-index.xml', 'application/xml; charset=utf-8'));
+    app.get('/robots.txt', servePublicFile('public/robots.txt', 'text/plain; charset=utf-8'));
+    app.get('/.well-known/assetlinks.json', servePublicFile('public/.well-known/assetlinks.json', 'application/json; charset=utf-8'));
 
     // Catch-all 404 handler for unknown /api routes
     app.all('/api/*', (req: Request, res: Response) => {

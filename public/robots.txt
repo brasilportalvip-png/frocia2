@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /
+
+Disallow: /api/
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /profile
+Disallow: /wallet
+Disallow: /checkout
+Disallow: /conversations
+Disallow: /projects/
+
+Sitemap: https://frocia2.vercel.app/sitemap-index.xml
+Sitemap: https://frocia2.vercel.app/sitemap.xml

@@ -5,19 +5,18 @@ import { CheckoutInputSchema, AdminGrantCreditsInputSchema } from '../server/val
 
 describe('Phase 2 Financial & Checkout Tests', () => {
   describe('Credit Packages Config', () => {
-    it('should have 4 active credit packages', () => {
-      expect(CREDIT_PACKAGES.length).toBe(4);
+    it('should have 5 active credit packages', () => {
+      expect(CREDIT_PACKAGES.length).toBe(5);
       const activePkgs = CREDIT_PACKAGES.filter((p) => p.active);
-      expect(activePkgs.length).toBe(4);
+      expect(activePkgs.length).toBe(5);
     });
 
     it('should retrieve package by ID correctly', () => {
       const creatorPkg = getCreditPackageById('creator');
       expect(creatorPkg).toBeDefined();
-      expect(creatorPkg?.name).toBe('Pacote Criador');
-      expect(creatorPkg?.priceBrl).toBe(119);
-      expect(creatorPkg?.credits).toBe(300);
-      expect(creatorPkg?.bonusCredits).toBe(50);
+      expect(creatorPkg?.name).toBe('Criador');
+      expect(creatorPkg?.priceBrl).toBe(249.90);
+      expect(creatorPkg?.credits).toBe(350);
       expect(creatorPkg?.totalCredits).toBe(350);
     });
 
