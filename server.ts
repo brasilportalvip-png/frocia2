@@ -44,6 +44,8 @@ import { siteBuilderRouter } from './server/routes/siteBuilderRoutes.js';
 import { healthRouter } from './server/routes/healthRoutes.js';
 import { capabilityRouter } from './server/routes/capabilityRoutes.js';
 import { selfEvolutionRouter } from './server/routes/selfEvolutionRoutes.js';
+import { mediaRouter } from './server/routes/mediaRoutes.js';
+import { deployRouter } from './server/routes/deployRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -152,6 +154,8 @@ export async function createApp() {
     requireFeatureFlag('ai_chat'),
     aiRouter
   );
+  app.use('/api/ai/media', mediaRouter);
+  app.use('/api/deploy', deployRouter);
 
   // Rate Limiters
   const checkoutLimiter = createRateLimiter({ windowMs: 60 * 1000, max: 10, keyPrefix: 'checkout' });
@@ -619,6 +623,138 @@ export async function createApp() {
         error: {
           code: isConfigError ? 'payment_provider_unconfigured' : 'checkout_processing_error',
           message: err.message || 'Nao foi possivel iniciar o pagamento neste momento.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+  });
+
+  // Protected: Create Card Payment (Mercado Pago Credit Card)
+  app.post('/api/payments/card', requireAuth, checkoutLimiter, requireFeatureFlag('payment_checkout'), async (req: AuthenticatedRequest, res) => {
+    try {
+      const { token, issuerId, paymentMethodId, installments = 1, packageId, idempotencyKey: clientKey } = req.body || {};
+
+      if (!token || typeof token !== 'string' || !paymentMethodId || typeof paymentMethodId !== 'string' || !packageId) {
+        return res.status(400).json({
+          error: {
+            code: 'invalid_card_input',
+            message: 'Token de cartão, método de pagamento e pacote de créditos são obrigatórios.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
+
+      const pkg = getCreditPackageById(packageId);
+      if (!pkg) {
+        return res.status(404).json({
+          error: {
+            code: 'package_not_found',
+            message: 'Pacote de créditos inválido ou inativo.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
+
+      if (!MercadoPagoService.isConfigured()) {
+        return res.status(503).json({
+          error: {
+            code: 'payment_provider_unavailable',
+            message: 'Serviço de pagamentos não configurado no servidor.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
+
+      const uid = req.user!.uid;
+      const userEmail = req.user!.email || 'cliente@froc.ia';
+
+      const paymentRef = adminDb.collection('payments').doc();
+      const paymentDocumentId = paymentRef.id;
+      const externalReference = `froc-payment-${paymentDocumentId}`;
+      const idempotencyKey = clientKey || `card-${paymentDocumentId}`;
+
+      await paymentRef.set({
+        provider: 'mercadopago',
+        paymentType: 'credit_card',
+        providerPaymentId: null,
+        externalReference,
+        userId: uid,
+        packageSnapshot: {
+          packageId: pkg.id,
+          packageName: pkg.name,
+          priceBrl: pkg.priceBrl,
+          baseCredits: pkg.credits,
+          bonusCredits: pkg.bonusCredits,
+          totalCredits: pkg.totalCredits,
+        },
+        packageId: pkg.id,
+        packageName: pkg.name,
+        amountBrl: pkg.priceBrl,
+        currency: 'BRL',
+        baseCredits: pkg.credits,
+        bonusCredits: pkg.bonusCredits,
+        totalCredits: pkg.totalCredits,
+        status: 'creating',
+        credited: false,
+        idempotencyKey,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      const cardResult = await MercadoPagoService.createCardPayment({
+        token,
+        issuerId,
+        paymentMethodId,
+        installments: Number(installments),
+        amountBrl: pkg.priceBrl,
+        payerEmail: userEmail,
+        description: `Froc.IA - ${pkg.name} (${pkg.totalCredits} créditos)`,
+        externalReference,
+        idempotencyKey,
+      });
+
+      await paymentRef.update({
+        providerPaymentId: cardResult.providerPaymentId,
+        status: cardResult.status || 'pending',
+        statusDetail: cardResult.statusDetail || null,
+        liveMode: cardResult.liveMode ?? null,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      if (cardResult.status === 'approved') {
+        const creditIdempotencyKey = `credit-${paymentDocumentId}`;
+        await CreditWalletService.creditPurchase({
+          userId: uid,
+          paymentDocumentId,
+          providerPaymentId: cardResult.providerPaymentId,
+          baseCredits: pkg.credits,
+          bonusCredits: pkg.bonusCredits,
+          amountBrl: pkg.priceBrl,
+          idempotencyKey: creditIdempotencyKey,
+        });
+        await paymentRef.update({
+          credited: true,
+          creditedAt: FieldValue.serverTimestamp(),
+        });
+      }
+
+      return res.json({
+        success: true,
+        paymentDocumentId,
+        providerPaymentId: cardResult.providerPaymentId,
+        status: cardResult.status,
+        statusDetail: cardResult.statusDetail,
+        totalCredits: pkg.totalCredits,
+        amountBrl: pkg.priceBrl,
+        packageName: pkg.name,
+        correlationId: req.correlationId,
+      });
+    } catch (err: any) {
+      console.error('❌ Erro no Pagamento por Cartão:', err);
+      return res.status(500).json({
+        error: {
+          code: 'card_payment_failed',
+          message: err.message || 'Erro ao processar pagamento por cartão.',
           correlationId: req.correlationId,
         },
       });

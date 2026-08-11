@@ -15,9 +15,13 @@ import {
   Layout,
   Paperclip,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Sparkles,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
   Video,
   Volume2,
   VolumeX,
@@ -181,6 +185,7 @@ export const ChatCentral: React.FC<
 > = ({
   messages,
   onSendMessage,
+  onStopGeneration,
   isGenerating,
   selectedMode,
   setSelectedMode,
@@ -212,6 +217,14 @@ export const ChatCentral: React.FC<
     useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] =
     useState<string | null>(null);
+  const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
+
+  const handleRate = (messageId: string, rating: 'up' | 'down') => {
+    setRatedMessages((prev) => ({
+      ...prev,
+      [messageId]: prev[messageId] === rating ? (undefined as any) : rating,
+    }));
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
@@ -794,7 +807,7 @@ export const ChatCentral: React.FC<
                       </div>
 
                       {isAi && (
-                        <div className="mt-2 flex items-center gap-1 text-white/35">
+                        <div className="mt-2 flex items-center gap-1.5 text-white/40 text-xs">
                           <button
                             type="button"
                             onClick={() => {
@@ -803,7 +816,7 @@ export const ChatCentral: React.FC<
                                 message.text
                               );
                             }}
-                            className="rounded-lg p-1.5 transition-colors hover:bg-white/6 hover:text-white"
+                            className="rounded-lg p-1.5 transition-colors hover:bg-white/10 hover:text-white"
                             title="Copiar resposta"
                           >
                             {copiedId === message.id ? (
@@ -821,7 +834,7 @@ export const ChatCentral: React.FC<
                                 message.text
                               );
                             }}
-                            className="rounded-lg p-1.5 transition-colors hover:bg-white/6 hover:text-white"
+                            className="rounded-lg p-1.5 transition-colors hover:bg-white/10 hover:text-white"
                             title={
                               speakingMsgId === message.id
                                 ? 'Parar leitura'
@@ -833,6 +846,32 @@ export const ChatCentral: React.FC<
                             ) : (
                               <Volume2 className="h-3.5 w-3.5" />
                             )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRate(message.id, 'up')}
+                            className={`rounded-lg p-1.5 transition-colors hover:bg-white/10 ${
+                              ratedMessages[message.id] === 'up'
+                                ? 'text-amber-300 bg-amber-400/10'
+                                : 'hover:text-white'
+                            }`}
+                            title="Gostei da resposta"
+                          >
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRate(message.id, 'down')}
+                            className={`rounded-lg p-1.5 transition-colors hover:bg-white/10 ${
+                              ratedMessages[message.id] === 'down'
+                                ? 'text-rose-400 bg-rose-500/10'
+                                : 'hover:text-white'
+                            }`}
+                            title="Não gostei da resposta"
+                          >
+                            <ThumbsDown className="h-3.5 w-3.5" />
                           </button>
 
                           {message.isHtmlUpdate && (
@@ -847,7 +886,7 @@ export const ChatCentral: React.FC<
                                   content: message.text
                                 });
                               }}
-                              className="ml-2 flex items-center gap-1.5 rounded-lg border border-amber-300/20 bg-amber-300/8 px-2.5 py-1.5 text-[10px] font-bold text-amber-200"
+                              className="ml-2 flex items-center gap-1.5 rounded-lg border border-amber-300/20 bg-amber-300/10 px-2.5 py-1.5 text-[10px] font-bold text-amber-200 hover:bg-amber-400/20 transition-all"
                             >
                               <Eye className="h-3 w-3" />
                               <span>Abrir projeto</span>
@@ -863,22 +902,40 @@ export const ChatCentral: React.FC<
               {isGenerating && (
                 <div
                   role="status"
-                  className="froc-message-enter flex items-center gap-4"
+                  className="froc-message-enter flex items-center justify-between gap-4 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3.5"
                 >
-                  <div className="h-10 w-10 shrink-0">
-                    <MascotWidget
-                      size="sm"
-                      quote=""
-                      showBadge={false}
-                      status="thinking"
-                    />
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 shrink-0">
+                      <MascotWidget
+                        size="sm"
+                        quote=""
+                        showBadge={false}
+                        status="thinking"
+                      />
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-amber-300 flex items-center gap-2">
+                        Froc.IA está pensando...
+                        <span className="flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse [animation-delay:200ms]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse [animation-delay:400ms]" />
+                        </span>
+                      </span>
+                      <p className="text-[10px] text-white/50">Processando com raciocínio profundo</p>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 py-3">
-                    <span className="froc-soft-pulse h-1.5 w-1.5 rounded-full bg-amber-300" />
-                    <span className="froc-soft-pulse h-1.5 w-1.5 rounded-full bg-amber-300 [animation-delay:180ms]" />
-                    <span className="froc-soft-pulse h-1.5 w-1.5 rounded-full bg-amber-300 [animation-delay:360ms]" />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={onStopGeneration}
+                    className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/15 px-3 py-1.5 text-xs font-extrabold text-rose-300 hover:bg-rose-500/30 transition-all cursor-pointer shrink-0"
+                    title="Interromper geração"
+                  >
+                    <Square className="h-3.5 w-3.5 fill-rose-300" />
+                    <span>Parar Geração</span>
+                  </button>
                 </div>
               )}
 
@@ -994,22 +1051,32 @@ export const ChatCentral: React.FC<
                 className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/28 focus:outline-none disabled:opacity-60"
               />
 
-              <button
-                type="button"
-                onClick={() => {
-                  void handleSend();
-                }}
-                disabled={
-                  isGenerating ||
-                  isPreparingAttachment ||
-                  (!inputText.trim() &&
-                    attachedFiles.length === 0)
-                }
-                className="froc-gold-button flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl"
-                title="Enviar mensagem"
-              >
-                <Send className="h-4 w-4 stroke-[2.8]" />
-              </button>
+              {isGenerating ? (
+                <button
+                  type="button"
+                  onClick={() => onStopGeneration()}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-500/80 hover:bg-rose-500 text-white transition-colors"
+                  title="Parar geração"
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleSend();
+                  }}
+                  disabled={
+                    isPreparingAttachment ||
+                    (!inputText.trim() &&
+                      attachedFiles.length === 0)
+                  }
+                  className="froc-gold-button flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl"
+                  title="Enviar mensagem"
+                >
+                  <Send className="h-4 w-4 stroke-[2.8]" />
+                </button>
+              )}
             </div>
           </div>
 

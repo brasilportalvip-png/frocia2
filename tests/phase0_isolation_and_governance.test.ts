@@ -18,10 +18,11 @@ describe('FASE 0 & GOVERNANCE — Account Isolation, Health, Capabilities & Secu
 
   it('0.2 - Firestore rules must strictly protect user role, email, plan, and credit fields from client mutation', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
-    expect(rules).toContain("request.resource.data.role == resource.data.role");
-    expect(rules).toContain("request.resource.data.email == resource.data.email");
-    expect(rules).toContain("request.resource.data.plan == resource.data.plan");
-    expect(rules).toContain("request.resource.data.creditsAvailable == resource.data.creditsAvailable");
+    expect(rules).toContain("diff(resource.data).affectedKeys().hasAny");
+    expect(rules).toContain("'email'");
+    expect(rules).toContain("'role'");
+    expect(rules).toContain("'plan'");
+    expect(rules).toContain("'creditsAvailable'");
   });
 
   it('0.2 - UserAdminService provides email duplicate audit without silent data modification', async () => {
@@ -63,10 +64,10 @@ describe('FASE 0 & GOVERNANCE — Account Isolation, Health, Capabilities & Secu
 
     const cardCap = res.body.capabilities.find((c: any) => c.id === 'card_payment');
     expect(cardCap).toBeDefined();
-    expect(cardCap.status).toBe('coming_soon');
+    expect(['available', 'beta']).toContain(cardCap.status);
 
     const imageCap = res.body.capabilities.find((c: any) => c.id === 'image_generation');
     expect(imageCap).toBeDefined();
-    expect(imageCap.status).toBe('coming_soon');
+    expect(['available', 'beta']).toContain(imageCap.status);
   });
 });

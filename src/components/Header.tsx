@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Code2,
   Columns,
@@ -6,7 +6,7 @@ import {
   CreditCard,
   Download,
   Eye,
-
+  ChevronDown,
   LayoutDashboard,
   LogOut,
   Maximize2,
@@ -27,6 +27,9 @@ import {
   UserProfile,
   ViewMode
 } from '../types';
+import { UserDropdown } from './UserDropdown';
+import { AvatarUploadModal } from './AvatarUploadModal';
+import { ModelSelectorModal } from './ModelSelectorModal';
 
 const FROC_LOGO_URL =
   'https://portalvipbrasil.com.br/wp-content/uploads/2026/08/frocialogo-removebg-preview.png';
@@ -71,6 +74,20 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileMenu
 }) => {
   const [logoFailed, setLogoFailed] = useState(false);
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const [isModelModalOpen, setIsModelModalOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsUserDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const creditPercentage =
     user.creditsMax > 0
@@ -289,32 +306,18 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </button>
 
-        <div className="hidden items-center gap-1.5 rounded-full border border-white/8 bg-white/[0.035] px-3 py-1.5 2xl:flex">
-          <Cpu className="h-3.5 w-3.5 text-amber-300" />
-
-          <select
-            value={selectedModel}
-            onChange={(event) => {
-              setSelectedModel(event.target.value);
-            }}
-            className="cursor-pointer bg-transparent text-[10px] font-semibold text-white/72 focus:outline-none"
-            aria-label="Selecionar modelo de IA"
-          >
-            <option
-              value="gemini-3.6-flash"
-              className="bg-[#0a0a0a]"
-            >
-              Gemini Flash
-            </option>
-
-            <option
-              value="gemini-3.1-pro-preview"
-              className="bg-[#0a0a0a]"
-            >
-              Gemini Pro
-            </option>
-          </select>
-        </div>
+        <button
+          type="button"
+          onClick={() => setIsModelModalOpen(true)}
+          className="hidden items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 hover:bg-amber-400/20 transition-all sm:flex"
+          title="Alternar Modelo de Inteligência Artificial"
+        >
+          <Cpu className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+          <span className="text-[10px] font-bold text-white/90">
+            {selectedModel === 'gemini-3.6-flash' ? 'Gemini Flash' : selectedModel === 'gemini-3.1-pro-preview' ? 'Gemini Pro' : 'Froc.IA Ultra'}
+          </span>
+          <ChevronDown className="h-3 w-3 text-amber-300/70 shrink-0" />
+        </button>
 
         {navMode === 'studio' && hasActiveSite && (
           <>
@@ -332,7 +335,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={onExport}
               className="froc-gold-button flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black"
             >
-              <Download className="h-3.5 w-3.5" />
+              <Download className="h-3.5 w-3.5 text-black" />
               <span className="hidden sm:inline">
                 Exportar
               </span>
@@ -341,14 +344,14 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         {user.isAuthenticated ? (
-          <div className="flex items-center gap-1">
+          <div className="relative" ref={dropdownRef}>
             <button
               type="button"
-              onClick={() => setNavMode('dashboard')}
-              className="glass-button flex items-center gap-2 rounded-full p-1 pl-2.5"
-              title="Abrir perfil e projetos"
+              onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+              className="glass-button flex items-center gap-2 rounded-full p-1 pl-2.5 hover:border-amber-400/50 transition-all cursor-pointer"
+              title="Menu do Usuário Froc.IA"
             >
-              <span className="hidden max-w-20 truncate text-[10px] font-semibold text-white/72 md:inline">
+              <span className="hidden max-w-24 truncate text-[10px] font-extrabold text-white/80 sm:inline">
                 {user.name.split(' ')[0]}
               </span>
 
@@ -357,10 +360,10 @@ export const Header: React.FC<HeaderProps> = ({
                   src={user.avatarUrl}
                   alt={user.name}
                   referrerPolicy="no-referrer"
-                  className="h-7 w-7 rounded-full object-cover border border-amber-300/40"
+                  className="h-7 w-7 rounded-full object-cover border-2 border-amber-300/60 shadow"
                 />
               ) : (
-                <span className="flex h-7 w-7 items-center justify-center rounded-full border border-amber-100/35 bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 text-xs font-black text-black">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-amber-300/60 bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 text-xs font-black text-black shadow">
                   {user.name
                     .trim()
                     .charAt(0)
@@ -369,28 +372,43 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {onLogout && (
-              <button
-                type="button"
-                onClick={onLogout}
-                title="Sair da conta"
-                className="glass-button hidden rounded-full p-2 text-white/45 hover:border-rose-500/25 hover:text-rose-300 sm:flex"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-              </button>
+            {/* Dropdown Menu */}
+            {isUserDropdownOpen && (
+              <UserDropdown
+                user={user}
+                setNavMode={setNavMode}
+                onLogout={onLogout}
+                onOpenAvatarModal={() => setIsAvatarModalOpen(true)}
+                onCloseDropdown={() => setIsUserDropdownOpen(false)}
+              />
             )}
           </div>
         ) : (
           <button
             type="button"
             onClick={onOpenAuth}
-            className="glass-button flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-bold"
+            className="froc-gold-button flex items-center gap-1.5 rounded-xl px-3 py-2 text-[10px] font-black cursor-pointer"
           >
-            <User className="h-3.5 w-3.5 text-amber-300" />
+            <User className="h-3.5 w-3.5 text-black" />
             <span>Entrar</span>
           </button>
         )}
       </div>
+
+      {/* Avatar Upload Modal */}
+      <AvatarUploadModal
+        isOpen={isAvatarModalOpen}
+        onClose={() => setIsAvatarModalOpen(false)}
+        user={user}
+      />
+
+      {/* Model Selector Modal */}
+      <ModelSelectorModal
+        isOpen={isModelModalOpen}
+        onClose={() => setIsModelModalOpen(false)}
+        selectedModel={selectedModel}
+        onSelectModel={setSelectedModel}
+      />
     </header>
   );
 };

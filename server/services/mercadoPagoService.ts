@@ -169,6 +169,64 @@ export class MercadoPagoService {
   }
 
   /**
+   * Creates a Card Payment with Mercado Pago SDK.
+   */
+  public static async createCardPayment(input: {
+    token: string;
+    issuerId?: string;
+    paymentMethodId: string;
+    installments: number;
+    amountBrl: number;
+    payerEmail: string;
+    description: string;
+    externalReference: string;
+    idempotencyKey: string;
+  }): Promise<MercadoPagoPaymentResult> {
+    const client = this.getClient();
+    const payment = new Payment(client);
+
+    const rawWebhookUrl = process.env.MERCADO_PAGO_WEBHOOK_URL ||
+      (process.env.APP_URL ? `${process.env.APP_URL}/api/payments/webhook` : undefined);
+
+    const validatedWebhookUrl = this.validateWebhookUrl(rawWebhookUrl);
+
+    const body: any = {
+      transaction_amount: input.amountBrl,
+      token: input.token,
+      description: input.description,
+      installments: Number(input.installments || 1),
+      payment_method_id: input.paymentMethodId,
+      issuer_id: input.issuerId ? Number(input.issuerId) : undefined,
+      payer: {
+        email: input.payerEmail,
+      },
+      external_reference: input.externalReference,
+      notification_url: validatedWebhookUrl,
+    };
+
+    try {
+      const response = await payment.create({
+        body,
+        requestOptions: {
+          idempotencyKey: input.idempotencyKey,
+        },
+      });
+
+      return {
+        providerPaymentId: String(response.id),
+        status: response.status || 'pending',
+        statusDetail: response.status_detail || undefined,
+        liveMode: response.live_mode ?? undefined,
+      };
+    } catch (error: any) {
+      console.error('❌ Erro no Mercado Pago SDK ao criar Cartão:', error?.message || error);
+      throw new PaymentCreationError(
+        `Não foi possível processar o pagamento com cartão: ${error?.message || 'Erro desconhecido'}`
+      );
+    }
+  }
+
+  /**
    * Fetches official payment information by Mercado Pago payment ID.
    */
   public static async getPaymentById(paymentId: string): Promise<{

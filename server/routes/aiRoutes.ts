@@ -310,6 +310,11 @@ aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
 
   let fullOutput = '';
   const startTime = Date.now();
+  let isClosed = false;
+
+  req.on('close', () => {
+    isClosed = true;
+  });
 
   try {
     const assembled = await ContextBuilder.assemble({
@@ -330,6 +335,9 @@ aiRouter.post('/chat', requireAuth, async (req: AuthenticatedRequest, res) => {
     });
 
     for await (const chunk of stream) {
+      if (isClosed) {
+        throw new Error('Conexão abortada pelo cliente.');
+      }
       if (chunk.text) {
         fullOutput += chunk.text;
         sendEvent('token', { text: chunk.text });

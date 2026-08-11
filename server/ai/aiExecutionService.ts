@@ -90,62 +90,62 @@ export class AIExecutionService {
     });
 
     const reservationId = reserveResult.reservationId;
-
-    // 4. Create Execution Trace
-    const executionId = await ExecutionTraceService.createTrace({
-      userId,
-      conversationId: conversationId || null,
-      projectId: projectId || null,
-      mode,
-      selectedModel: route.selectedModel,
-      fallbackModels: route.fallbackModels,
-      attemptedModels: [route.selectedModel],
-      status: 'running',
-      promptVersion: 'v1.0.0',
-      inputTokens: null,
-      outputTokens: null,
-      cachedTokens: null,
-      estimatedCredits: route.estimatedCredits,
-      consumedCredits: null,
-      reservationId,
-      latencyMs: null,
-      fallbackUsed: false,
-      correlationId,
-      errorCode: null,
-      createdAt: new Date().toISOString(),
-      startedAt: new Date().toISOString(),
-      completedAt: null,
-    });
-
-    // 5. Assemble Context
-    const assembled = await ContextBuilder.assemble({
-      userId,
-      mode,
-      prompt: sanitizedPrompt,
-      conversationId,
-      projectId,
-      knowledgeBaseIds,
-      systemInstructionOverride: systemInstruction,
-    });
-
-    const citations: MessageCitation[] = [];
-
-    // Add RAG Citations
-    for (const chunk of assembled.ragChunksUsed) {
-      citations.push(CitationService.buildRAGCitationPill(chunk));
-    }
-
-    const startTime = Date.now();
+    let executionId: string | null = null;
     let modelToUse = route.selectedModel;
     let fallbackUsed = false;
     let aiResponseText = '';
     let inputTokens = 0;
     let outputTokens = 0;
+    let startTime = Date.now();
+    const citations: MessageCitation[] = [];
 
-    const enableSearchGrounding = mode === 'research' || route.reasonCode === 'mode_research_grounded';
-
-    // 6. Execute with Primary Model and Fallback
     try {
+      // 4. Create Execution Trace
+      executionId = await ExecutionTraceService.createTrace({
+        userId,
+        conversationId: conversationId || null,
+        projectId: projectId || null,
+        mode,
+        selectedModel: route.selectedModel,
+        fallbackModels: route.fallbackModels,
+        attemptedModels: [route.selectedModel],
+        status: 'running',
+        promptVersion: 'v1.0.0',
+        inputTokens: null,
+        outputTokens: null,
+        cachedTokens: null,
+        estimatedCredits: route.estimatedCredits,
+        consumedCredits: null,
+        reservationId,
+        latencyMs: null,
+        fallbackUsed: false,
+        correlationId,
+        errorCode: null,
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+      });
+
+      // 5. Assemble Context
+      const assembled = await ContextBuilder.assemble({
+        userId,
+        mode,
+        prompt: sanitizedPrompt,
+        conversationId,
+        projectId,
+        knowledgeBaseIds,
+        systemInstructionOverride: systemInstruction,
+      });
+
+      // Add RAG Citations
+      for (const chunk of assembled.ragChunksUsed) {
+        citations.push(CitationService.buildRAGCitationPill(chunk));
+      }
+
+      startTime = Date.now();
+      const enableSearchGrounding = mode === 'research' || route.reasonCode === 'mode_research_grounded';
+
+      // 6. Execute with Primary Model and Fallback
       try {
         const res = await GeminiProvider.generate({
           model: modelToUse,
@@ -206,11 +206,13 @@ export class AIExecutionService {
         idempotencyKey: `rel-${idempotencyKey}`,
       });
 
-      await ExecutionTraceService.updateTrace(executionId, {
-        status: 'failed',
-        errorCode: execErr.message || 'ai_execution_failed',
-        completedAt: new Date().toISOString(),
-      });
+      if (executionId) {
+        await ExecutionTraceService.updateTrace(executionId, {
+          status: 'failed',
+          errorCode: execErr.message || 'ai_execution_failed',
+          completedAt: new Date().toISOString(),
+        });
+      }
 
       throw execErr;
     }
