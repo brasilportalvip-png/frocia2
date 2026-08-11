@@ -5,6 +5,7 @@ export interface CreditPackageConfig {
   bonusCredits: number;
   totalCredits: number;
   priceBrl: number;
+  priceCents: number;
   active: boolean;
   description: string;
   badge?: string;
@@ -14,79 +15,92 @@ export interface CreditPackageConfig {
 
 export const CREDIT_PACKAGES: CreditPackageConfig[] = [
   {
-    id: "initial",
-    name: "Pacote Inicial",
-    credits: 100,
-    bonusCredits: 10,
-    totalCredits: 110,
-    priceBrl: 49,
+    id: "free",
+    name: "Gratuito",
+    credits: 10,
+    bonusCredits: 0,
+    totalCredits: 10,
+    priceBrl: 0,
+    priceCents: 0,
     active: true,
-    description: "Ideal para experimentar e criar seus primeiros sites com IA.",
-    badge: "Economia",
+    description: "Aproximadamente 2 conversas inteligentes para testar a Froc.IA.",
     features: [
-      "110 Créditos Totais (Com Bônus)",
-      "Acesso ao Gemini 3.6 Flash",
-      "Geração de Sites e Código",
-      "Exportação ilimitada em HTML/ZIP",
-      "Validade de 90 dias"
+      "10 Créditos de boas-vindas",
+      "Aproximadamente 2 conversas inteligentes",
+      "Não inclui imagens, vídeos ou criação de sites"
+    ]
+  },
+  {
+    id: "essential",
+    name: "Essencial",
+    credits: 50,
+    bonusCredits: 0,
+    totalCredits: 50,
+    priceBrl: 49.90,
+    priceCents: 4990,
+    active: true,
+    description: "Conversas, imagens e pequenas tarefas de IA.",
+    badge: "Iniciante",
+    features: [
+      "50 Créditos",
+      "Aproximadamente 10 conversas inteligentes ou 2 imagens",
+      "Assistente de conversação e análise",
+      "Pequenas edições e consultas"
     ]
   },
   {
     id: "creator",
-    name: "Pacote Criador",
-    credits: 300,
-    bonusCredits: 50,
+    name: "Criador",
+    credits: 350,
+    bonusCredits: 0,
     totalCredits: 350,
-    priceBrl: 119,
+    priceBrl: 249.90,
+    priceCents: 24990,
     active: true,
-    description: "Para criadores e freelancers gerarem múltiplos projetos e imagens.",
     popular: true,
     badge: "Mais Vendido",
+    description: "Permite aproximadamente 1 site completo. Indicado para criadores e pequenos negócios.",
     features: [
-      "350 Créditos Totais (Com Bônus)",
-      "Acesso ao Gemini 3.6 Flash & 3.1 Pro",
-      "Geração de Imagens Imagen 3",
-      "Correção e Refatoração de Código",
-      "Deploy direto no GitHub & Vercel",
-      "Validade de 180 dias"
+      "350 Créditos",
+      "Aproximadamente 1 site completo ou dezenas de conversas",
+      "Geração de código e projetos",
+      "Criação de imagens e análises profundas"
     ]
   },
   {
     id: "professional",
-    name: "Pacote Profissional",
-    credits: 1000,
-    bonusCredits: 200,
-    totalCredits: 1200,
-    priceBrl: 299,
+    name: "Profissional",
+    credits: 900,
+    bonusCredits: 0,
+    totalCredits: 900,
+    priceBrl: 549.90,
+    priceCents: 54990,
     active: true,
-    description: "Para profissionais e estúdios com alto volume de desenvolvimento.",
     badge: "Alta Performance",
+    description: "Permite aproximadamente 3 sites completos. Indicado para profissionais e empresas.",
     features: [
-      "1200 Créditos Totais (Com Bônus)",
-      "Todos os Modelos de IA Liberados",
-      "Geração de Vídeos Veo",
-      "Atendimento de Suporte Prioritário",
-      "Failover de Alta Disponibilidade",
-      "Créditos Sem Validade"
+      "900 Créditos",
+      "Aproximadamente 3 sites completos",
+      "Refatoração de código e análises avançadas",
+      "Prioridade no processamento de requisições"
     ]
   },
   {
     id: "agency",
-    name: "Pacote Agência",
-    credits: 3000,
-    bonusCredits: 800,
-    totalCredits: 3800,
-    priceBrl: 799,
+    name: "Agência",
+    credits: 2200,
+    bonusCredits: 0,
+    totalCredits: 2200,
+    priceBrl: 1099.90,
+    priceCents: 109990,
     active: true,
-    description: "Pacote empresarial de alta capacidade para demandas ilimitadas.",
     badge: "Empresarial",
+    description: "Permite aproximadamente 7 a 8 sites completos. Indicado para equipes e agências.",
     features: [
-      "3800 Créditos Totais (Com Bônus)",
-      "Uso Ilimitado Multiagente",
-      "Acesso via API Externa",
-      "Gerente de Conta Dedicado",
-      "SLA 99.9% Garantido",
-      "Créditos Sem Validade"
+      "2.200 Créditos",
+      "Aproximadamente 7 a 8 sites completos",
+      "Suporte para demandas recorrentes de equipes",
+      "Histórico completo e relatórios de consumo"
     ]
   }
 ];

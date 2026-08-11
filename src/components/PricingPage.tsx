@@ -204,7 +204,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
                     </div>
                     <div className="mt-2 text-xs text-pink-300 font-bold flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span>{pkg.credits} + {pkg.bonus} Créditos Bônus</span>
+                      <span>{pkg.bonus > 0 ? `${pkg.credits} + ${pkg.bonus} Créditos Bônus` : `${pkg.credits} Créditos`}</span>
                     </div>
                   </div>
 
@@ -234,25 +234,37 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
         <div className="p-8 rounded-[32px] glass-panel border border-white/10 max-w-4xl mx-auto space-y-6">
           <div className="flex items-center gap-3">
             <HelpCircle className="w-6 h-6 text-pink-400" />
-            <h3 className="text-xl font-bold text-white">Tabela de Custo por Operação</h3>
+            <h3 className="text-xl font-bold text-white">Tabela Oficial de Consumo de Créditos</h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
-              <span className="text-white/50 block">Conversa / Chat</span>
-              <span className="text-lg font-bold text-emerald-400">1 Crédito</span>
+              <span className="text-white/50 block">Pergunta Simples</span>
+              <span className="text-lg font-bold text-emerald-400">3 a 5 Créditos</span>
             </div>
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
-              <span className="text-white/50 block">Geração de Imagem</span>
-              <span className="text-lg font-bold text-pink-400">7 Créditos</span>
+              <span className="text-white/50 block">Conversa Inteligente</span>
+              <span className="text-lg font-bold text-emerald-400">5 Créditos</span>
             </div>
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
-              <span className="text-white/50 block">Refatoração de Código</span>
-              <span className="text-lg font-bold text-purple-400">10 Créditos</span>
+              <span className="text-white/50 block">Análise Profunda / Pesquisa</span>
+              <span className="text-lg font-bold text-cyan-400">10 a 18 Créditos</span>
             </div>
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
-              <span className="text-white/50 block">Site Completo com IA</span>
-              <span className="text-lg font-bold text-amber-400">200 Créditos</span>
+              <span className="text-white/50 block">Geração / Edição de Imagem</span>
+              <span className="text-lg font-bold text-pink-400">18 Créditos</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
+              <span className="text-white/50 block">Geração de Vídeo (Lite / Fast / Std)</span>
+              <span className="text-lg font-bold text-purple-400">30 / 46 / 120+ Créditos</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1">
+              <span className="text-white/50 block">Edição / Refatoração de Código</span>
+              <span className="text-lg font-bold text-purple-400">40 a 60 Créditos</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1 sm:col-span-2 md:col-span-3">
+              <span className="text-white/50 block">Criação de Site / Landing Page Profissional</span>
+              <span className="text-lg font-bold text-amber-400">250 a 300 Créditos</span>
             </div>
           </div>
         </div>

@@ -6,13 +6,27 @@ import { FieldValue } from 'firebase-admin/firestore';
 
 export const conversationRouter = Router();
 
+function checkDatabaseAvailability(req: AuthenticatedRequest, res: any): boolean {
+  if (!adminDb) {
+    res.status(503).json({
+      error: {
+        code: 'database_unavailable',
+        message: 'Banco de dados temporariamente indisponível.',
+        correlationId: req.correlationId,
+      },
+    });
+    return false;
+  }
+  return true;
+}
+
 // GET /api/conversations
 conversationRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
-    if (!adminDb) return res.json({ conversations: [] });
 
-    const snap = await adminDb
+    const snap = await adminDb!
       .collection('conversations')
       .where('userId', '==', uid)
       .orderBy('updatedAt', 'desc')
@@ -38,7 +52,7 @@ conversationRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) 
     return res.status(500).json({
       error: {
         code: 'conversations_fetch_failed',
-        message: 'Erro ao buscar historico de conversas.',
+        message: 'Erro ao buscar histórico de conversas.',
         correlationId: req.correlationId,
       },
     });
@@ -48,22 +62,17 @@ conversationRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) 
 // POST /api/conversations
 conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { title = 'Nova Conversa', mode = 'smart', projectId = null } = req.body;
 
-    if (!adminDb) {
-      return res.json({
-        conversation: { id: `local-conv-${Date.now()}`, userId: uid, title, mode, projectId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      });
-    }
-
-    const ref = adminDb.collection('conversations').doc();
+    const ref = adminDb!.collection('conversations').doc();
     const now = FieldValue.serverTimestamp();
 
     await ref.set({
       userId: uid,
       projectId,
-      title,
+      title: typeof title === 'string' ? title.trim().slice(0, 100) : 'Nova Conversa',
       mode,
       summary: '',
       archivedAt: null,
@@ -75,7 +84,7 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
       conversation: {
         id: ref.id,
         userId: uid,
-        title,
+        title: typeof title === 'string' ? title.trim().slice(0, 100) : 'Nova Conversa',
         mode,
         projectId,
         createdAt: new Date().toISOString(),
@@ -86,7 +95,7 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
     return res.status(500).json({
       error: {
         code: 'conversation_create_failed',
-        message: 'Erro ao criar conversa.',
+        message: 'Erro ao criar conversa no servidor.',
         correlationId: req.correlationId,
       },
     });
@@ -96,15 +105,14 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
 // GET /api/conversations/:id
 conversationRouter.get('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { id } = req.params;
 
-    if (!adminDb) return res.status(404).json({ error: { code: 'not_found', message: 'Conversa nao encontrada.', correlationId: req.correlationId } });
-
-    const snap = await adminDb.collection('conversations').doc(id).get();
+    const snap = await adminDb!.collection('conversations').doc(id).get();
     if (!snap.exists || snap.data()?.userId !== uid) {
       return res.status(404).json({
-        error: { code: 'conversation_not_found', message: 'Conversa nao encontrada ou sem acesso.', correlationId: req.correlationId },
+        error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
       });
     }
 
@@ -129,21 +137,20 @@ conversationRouter.get('/:id', requireAuth, async (req: AuthenticatedRequest, re
 // PATCH /api/conversations/:id
 conversationRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { id } = req.params;
     const { title, mode } = req.body;
 
-    if (!adminDb) return res.json({ success: true });
-
-    const ref = adminDb.collection('conversations').doc(id);
+    const ref = adminDb!.collection('conversations').doc(id);
     const snap = await ref.get();
 
     if (!snap.exists || snap.data()?.userId !== uid) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'Conversa nao encontrada.', correlationId: req.correlationId } });
+      return res.status(404).json({ error: { code: 'not_found', message: 'Conversa não encontrada.', correlationId: req.correlationId } });
     }
 
     const updates: any = { updatedAt: FieldValue.serverTimestamp() };
-    if (title) updates.title = title;
+    if (typeof title === 'string' && title.trim()) updates.title = title.trim().slice(0, 100);
     if (mode) updates.mode = mode;
 
     await ref.update(updates);
@@ -156,19 +163,31 @@ conversationRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, 
 // DELETE /api/conversations/:id
 conversationRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { id } = req.params;
 
-    if (!adminDb) return res.json({ success: true });
-
-    const ref = adminDb.collection('conversations').doc(id);
+    const ref = adminDb!.collection('conversations').doc(id);
     const snap = await ref.get();
 
     if (!snap.exists || snap.data()?.userId !== uid) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'Conversa nao encontrada.', correlationId: req.correlationId } });
+      return res.status(404).json({ error: { code: 'not_found', message: 'Conversa não encontrada.', correlationId: req.correlationId } });
     }
 
-    await ref.delete();
+    // Delete associated messages in batch to prevent orphan messages
+    const messagesSnap = await adminDb!
+      .collection('messages')
+      .where('conversationId', '==', id)
+      .where('userId', '==', uid)
+      .get();
+
+    const batch = adminDb!.batch();
+    messagesSnap.docs.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    batch.delete(ref);
+    await batch.commit();
+
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ error: { code: 'conversation_delete_failed', message: 'Erro ao deletar conversa.', correlationId: req.correlationId } });
@@ -178,12 +197,19 @@ conversationRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest,
 // GET /api/conversations/:id/messages
 conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { id } = req.params;
 
-    if (!adminDb) return res.json({ messages: [] });
+    // First check conversation existence and ownership
+    const convSnap = await adminDb!.collection('conversations').doc(id).get();
+    if (!convSnap.exists || convSnap.data()?.userId !== uid) {
+      return res.status(404).json({
+        error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
+      });
+    }
 
-    const snap = await adminDb
+    const snap = await adminDb!
       .collection('messages')
       .where('conversationId', '==', id)
       .where('userId', '==', uid)
@@ -215,30 +241,26 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
 // POST /api/conversations/:id/messages
 conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
+    if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { id: conversationId } = req.params;
     const { content, attachments = [], citations = [], executionId = null, model = null } = req.body;
 
-    // Client messages created via POST /messages must always have role = 'user'
     const role = 'user';
 
     if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      return res.status(400).json({ error: { code: 'missing_content', message: 'Conteudo da mensagem e obrigatorio.', correlationId: req.correlationId } });
-    }
-
-    if (!adminDb) {
-      return res.json({ message: { id: `msg-${Date.now()}`, conversationId, userId: uid, role, content, citations, createdAt: new Date().toISOString() } });
+      return res.status(400).json({ error: { code: 'missing_content', message: 'Conteúdo da mensagem é obrigatório.', correlationId: req.correlationId } });
     }
 
     // Validate conversation existence and ownership
-    const convSnap = await adminDb.collection('conversations').doc(conversationId).get();
+    const convSnap = await adminDb!.collection('conversations').doc(conversationId).get();
     if (!convSnap.exists || convSnap.data()?.userId !== uid) {
       return res.status(404).json({
-        error: { code: 'conversation_not_found', message: 'Conversa nao encontrada ou sem acesso.', correlationId: req.correlationId },
+        error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
       });
     }
 
-    const ref = adminDb.collection('messages').doc();
+    const ref = adminDb!.collection('messages').doc();
     const now = FieldValue.serverTimestamp();
 
     await ref.set({
@@ -254,7 +276,7 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
     });
 
     // Touch conversation updatedAt
-    await adminDb.collection('conversations').doc(conversationId).update({
+    await adminDb!.collection('conversations').doc(conversationId).update({
       updatedAt: now,
     });
 

@@ -59,7 +59,7 @@ const CHAT_MODE_TO_AI_MODE: Partial<
 };
 
 export default function App() {
-  const { user: authUser, loading, isAuthenticated, isAdmin, logout, refreshProfile } = useAuth();
+  const { user: authUser, loading, isAuthenticated, isAdmin, profileError, logout, refreshProfile } = useAuth();
 
   const [navMode, setNavMode] = useState<AppNavigationMode>('studio');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -491,6 +491,13 @@ export default function App() {
       return;
     }
 
+    if (profileError || !authUser) {
+      setErrorMsg(
+        'Operação bloqueada: Não foi possível carregar seu perfil e saldo do servidor. Tente novamente.'
+      );
+      return;
+    }
+
     const apiMode =
       CHAT_MODE_TO_AI_MODE[mode];
 
@@ -519,24 +526,23 @@ export default function App() {
       let activeConvId = currentConversationId;
 
       if (!activeConvId) {
-        try {
-          const convRes = await apiClient<{ conversation: Conversation }>('/api/conversations', {
-            method: 'POST',
-            body: JSON.stringify({
-              title: prompt.slice(0, 30) || 'Nova Conversa',
-              mode: apiMode
-            })
-          });
-          if (convRes.conversation) {
-            activeConvId = convRes.conversation.id;
-            setCurrentConversationId(activeConvId);
-            try {
-              localStorage.setItem('frocia_active_conversation_id', activeConvId);
-            } catch (e) {}
-            setConversations((prev) => [convRes.conversation, ...prev]);
-          }
-        } catch (convErr) {
-          console.warn('Erro ao criar registro da conversa no servidor:', convErr);
+        const convRes = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: prompt.slice(0, 30) || 'Nova Conversa',
+            mode: apiMode
+          })
+        });
+
+        if (convRes?.conversation?.id) {
+          activeConvId = convRes.conversation.id;
+          setCurrentConversationId(activeConvId);
+          try {
+            localStorage.setItem(`frocia_active_conv_${currentUser.id}`, activeConvId);
+          } catch (e) {}
+          setConversations((prev) => [convRes.conversation, ...prev]);
+        } else {
+          throw new Error('Não foi possível registrar a conversa no servidor. Execução de IA interrompida.');
         }
       }
 
@@ -558,6 +564,11 @@ export default function App() {
       const attachments =
         toAIAttachmentPayloads(directFiles);
 
+      const stableExecutionKey =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `exec-${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
       const result = await apiClient<{
         text: string;
         modelUsed: string;
@@ -574,11 +585,10 @@ export default function App() {
         body: JSON.stringify({
           prompt,
           mode: apiMode,
-          conversationId: activeConvId || undefined,
+          conversationId: activeConvId,
           attachments,
           knowledgeBaseIds,
-          idempotencyKey:
-            `chat-${currentUser.id}-${Date.now()}`
+          idempotencyKey: stableExecutionKey
         })
       });
 
@@ -728,6 +738,21 @@ export default function App() {
         onLogout={logout}
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
+
+      {profileError && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200 z-40">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-amber-400">⚠️ Indisponibilidade:</span>
+            <span>{profileError}</span>
+          </div>
+          <button
+            onClick={() => refreshProfile()}
+            className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold rounded-lg border border-amber-500/30 transition-all shrink-0"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      )}
 
       {/* Main Container View Switcher */}
       <div className="flex-1 flex overflow-hidden relative">

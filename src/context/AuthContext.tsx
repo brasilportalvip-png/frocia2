@@ -141,23 +141,13 @@ export const AuthProvider: React.FC<{
           }
         } catch (error: any) {
           console.warn(
-            'Servidor em modo de resiliência local:',
+            'Não foi possível sincronizar o perfil com o servidor:',
             error?.message || error
           );
 
           if (!cancelled) {
-            setProfile({
-              id: fbUser.uid,
-              name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',
-              email: fbUser.email || '',
-              avatarUrl: fbUser.photoURL || '',
-              role: 'user',
-              plan: 'Inicial',
-              creditsRemaining: 100,
-              creditsMax: 100,
-              isAuthenticated: true,
-              emailVerified: fbUser.emailVerified
-            });
+            setProfile(null);
+            setProfileError('Não foi possível carregar seu perfil e saldo do servidor. Verifique sua conexão e tente novamente.');
           }
         } finally {
           if (!cancelled) {

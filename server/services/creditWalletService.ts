@@ -890,7 +890,7 @@ export class CreditWalletService {
   }
 
   /**
-   * Provision user profile with welcome credits (100 credits) using transactional ledger with key `welcome-credit:${userId}`.
+   * Provision user profile with welcome credits (10 credits) using transactional ledger with key `welcome-credit:${userId}`.
    */
   static async provisionUserWithWelcomeCredits(params: ProvisionUserParams): Promise<{
     profile: {
@@ -923,7 +923,7 @@ export class CreditWalletService {
 
       if (txSnap.exists && userSnap.exists) {
         const uData = userSnap.data() || {};
-        const avail = Number(uData.creditsAvailable ?? uData.creditsRemaining ?? 100);
+        const avail = Number(uData.creditsAvailable ?? uData.creditsRemaining ?? 10);
         const resv = Number(uData.creditsReserved ?? 0);
         return {
           profile: {
@@ -972,7 +972,7 @@ export class CreditWalletService {
         }
       }
 
-      const WELCOME_AMOUNT = 100;
+      const WELCOME_AMOUNT = 10;
       const availableAfter = availableBefore + WELCOME_AMOUNT;
 
       assertWalletInvariants({
