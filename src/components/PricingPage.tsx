@@ -21,6 +21,12 @@ interface PricingPageProps {
   onRefreshProfile?: () => void;
 }
 
+const formatPriceBrl = (value: number): string =>
+  new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  }).format(value);
+
 export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile }) => {
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [isLoadingPackages, setIsLoadingPackages] = useState(true);
@@ -199,7 +205,9 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
                   <div>
                     <h3 className="text-xl font-extrabold text-white">{pkg.name}</h3>
                     <div className="mt-4 flex items-baseline gap-1">
-                      <span className="text-3xl font-black text-white">R$ {pkg.priceBrl}</span>
+                      <span className="text-3xl font-black text-white">
+  {formatPriceBrl(pkg.priceBrl)}
+</span>
                       <span className="text-xs text-white/50">/ pagamento único</span>
                     </div>
                     <div className="mt-2 text-xs text-pink-300 font-bold flex items-center gap-1">
@@ -218,13 +226,19 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
                   </ul>
                 </div>
 
-                <button
-                  onClick={() => handleStartCheckout(pkg)}
-                  className="w-full mt-8 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-extrabold text-xs shadow-lg transition-all flex items-center justify-center gap-2"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  <span>Comprar via Pix</span>
-                </button>
+                {pkg.id === 'free' ? (
+  <div className="w-full mt-8 py-3.5 px-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 font-extrabold text-xs text-center">
+    10 créditos liberados automaticamente ao criar a conta
+  </div>
+) : (
+  <button
+    onClick={() => handleStartCheckout(pkg)}
+    className="w-full mt-8 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-extrabold text-xs shadow-lg transition-all flex items-center justify-center gap-2"
+  >
+    <CreditCard className="w-4 h-4" />
+    <span>Comprar via Pix</span>
+  </button>
+)}
               </div>
             ))}
           </div>
@@ -287,7 +301,10 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
               </div>
               <h3 className="text-xl font-bold">Pagamento Oficial Mercado Pago</h3>
               <p className="text-xs text-white/60">
-                {selectedPkg.name} — Total: <span className="font-bold text-white">R$ {selectedPkg.priceBrl},00</span>
+                {selectedPkg.name} — Total:{' '}
+<span className="font-bold text-white">
+  {formatPriceBrl(selectedPkg.priceBrl)}
+</span>
               </p>
             </div>
 

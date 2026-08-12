@@ -288,10 +288,13 @@ if (executionId) {
 
 // 7. Calculate Actual Consumed Credits
 const consumedCredits = CostService.calculateCreditCost(
-      modelToUse,
-      inputTokens,
-      outputTokens
-    );
+  modelToUse,
+  inputTokens,
+  outputTokens,
+  false,
+  mode === 'research',
+  mode
+);
 
     const latencyMs = Date.now() - startTime;
 
