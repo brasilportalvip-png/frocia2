@@ -30,7 +30,7 @@ export const AvatarUploadModal: React.FC<AvatarUploadModalProps> = ({
 
   if (!isOpen) return null;
 
-
+  
 
   const handleSave = async () => {
     setIsSubmitting(true);
@@ -115,7 +115,7 @@ export const AvatarUploadModal: React.FC<AvatarUploadModalProps> = ({
             )}
           </div>
 
-
+          
         </div>
 
         {/* URL Input */}
