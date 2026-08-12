@@ -4,31 +4,46 @@ on:
   workflow_dispatch:
     inputs:
       candidateId:
-        description: 'Candidate ID for self-evolution'
+        description: Candidate ID for self-evolution
         required: true
         type: string
       riskLevel:
-        description: 'Risk Level (R1, R2, R3)'
+        description: Risk Level (R1, R2, R3)
         required: true
-        default: 'R1'
-        type: string
+        default: R1
+        type: choice
+        options:
+          - R1
+          - R2
+          - R3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-evolution-${{ github.event.inputs.candidateId }}
+  cancel-in-progress: false
 
 jobs:
   code-agent-worker:
     name: Code Agent Worker & Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     environment: ${{ github.event.inputs.riskLevel == 'R3' && 'production-approvals' || 'sandbox' }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '22.12.0'
+          cache: npm
 
       - name: Install Dependencies
         run: npm ci
@@ -36,8 +51,11 @@ jobs:
       - name: Run Typecheck
         run: npm run typecheck
 
-      - name: Run Tests
+      - name: Run Full Test Suite
         run: npm test
 
+      - name: Build Application
+        run: npm run build
+
       - name: Security Audit
-        run: npm audit --audit-level=high || true
+        run: npm audit --omit=dev --audit-level=high

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ContextBuilder } from '../server/ai/contextBuilder.js';
 import { MemoryService } from '../server/ai/memoryService.js';
@@ -81,4 +82,33 @@ describe('Base de Conhecimento e RAG', () => {
       '[BASE DE CONHECIMENTO & DOCUMENTOS INDEXADOS]'
     );
   });
+
+
+  it('mantém limites de escala e processamento em lote no RAG', () => {
+    const source = readFileSync(
+      new URL('../server/ai/ragService.ts', import.meta.url),
+      'utf8'
+    );
+
+    expect(source).toContain(
+      'const MAX_RETRIEVAL_CANDIDATES = 1_000;'
+    );
+    expect(source).toContain(
+      '.limit(MAX_RETRIEVAL_CANDIDATES)'
+    );
+    expect(source).toContain(
+      'const EMBEDDING_CONCURRENCY = 5;'
+    );
+    expect(source).toContain(
+      'const embeddings = await Promise.all('
+    );
+    expect(source).toContain(
+      'const writeBatch = adminDb.batch();'
+    );
+    expect(source).not.toContain(
+      ".where('userId', '==', userId)\n        .get();"
+    );
+  });
+
+
 });

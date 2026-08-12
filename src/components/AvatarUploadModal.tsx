@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
-import { X, Upload, Camera, Trash2, Check, Loader2, Image as ImageIcon } from 'lucide-react';
+
+import {
+  X,
+  Trash2,
+  Check,
+  Loader2
+} from 'lucide-react';
+
 import { useAuth } from '../context/AuthContext';
 import { UserProfile } from '../types';
 
@@ -23,29 +30,7 @@ export const AvatarUploadModal: React.FC<AvatarUploadModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      setErrorMsg('Por favor, selecione um arquivo de imagem válido (PNG, JPG, WebP).');
-      return;
-    }
-
-    if (file.size > 3 * 1024 * 1024) {
-      setErrorMsg('A imagem deve ter no máximo 3MB.');
-      return;
-    }
-
-    setErrorMsg(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setPreviewUrl(dataUrl);
-      setAvatarUrlInput(dataUrl);
-    };
-    reader.readAsDataURL(file);
-  };
 
   const handleSave = async () => {
     setIsSubmitting(true);
@@ -95,7 +80,9 @@ export const AvatarUploadModal: React.FC<AvatarUploadModalProps> = ({
 
         <div className="text-center space-y-1">
           <h3 className="text-xl font-black text-white">Alterar Foto de Perfil</h3>
-          <p className="text-xs text-white/60">Escolha uma nova imagem ou cole um link direto</p>
+          <p className="text-xs text-white/60">
+            Use uma imagem pública com endereço HTTPS
+          </p>
         </div>
 
         {errorMsg && (
@@ -128,16 +115,7 @@ export const AvatarUploadModal: React.FC<AvatarUploadModalProps> = ({
             )}
           </div>
 
-          <label className="cursor-pointer glass-button px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 hover:bg-white/15 transition-all">
-            <Upload className="w-4 h-4 text-amber-300" />
-            <span>Carregar Foto do Dispositivo</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-          </label>
+
         </div>
 
         {/* URL Input */}

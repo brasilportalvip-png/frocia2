@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { CREDIT_PACKAGES, getCreditPackageById } from '../server/config/creditPackages.js';
 import { MercadoPagoService } from '../server/services/mercadoPagoService.js';
-import { CheckoutInputSchema, AdminGrantCreditsInputSchema } from '../server/validators/paymentValidators.js';
+import {
+  CheckoutInputSchema,
+  AdminGrantCreditsInputSchema,
+  CardPaymentInputSchema
+} from '../server/validators/paymentValidators.js';
 
 describe('Phase 2 Financial & Checkout Tests', () => {
   describe('Credit Packages Config', () => {
@@ -69,6 +73,39 @@ describe('Phase 2 Financial & Checkout Tests', () => {
       });
       expect(invalid.success).toBe(false);
     });
+      it(
+      'should validate a secure card payment input',
+      () => {
+        const valid =
+          CardPaymentInputSchema.safeParse({
+            token:
+              'card-token-secure-example-1234567890',
+            issuerId: '123',
+            paymentMethodId: 'visa',
+            installments: 3,
+            packageId: 'creator',
+            idempotencyKey:
+              '550e8400-e29b-41d4-a716-446655440000'
+          });
+
+        expect(valid.success).toBe(true);
+      }
+    );
+
+    it(
+      'should reject unsafe card payment input',
+      () => {
+        const invalid =
+          CardPaymentInputSchema.safeParse({
+            token: 'short',
+            paymentMethodId: 'visa',
+            installments: 25,
+            packageId: 'creator'
+          });
+
+        expect(invalid.success).toBe(false);
+      }
+    );
   });
 
   describe('Mercado Pago Service Helper', () => {

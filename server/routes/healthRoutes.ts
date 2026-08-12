@@ -60,9 +60,14 @@ healthRouter.get('/health', (req: AuthenticatedRequest, res) => {
     process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
   );
 
-  return res.json({
-    status: 'ok',
-    healthy: true,
+   const healthy =
+    firebaseConfigured &&
+    mercadoPagoConfigured &&
+    geminiConfigured;
+
+  return res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'not_ready',
+    healthy,
     service: 'Froc.IA Backend',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
@@ -99,8 +104,21 @@ healthRouter.get('/health/detailed', requireAuth, requireAdmin, async (req: Auth
 
   let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
 
-  if (!firestoreReachable || !geminiOk || !authOk) {
-    overallStatus = (firestoreReachable || geminiOk) ? 'degraded' : 'unhealthy';
+   if (
+    !firestoreReachable ||
+    !geminiOk ||
+    !authOk ||
+    !mercadoPagoOk
+  ) {
+    const availableChecks = [
+      firestoreReachable,
+      geminiOk,
+      authOk,
+      mercadoPagoOk
+    ].filter(Boolean).length;
+
+    overallStatus =
+      availableChecks === 0 ? 'unhealthy' : 'degraded';
   }
 
   const statusCode = overallStatus === 'unhealthy' ? 503 : 200;

@@ -51,10 +51,15 @@ internalRouter.post('/wallet/expire-reservations', requireCronSecret, async (req
       return res.json({ expiredCount: 0, reason: 'firebase_not_configured' });
     }
 
-    const now = new Date();
+        const now = new Date();
+    const MAX_RESERVATIONS_PER_RUN = 100;
+
     const snap = await adminDb
       .collection('credit_reservations')
       .where('status', '==', 'reserved')
+      .where('expiresAt', '<=', now)
+      .orderBy('expiresAt', 'asc')
+      .limit(MAX_RESERVATIONS_PER_RUN)
       .get();
 
     let expiredCount = 0;
@@ -73,7 +78,8 @@ internalRouter.post('/wallet/expire-reservations', requireCronSecret, async (req
           await CreditWalletService.expireReservation({
             userId: data.userId,
             reservationId: doc.id,
-            systemIdempotencyKey: `cron-expire-${doc.id}-${now.getTime()}`,
+            systemIdempotencyKey:
+              `cron-expire-${doc.id}`,
           });
           expiredCount++;
         } catch (expErr: any) {

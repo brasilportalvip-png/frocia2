@@ -1,8 +1,11 @@
 import {
   adminAuth,
   adminDb,
-  isFirebaseAdminConfigured,
+  isFirebaseAdminConfigured
 } from '../lib/firebaseAdmin.js';
+import {
+  FieldPath
+} from 'firebase-admin/firestore';
 
 export interface EmailDuplicateAuditReport {
   timestamp: string;
@@ -55,20 +58,73 @@ export class UserAdminService {
 }
 
     try {
-      const snapshot = await adminDb.collection('users').get();
-      report.totalUsersScanned = snapshot.size;
+          const PAGE_SIZE = 400;
+      const emailMap =
+        new Map<string, string[]>();
 
-      const emailMap = new Map<string, string[]>();
+      let lastDocumentId:
+        | string
+        | null = null;
 
-      snapshot.forEach((doc) => {
-        const data = doc.data() || {};
-        const rawEmail = (data.email || '').toString().trim().toLowerCase();
-        if (rawEmail) {
-          const existing = emailMap.get(rawEmail) || [];
-          existing.push(doc.id);
-          emailMap.set(rawEmail, existing);
+      while (true) {
+        let query = adminDb
+          .collection('users')
+          .orderBy(
+            FieldPath.documentId()
+          )
+          .limit(PAGE_SIZE);
+
+        if (lastDocumentId) {
+          query = query.startAfter(
+            lastDocumentId
+          );
         }
-      });
+
+        const snapshot =
+          await query.get();
+
+        if (snapshot.empty) {
+          break;
+        }
+
+        report.totalUsersScanned +=
+          snapshot.size;
+
+        snapshot.forEach((document) => {
+          const data =
+            document.data() || {};
+
+          const rawEmail = String(
+            data.email || ''
+          )
+            .trim()
+            .toLowerCase();
+
+          if (!rawEmail) {
+            return;
+          }
+
+          const existing =
+            emailMap.get(rawEmail) || [];
+
+          existing.push(document.id);
+          emailMap.set(
+            rawEmail,
+            existing
+          );
+        });
+
+        lastDocumentId =
+          snapshot.docs.at(-1)?.id ??
+          null;
+
+        if (
+          snapshot.size < PAGE_SIZE ||
+          !lastDocumentId
+        ) {
+          break;
+        }
+      }
 
       for (const [email, docIds] of emailMap.entries()) {
         if (docIds.length > 1) {

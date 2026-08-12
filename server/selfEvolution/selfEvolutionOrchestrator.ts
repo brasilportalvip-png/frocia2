@@ -21,10 +21,15 @@ export class SelfEvolutionOrchestrator {
       return { state: 'failed', message: 'Candidato não encontrado.' };
     }
 
-    if (!SelfEvolutionPolicyEngine.isSelfEvolutionEnabled()) {
+        const selfEvolutionEnabled =
+      await SelfEvolutionPolicyEngine
+        .isSelfEvolutionEnabledPersisted();
+
+    if (!selfEvolutionEnabled) {
       return {
         state: candidate.state,
-        message: 'Sistema de autoevolução está desativado (SELF_EVOLUTION_ENABLED=false).',
+        message:
+          'Sistema de autoevolução está desativado por configuração ou parada emergencial persistente.'
       };
     }
 
@@ -81,7 +86,12 @@ export class SelfEvolutionOrchestrator {
         await ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
 
         // GitHub PR
-        const pr = await GithubAutomationService.createBranchAndPR(candidate);
+        const pr =
+          await GithubAutomationService
+            .createBranchAndPR(
+              candidate,
+              patch
+            );
         if (!pr.success) {
           return {
             state: candidate.state,
@@ -161,23 +171,65 @@ export class SelfEvolutionOrchestrator {
     return { success: true, message: 'Release aprovada pelo administrador com sucesso.' };
   }
 
-  static async executeEmergencyRollback(candidateId: string, adminUid: string, reason: string): Promise<{
+   static async executeEmergencyRollback(
+    candidateId: string,
+    adminUid: string,
+    reason: string
+  ): Promise<{
     success: boolean;
     message: string;
   }> {
-    const result = await RollbackService.executeRollback(candidateId, reason);
-    await ImprovementPlannerService.updateCandidateState(candidateId, 'rolled_back');
+    const candidate =
+      await ImprovementPlannerService.getCandidateById(
+        candidateId
+      );
+
+    if (!candidate) {
+      return {
+        success: false,
+        message: 'Candidato não encontrado.'
+      };
+    }
+
+    const pullRequestMatch =
+      candidate.pullRequestUrl?.match(
+        /\/pull\/(\d+)(?:\/|$)/
+      );
+
+    const pullRequestNumber = pullRequestMatch
+      ? Number(pullRequestMatch[1])
+      : undefined;
+
+    const result =
+      await RollbackService.executeRollback(
+        candidateId,
+        reason,
+        pullRequestNumber
+      );
+
+    if (result.success) {
+      await ImprovementPlannerService.updateCandidateState(
+        candidateId,
+        'rolled_back'
+      );
+    }
 
     await AuditService.logEvent({
       actor: adminUid,
       action: 'emergency_rollback',
       resource: candidateId,
       riskLevel: 'R3',
-      result: 'success',
-      reason,
+      result: result.success ? 'success' : 'failure',
+      reason: result.success
+        ? reason
+        : `${reason} | Falha: ${result.message}`,
+      prUrl: candidate.pullRequestUrl
     });
 
-    return { success: result.success, message: result.message };
+    return {
+      success: result.success,
+      message: result.message
+    };
   }
 }
 

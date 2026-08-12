@@ -64,12 +64,19 @@ export class RollbackService {
         };
       }
 
+
       return {
-        status: 'success',
-        success: true,
+        status: 'failed',
+        success: false,
         revertedCommitHash: mergeCommitSha,
-        message: `Rollback solicitado para candidato ${candidateId} (SHA: ${mergeCommitSha}). Motivo: ${reason}`,
+        message:
+          `O commit ${mergeCommitSha} foi localizado para o candidato ` +
+          `${candidateId}, mas nenhuma reversão foi executada. ` +
+          `Motivo informado: ${reason}`,
       };
+
+
+
     } catch (err: any) {
       return {
         status: 'failed',

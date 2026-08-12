@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { PortableRecoveryService } from '../server/services/portableRecoveryService.js';
+import {
+  PORTABLE_BACKUP_COLLECTIONS,
+  PortableRecoveryService
+} from '../server/services/portableRecoveryService.js';
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -152,5 +155,10 @@ describe('Backup portátil e recuperação de desastre', () => {
     expect(result.errors).toContain(
       'A coleção “secrets” não é permitida para restauração.'
     );
+  });
+
+
+  it('inclui projetos na lista segura do backup portátil', () => {
+    expect(PORTABLE_BACKUP_COLLECTIONS).toContain('projects');
   });
 });

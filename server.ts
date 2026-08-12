@@ -36,8 +36,12 @@ import {
   PaymentCreationError,
   PaymentValidationError
 } from './server/services/mercadoPagoService.js';
-import { CheckoutInputSchema, AdminGrantCreditsInputSchema } from './server/validators/paymentValidators.js';
-import { FieldValue } from 'firebase-admin/firestore';
+import {
+  CheckoutInputSchema,
+  AdminGrantCreditsInputSchema,
+  CardPaymentInputSchema
+} from './server/validators/paymentValidators.js';
+import { AggregateField, FieldValue } from 'firebase-admin/firestore';
 import { env } from './server/config/env.js';
 import { internalRouter } from './server/routes/internalRoutes.js';
 import { conversationRouter } from './server/routes/conversationRoutes.js';
@@ -135,6 +139,16 @@ export async function createApp() {
       },
       crossOriginEmbedderPolicy: false,
     })
+  );
+  // Portable backups can reach 12 MB. Keep the larger parser restricted to
+  // the two authenticated disaster-recovery endpoints; all other JSON stays
+  // capped at 2 MB.
+  app.use(
+    [
+      '/api/admin/disaster-recovery/validate',
+      '/api/admin/disaster-recovery/restore'
+    ],
+    express.json({ limit: '14mb' })
   );
   app.use(express.json({ limit: '2mb' }));
   app.use(correlationIdMiddleware);
@@ -637,17 +651,30 @@ export async function createApp() {
   // Protected: Create Card Payment (Mercado Pago Credit Card)
   app.post('/api/payments/card', requireAuth, checkoutLimiter, requireFeatureFlag('payment_checkout'), async (req: AuthenticatedRequest, res) => {
     try {
-      const { token, issuerId, paymentMethodId, installments = 1, packageId, idempotencyKey: clientKey } = req.body || {};
-
-      if (!token || typeof token !== 'string' || !paymentMethodId || typeof paymentMethodId !== 'string' || !packageId) {
+      const parseResult = CardPaymentInputSchema.safeParse(req.body);
+      if (!parseResult.success) {
         return res.status(400).json({
           error: {
             code: 'invalid_card_input',
-            message: 'Token de cartão, método de pagamento e pacote de créditos são obrigatórios.',
+            message: parseResult.error.issues[0]?.message || 'Dados do pagamento por cartão são inválidos.',
+            details: parseResult.error.issues.map((issue) => issue.message),
             correlationId: req.correlationId,
           },
         });
       }
+
+      const {
+        token,
+        issuerId: rawIssuerId,
+        paymentMethodId,
+        installments,
+        packageId,
+        idempotencyKey,
+      } = parseResult.data;
+
+      const issuerId = rawIssuerId === undefined
+        ? undefined
+        : String(rawIssuerId);
 
       const pkg = getCreditPackageById(packageId);
       if (!pkg) {
@@ -673,38 +700,64 @@ export async function createApp() {
       const uid = req.user!.uid;
       const userEmail = req.user!.email || 'cliente@froc.ia';
 
-      const paymentRef = adminDb.collection('payments').doc();
-      const paymentDocumentId = paymentRef.id;
+      // A deterministic document ID prevents duplicate charges when the same
+      // client request is retried after a timeout or connection failure.
+      const paymentDocumentId = crypto
+        .createHash('sha256')
+        .update(`card:${uid}:${idempotencyKey}`)
+        .digest('hex');
+      const paymentRef = adminDb.collection('payments').doc(paymentDocumentId);
       const externalReference = `froc-payment-${paymentDocumentId}`;
-      const idempotencyKey = clientKey || `card-${paymentDocumentId}`;
 
-      await paymentRef.set({
-        provider: 'mercadopago',
-        paymentType: 'credit_card',
-        providerPaymentId: null,
-        externalReference,
-        userId: uid,
-        packageSnapshot: {
+      const existingPayment = await paymentRef.get();
+      if (existingPayment.exists) {
+        const existing = existingPayment.data() || {};
+        if (existing.providerPaymentId) {
+          return res.json({
+            success: true,
+            reused: true,
+            paymentDocumentId,
+            providerPaymentId: existing.providerPaymentId,
+            status: existing.status || 'pending',
+            statusDetail: existing.statusDetail || null,
+            totalCredits: existing.totalCredits,
+            amountBrl: existing.amountBrl,
+            packageName: existing.packageName,
+            correlationId: req.correlationId,
+          });
+        }
+      }
+
+      if (!existingPayment.exists) {
+        await paymentRef.create({
+          provider: 'mercadopago',
+          paymentType: 'credit_card',
+          providerPaymentId: null,
+          externalReference,
+          userId: uid,
+          packageSnapshot: {
+            packageId: pkg.id,
+            packageName: pkg.name,
+            priceBrl: pkg.priceBrl,
+            baseCredits: pkg.credits,
+            bonusCredits: pkg.bonusCredits,
+            totalCredits: pkg.totalCredits,
+          },
           packageId: pkg.id,
           packageName: pkg.name,
-          priceBrl: pkg.priceBrl,
+          amountBrl: pkg.priceBrl,
+          currency: 'BRL',
           baseCredits: pkg.credits,
           bonusCredits: pkg.bonusCredits,
           totalCredits: pkg.totalCredits,
-        },
-        packageId: pkg.id,
-        packageName: pkg.name,
-        amountBrl: pkg.priceBrl,
-        currency: 'BRL',
-        baseCredits: pkg.credits,
-        bonusCredits: pkg.bonusCredits,
-        totalCredits: pkg.totalCredits,
-        status: 'creating',
-        credited: false,
-        idempotencyKey,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+          status: 'creating',
+          credited: false,
+          refundedCredits: false,
+          idempotencyKey,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
 
       const cardResult = await MercadoPagoService.createCardPayment({
         token,
@@ -895,24 +948,48 @@ export async function createApp() {
           await eventRef.update({ processingStatus: 'duplicate', resultCode: 'already_credited_idempotent' });
         }
       } else if (mpPayment.status === 'refunded' || mpPayment.status === 'charged_back') {
-        await paymentDoc.ref.update({
-          status: mpPayment.status,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        const reversalReason = mpPayment.status === 'refunded'
+          ? 'refund'
+          : 'chargeback';
 
-        await adminDb.collection('financial_reconciliation_cases').add({
+        const reversal = await CreditWalletService.reverseCreditPurchase({
           userId: paymentData.userId,
           paymentDocumentId,
           providerPaymentId: dataId,
-          reason: mpPayment.status === 'refunded' ? 'refund' : 'chargeback',
-          amountBrl: mpPayment.transactionAmount,
-          creditsOriginallyGranted: paymentData.totalCredits,
-          status: 'open',
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
+          reason: reversalReason,
+          idempotencyKey: `${reversalReason}-${paymentDocumentId}`,
         });
 
-        await eventRef.update({ processingStatus: 'processed', resultCode: `recorded_${mpPayment.status}` });
+        if (reversal.outstandingCredits > 0) {
+          const reconciliationId = crypto
+            .createHash('sha256')
+            .update(`reversal-debt:${paymentDocumentId}`)
+            .digest('hex');
+
+          await adminDb
+            .collection('financial_reconciliation_cases')
+            .doc(reconciliationId)
+            .set({
+              userId: paymentData.userId,
+              paymentDocumentId,
+              providerPaymentId: dataId,
+              reason: reversalReason,
+              amountBrl: mpPayment.transactionAmount,
+              creditsOriginallyGranted: paymentData.totalCredits,
+              creditsReversed: reversal.reversedCredits,
+              outstandingCredits: reversal.outstandingCredits,
+              status: 'open',
+              createdAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+
+        await eventRef.update({
+          processingStatus: 'processed',
+          resultCode: reversal.outstandingCredits > 0
+            ? `reversed_with_debt_${mpPayment.status}`
+            : `reversed_${mpPayment.status}`,
+        });
       } else {
         await paymentDoc.ref.update({
           status: mpPayment.status,
@@ -962,8 +1039,12 @@ export async function createApp() {
         });
       }
 
-      // If pending, check Mercado Pago directly
-      if (d.status === 'pending' && d.providerPaymentId && MercadoPagoService.isConfigured()) {
+      // Reconcile with Mercado Pago while the payment can still change state.
+      if (
+        d.providerPaymentId &&
+        MercadoPagoService.isConfigured() &&
+        !['refunded', 'charged_back', 'cancelled'].includes(d.status)
+      ) {
         try {
           const mpPayment = await MercadoPagoService.getPaymentById(d.providerPaymentId);
           if (mpPayment.status === 'approved' && !d.credited) {
@@ -979,6 +1060,26 @@ export async function createApp() {
             const fresh = (await paymentRef.get()).data() || {};
             d.status = fresh.status || 'approved';
             d.credited = fresh.credited ?? true;
+          } else if (
+            (mpPayment.status === 'refunded' || mpPayment.status === 'charged_back') &&
+            d.credited &&
+            !d.refundedCredits
+          ) {
+            const reversalReason = mpPayment.status === 'refunded'
+              ? 'refund'
+              : 'chargeback';
+
+            const reversal = await CreditWalletService.reverseCreditPurchase({
+              userId: d.userId,
+              paymentDocumentId,
+              providerPaymentId: d.providerPaymentId,
+              reason: reversalReason,
+              idempotencyKey: `${reversalReason}-${paymentDocumentId}`,
+            });
+
+            d.status = mpPayment.status;
+            d.refundedCredits = true;
+            d.outstandingCredits = reversal.outstandingCredits;
           } else if (mpPayment.status !== d.status) {
             await paymentRef.update({ status: mpPayment.status, updatedAt: FieldValue.serverTimestamp() });
             d.status = mpPayment.status;
@@ -1130,17 +1231,17 @@ export async function createApp() {
       const paymentsApprovedSnap = await adminDb
         .collection('payments')
         .where('status', '==', 'approved')
+        .aggregate({
+          approvedPaymentsCount: AggregateField.count(),
+          totalRevenueBrl: AggregateField.sum('amountBrl'),
+          totalCreditsSold: AggregateField.sum('totalCredits'),
+        })
         .get();
 
-      let totalRevenueBrl = 0;
-      let totalCreditsSold = 0;
-      let approvedPaymentsCount = paymentsApprovedSnap.docs.length;
-
-      paymentsApprovedSnap.docs.forEach((doc) => {
-        const d = doc.data();
-        totalRevenueBrl += Number(d.amountBrl || 0);
-        totalCreditsSold += Number(d.totalCredits || 0);
-      });
+      const approvedData = paymentsApprovedSnap.data();
+      const approvedPaymentsCount = Number(approvedData.approvedPaymentsCount || 0);
+      const totalRevenueBrl = Number(approvedData.totalRevenueBrl || 0);
+      const totalCreditsSold = Number(approvedData.totalCreditsSold || 0);
 
       const paymentsCreatedSnap = await adminDb.collection('payments').count().get();
       const totalPaymentsCreated = paymentsCreatedSnap.data().count;
