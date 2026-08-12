@@ -83,8 +83,24 @@ describe('FASE 0 & GOVERNANCE — Account Isolation, Health, Capabilities & Secu
     expect(cardCap).toBeDefined();
     expect(['available', 'beta']).toContain(cardCap.status);
 
-    const imageCap = res.body.capabilities.find((c: any) => c.id === 'image_generation');
-    expect(imageCap).toBeDefined();
-    expect(['available', 'beta']).toContain(imageCap.status);
+    const imageCap = res.body.capabilities.find(
+  (capability: any) =>
+    capability.id === 'image_generation'
+);
+
+expect(imageCap).toBeDefined();
+
+expect([
+  'available',
+  'beta',
+  'disabled',
+]).toContain(imageCap.status);
+
+if (
+  process.env.IMAGE_GENERATION_AVAILABLE !== 'true' ||
+  process.env.IMAGE_GENERATION_ENABLED !== 'true'
+) {
+  expect(imageCap.status).toBe('disabled');
+}
   });
 });

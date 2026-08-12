@@ -78,22 +78,34 @@
         }
       ]
     },
-    
-
     {
-      "collectionGroup": "messages",
+      "collectionGroup": "credit_reservations",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "conversationId",
+          "fieldPath": "status",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "userId",
+          "fieldPath": "expiresAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "payments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "createdAt",
+          "fieldPath": "amountBrl",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "totalCredits",
           "order": "ASCENDING"
         }
       ]
@@ -112,9 +124,6 @@
         }
       ]
     }
-
-
-
   ],
   "fieldOverrides": []
 }

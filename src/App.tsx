@@ -23,6 +23,11 @@ const IntegrationsPage = lazy(() => import('./components/IntegrationsPage').then
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
 const AuthModal = lazy(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
 const CostEstimationModal = lazy(() => import('./components/CostEstimationModal').then(m => ({ default: m.CostEstimationModal })));
+const MediaGenerationModal = lazy(() =>
+  import('./components/MediaGenerationModal').then((module) => ({
+    default: module.MediaGenerationModal,
+  }))
+);
 import {
   GeneratedSite,
   ChatMessage,
@@ -93,9 +98,20 @@ const [isRefining, setIsRefining] = useState<boolean>(false);
   const [activeArtifact, setActiveArtifact] = useState<ArtifactData | null>(null);
   const [isArtifactOpen, setIsArtifactOpen] = useState<boolean>(false);
 
-  const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+ const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
+
+const [mediaModal, setMediaModal] = useState<{
+  isOpen: boolean;
+  mode: 'image' | 'video';
+  initialPrompt: string;
+}>({
+  isOpen: false,
+  mode: 'image',
+  initialPrompt: '',
+});
+
+const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(false);
@@ -1080,28 +1096,49 @@ const handleGeneralChat = async (
              
 
 
-              onSendMessage={async (text, mode, files = []) => {
-                if (mode === 'Criador de projetos') {
-                  await handleGenerateSite({
-                    prompt: text,
-                    category: 'Software / Tecnologia',
-                    colorPalette: 'Cyber Purple & Gold',
-                    tone: 'Profissional',
-                    features: [
-                      'Responsivo',
-                      'Formulário',
-                      'FAQ'
-                    ]
-                  }, files);
-                  return;
-                }
+             onSendMessage={async (text, mode, files = []) => {
+  if (mode === 'Criador de projetos') {
+    await handleGenerateSite(
+      {
+        prompt: text,
+        category: 'Software / Tecnologia',
+        colorPalette: 'Cyber Purple & Gold',
+        tone: 'Profissional',
+        features: [
+          'Responsivo',
+          'Formulário',
+          'FAQ',
+        ],
+      },
+      files
+    );
+    return;
+  }
 
-                await handleGeneralChat(
-                  text,
-                  mode,
-                  files
-                );
-              }}
+  if (mode === 'Imagem') {
+    setMediaModal({
+      isOpen: true,
+      mode: 'image',
+      initialPrompt: text,
+    });
+    return;
+  }
+
+  if (mode === 'Vídeo') {
+    setMediaModal({
+      isOpen: true,
+      mode: 'video',
+      initialPrompt: text,
+    });
+    return;
+  }
+
+  await handleGeneralChat(
+    text,
+    mode,
+    files
+  );
+}}
 
 
 
@@ -1188,8 +1225,26 @@ const handleGeneralChat = async (
       </div>
 
       <Suspense fallback={null}>
-        {/* Cost Confirmation Modal */}
-        {costModal.isOpen && (
+  {/* Image and Video Generation Modal */}
+  {mediaModal.isOpen && (
+    <MediaGenerationModal
+      isOpen={mediaModal.isOpen}
+      mode={mediaModal.mode}
+      initialPrompt={mediaModal.initialPrompt}
+      onClose={() =>
+        setMediaModal((current) => ({
+          ...current,
+          isOpen: false,
+        }))
+      }
+      onCreditsChanged={() => {
+        void refreshProfile();
+      }}
+    />
+  )}
+
+  {/* Cost Confirmation Modal */}
+  {costModal.isOpen && (
           <CostEstimationModal
             isOpen={costModal.isOpen}
             onClose={() => setCostModal({ ...costModal, isOpen: false })}

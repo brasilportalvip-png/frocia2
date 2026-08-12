@@ -1,7 +1,7 @@
 import { Router } from 'express';
+import { GoogleGenAI } from '@google/genai';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
-import { GoogleGenAI } from '@google/genai';
 import { SafetyService } from '../ai/safetyService.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
@@ -9,376 +9,813 @@ import { FeatureFlagService } from '../services/featureFlagService.js';
 
 export const mediaRouter = Router();
 
-// Helper to initialize Google GenAI SDK lazily
+type ImageAspectRatio = '1:1' | '4:3' | '16:9';
+type VideoAspectRatio = '1:1' | '16:9';
+type VideoQuality = 'lite' | 'fast' | 'standard';
+
+const IMAGE_COST = 18;
+
+const VIDEO_COSTS: Record<VideoQuality, number> = {
+  lite: 30,
+  fast: 46,
+  standard: 120,
+};
+
 function getGenAIClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey.trim().length === 0 || apiKey.includes('MY_')) {
-    throw new Error('GEMINI_API_KEY não configurada no servidor. Não foi possível executar a geração de mídia com IA.');
+
+  if (
+    !apiKey ||
+    apiKey.trim().length === 0 ||
+    apiKey.includes('MY_')
+  ) {
+    throw new Error(
+      'GEMINI_API_KEY não configurada no servidor.'
+    );
   }
-  return new GoogleGenAI({ apiKey: apiKey.trim() });
+
+  return new GoogleGenAI({
+    apiKey: apiKey.trim(),
+  });
+}
+
+function normalizeImageAspectRatio(
+  value: unknown
+): ImageAspectRatio {
+  if (value === '16:9' || value === '4:3') {
+    return value;
+  }
+
+  return '1:1';
+}
+
+function normalizeVideoAspectRatio(
+  value: unknown
+): VideoAspectRatio {
+  return value === '1:1' ? '1:1' : '16:9';
+}
+
+function normalizeVideoQuality(
+  value: unknown
+): VideoQuality {
+  if (value === 'fast' || value === 'standard') {
+    return value;
+  }
+
+  return 'lite';
+}
+
+function normalizeDurationSeconds(
+  value: unknown
+): number {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return 5;
+  }
+
+  return Math.min(8, Math.max(5, Math.round(parsed)));
+}
+
+function normalizeIdempotencyKey(
+  value: unknown,
+  fallback: string
+): string {
+  if (
+    typeof value === 'string' &&
+    /^[A-Za-z0-9:_-]{8,200}$/.test(value.trim())
+  ) {
+    return value.trim();
+  }
+
+  return fallback;
+}
+
+async function releaseVideoReservation(params: {
+  userId: string;
+  reservationId?: string | null;
+  jobId: string;
+  operation: string;
+}): Promise<void> {
+  if (!params.reservationId) {
+    return;
+  }
+
+  await CreditWalletService.releaseReservation({
+    userId: params.userId,
+    reservationId: params.reservationId,
+    operation: params.operation,
+    idempotencyKey: `release-video-${params.jobId}`,
+  }).catch((error) => {
+    console.error(
+      'Erro ao liberar reserva de vídeo:',
+      error
+    );
+  });
 }
 
 /**
- * POST /api/ai/media/image - Generate high quality real image
+ * POST /api/ai/media/image
+ *
+ * Executa uma geração real de imagem.
+ * Não cria SVG, placeholder ou resultado fictício quando o provedor falhar.
  */
-mediaRouter.post('/image', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const uid = req.user!.uid;
-  const { prompt, aspectRatio = '1:1', idempotencyKey } = req.body || {};
+mediaRouter.post(
+  '/image',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+    const {
+      prompt,
+      aspectRatio: requestedAspectRatio = '1:1',
+      idempotencyKey,
+    } = req.body || {};
 
-  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-    return res.status(400).json({ error: 'Prompt é obrigatório para geração de imagem.' });
-  }
+    if (
+      typeof prompt !== 'string' ||
+      prompt.trim().length === 0
+    ) {
+      return res.status(400).json({
+        error:
+          'Prompt é obrigatório para geração de imagem.',
+      });
+    }
 
-  await FeatureFlagService.assertEnabled('image_generation').catch(() => {
-    return res.status(503).json({ error: 'Geração de imagem temporariamente indisponível.' });
-  });
+    if (prompt.trim().length > 5000) {
+      return res.status(400).json({
+        error:
+          'O prompt de imagem excede o limite de 5.000 caracteres.',
+      });
+    }
 
-  const safety = SafetyService.inspectPrompt(prompt);
-  if (!safety.safe) {
-    return res.status(400).json({ error: safety.reason || 'Prompt de imagem rejeitado por segurança.' });
-  }
-
-  const sanitizedPrompt = SafetyService.sanitizeInput(prompt.trim());
-  const cost = 10;
-  const key = idempotencyKey || `img-${uid}-${Date.now()}`;
-
-  let reservationId: string | null = null;
-
-  try {
-    const reservation = await CreditWalletService.reserveCredits({
-      userId: uid,
-      amount: cost,
-      operation: 'Geração de Imagem IA',
-      idempotencyKey: `res-${key}`,
-    });
-    reservationId = reservation.reservationId;
-
-    const ai = getGenAIClient();
-    let imageUrl = '';
-    let mimeType = 'image/png';
-
-    // Call real Imagen model or GenAI model
     try {
+      await FeatureFlagService.assertEnabled(
+        'image_generation'
+      );
+    } catch {
+      return res.status(503).json({
+        error:
+          'Geração de imagem temporariamente indisponível.',
+      });
+    }
+
+    const safety =
+      SafetyService.inspectPrompt(prompt);
+
+    if (!safety.safe) {
+      return res.status(400).json({
+        error:
+          safety.reason ||
+          'Prompt de imagem rejeitado por segurança.',
+      });
+    }
+
+    const sanitizedPrompt =
+      SafetyService.sanitizeInput(prompt.trim());
+
+    const aspectRatio = normalizeImageAspectRatio(
+      requestedAspectRatio
+    );
+
+    const key = normalizeIdempotencyKey(
+      idempotencyKey,
+      `img-${uid}-${Date.now()}`
+    );
+
+    let reservationId: string | null = null;
+
+    try {
+      const reservation =
+        await CreditWalletService.reserveCredits({
+          userId: uid,
+          amount: IMAGE_COST,
+          operation: 'Reserva para geração de imagem IA',
+          idempotencyKey: `res-${key}`,
+        });
+
+      reservationId = reservation.reservationId;
+
+      const ai = getGenAIClient();
+
       const response = await ai.models.generateImages({
-        model: 'imagen-3.0-generate-002',
+        model:
+          process.env.IMAGEN_MODEL ||
+          'imagen-3.0-generate-002',
         prompt: sanitizedPrompt,
         config: {
           numberOfImages: 1,
           outputMimeType: 'image/png',
-          aspectRatio: aspectRatio === '16:9' ? '16:9' : aspectRatio === '4:3' ? '4:3' : '1:1',
+          aspectRatio,
         },
       });
 
-      const generatedImg = response.generatedImages?.[0];
-      if (generatedImg?.image?.imageBytes) {
-        imageUrl = `data:image/png;base64,${generatedImg.image.imageBytes}`;
-      } else {
-        throw new Error('Modelo de imagem não retornou bytes válidos.');
+      const generatedImage =
+        response.generatedImages?.[0];
+
+      const imageBytes =
+        generatedImage?.image?.imageBytes;
+
+      if (!imageBytes) {
+        throw new Error(
+          'O provedor não retornou uma imagem válida.'
+        );
       }
-    } catch (apiErr: any) {
-      console.warn('⚡ Tentando modelo secundário de geração de imagem:', apiErr?.message || apiErr);
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `Gere uma representação visual para: ${sanitizedPrompt}`,
-      });
-      if (fallbackResponse.text) {
-        // SVG or Data URI representation based on text output
-        const encodedText = encodeURIComponent(sanitizedPrompt.substring(0, 50));
-        imageUrl = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="50%" fill="%2338bdf8" font-size="24" text-anchor="middle" font-family="sans-serif">${encodedText}</text></svg>`;
-      } else {
-        throw new Error(`Falha na API Gemini: ${apiErr?.message || apiErr}`);
+
+      const imageDataUrl =
+        `data:image/png;base64,${imageBytes}`;
+
+      const docId =
+        `img_${Date.now()}_${Math.random()
+          .toString(36)
+          .substring(2, 9)}`;
+
+      const createdAt = new Date().toISOString();
+
+      /*
+       * O Base64 não é gravado no Firestore porque documentos possuem
+       * limite de tamanho. A imagem é devolvida diretamente ao navegador.
+       * O armazenamento persistente será conectado em arquivo próprio.
+       */
+      const mediaRecord = {
+        id: docId,
+        userId: uid,
+        type: 'image',
+        prompt: sanitizedPrompt,
+        aspectRatio,
+        mimeType: 'image/png',
+        model:
+          process.env.IMAGEN_MODEL ||
+          'imagen-3.0-generate-002',
+        status: 'completed',
+        storageStatus: 'awaiting_persistent_storage',
+        creditsSpent: IMAGE_COST,
+        createdAt,
+        updatedAt: createdAt,
+      };
+
+      if (adminDb) {
+        await adminDb
+          .collection('media_generations')
+          .doc(docId)
+          .set(mediaRecord);
       }
-    }
 
-    const docId = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const mediaDoc = {
-      id: docId,
-      userId: uid,
-      type: 'image',
-      prompt: sanitizedPrompt,
-      url: imageUrl,
-      aspectRatio,
-      mimeType,
-      status: 'completed',
-      creditsSpent: cost,
-      createdAt: new Date().toISOString(),
-    };
-
-    if (adminDb) {
-      await adminDb.collection('media_generations').doc(docId).set(mediaDoc);
-    }
-
-    await CreditWalletService.confirmConsumption({
-      userId: uid,
-      reservationId,
-      amountConsumed: cost,
-      operation: 'Geração de Imagem Concluída',
-      idempotencyKey: `consume-${key}`,
-    });
-
-    return res.json({
-      success: true,
-      media: mediaDoc,
-    });
-  } catch (err: any) {
-    if (reservationId) {
-      await CreditWalletService.releaseReservation({
+      await CreditWalletService.confirmConsumption({
         userId: uid,
         reservationId,
-        operation: 'Estorno por falha na geração de imagem',
-        idempotencyKey: `release-${key}`,
-      }).catch(console.error);
-    }
+        amountConsumed: IMAGE_COST,
+        operation: 'Geração de imagem concluída',
+        idempotencyKey: `consume-${key}`,
+      });
 
-    return res.status(500).json({
-      error: err?.message || 'Falha ao gerar imagem real com IA.',
-    });
-  }
-});
+      reservationId = null;
 
-/**
- * POST /api/ai/media/video - Start real async video generation job
- */
-mediaRouter.post('/video', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const uid = req.user!.uid;
-  const { prompt, aspectRatio = '16:9', durationSeconds = 5, idempotencyKey } = req.body || {};
-
-  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-    return res.status(400).json({ error: 'Prompt é obrigatório para geração de vídeo.' });
-  }
-
-  const safety = SafetyService.inspectPrompt(prompt);
-  if (!safety.safe) {
-    return res.status(400).json({ error: safety.reason || 'Prompt de vídeo rejeitado por segurança.' });
-  }
-
-  // Ensure GEMINI_API_KEY is present
-  try {
-    getGenAIClient();
-  } catch (keyErr: any) {
-    return res.status(503).json({ error: keyErr.message });
-  }
-
-  const sanitizedPrompt = SafetyService.sanitizeInput(prompt.trim());
-  const cost = 50;
-  const key = idempotencyKey || `vid-${uid}-${Date.now()}`;
-
-  try {
-    const reservation = await CreditWalletService.reserveCredits({
-      userId: uid,
-      amount: cost,
-      operation: 'Geração de Vídeo IA (Reserva)',
-      idempotencyKey: `res-${key}`,
-    });
-
-    const ai = getGenAIClient();
-    let operationName = '';
-
-    try {
-      const videoOp = await ai.models.generateVideos({
-        model: 'veo-2.0-generate-001',
-        prompt: sanitizedPrompt,
-        config: {
-          aspectRatio: aspectRatio === '1:1' ? '1:1' : '16:9',
-          durationSeconds: Number(durationSeconds) || 5,
+      return res.json({
+        success: true,
+        media: {
+          ...mediaRecord,
+          url: imageDataUrl,
         },
       });
-      operationName = videoOp.name || `op_vid_${Date.now()}`;
-    } catch (veoErr: any) {
-      console.warn('⚡ Operação Veo iniciada em modo assíncrono durável:', veoErr?.message || veoErr);
-      operationName = `op_veo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    } catch (error: any) {
+      if (reservationId) {
+        await CreditWalletService.releaseReservation({
+          userId: uid,
+          reservationId,
+          operation:
+            'Estorno por falha na geração de imagem',
+          idempotencyKey: `release-${key}`,
+        }).catch((releaseError) => {
+          console.error(
+            'Erro ao estornar geração de imagem:',
+            releaseError
+          );
+        });
+      }
+
+      console.error(
+        'Falha real na geração de imagem:',
+        error?.message || error
+      );
+
+      return res.status(502).json({
+        error:
+          error?.message ||
+          'O provedor não conseguiu gerar a imagem.',
+      });
     }
-
-    const jobId = `job_vid_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const jobData = {
-      id: jobId,
-      userId: uid,
-      operationName,
-      type: 'video',
-      prompt: sanitizedPrompt,
-      aspectRatio,
-      durationSeconds,
-      status: 'processing',
-      progress: 20,
-      reservationId: reservation.reservationId,
-      creditsReserved: cost,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (adminDb) {
-      await adminDb.collection('media_jobs').doc(jobId).set(jobData);
-    }
-
-    return res.json({
-      success: true,
-      jobId,
-      operationName,
-      status: 'processing',
-      progress: 20,
-      creditsReserved: cost,
-    });
-  } catch (err: any) {
-    return res.status(500).json({
-      error: err?.message || 'Falha ao iniciar renderização de vídeo real.',
-    });
   }
-});
+);
 
 /**
- * GET /api/ai/media/video/:jobId - Poll job status persistently from Firestore / Veo operation
+ * POST /api/ai/media/video
+ *
+ * Inicia um job real no provedor. Se o Veo não aceitar a operação,
+ * nenhum job fictício será criado e os créditos serão estornados.
  */
-mediaRouter.get('/video/:jobId', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const uid = req.user!.uid;
-  const { jobId } = req.params;
+mediaRouter.post(
+  '/video',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
 
-  if (!adminDb) {
-    return res.status(500).json({ error: 'Banco de dados indisponível.' });
-  }
+    const {
+      prompt,
+      aspectRatio: requestedAspectRatio = '16:9',
+      durationSeconds: requestedDuration = 5,
+      quality: requestedQuality = 'lite',
+      idempotencyKey,
+    } = req.body || {};
 
-  const doc = await adminDb.collection('media_jobs').doc(jobId).get();
-  if (!doc.exists) {
-    return res.status(404).json({ error: 'Job de vídeo não encontrado.' });
-  }
+    if (
+      typeof prompt !== 'string' ||
+      prompt.trim().length === 0
+    ) {
+      return res.status(400).json({
+        error:
+          'Prompt é obrigatório para geração de vídeo.',
+      });
+    }
 
-  const job = doc.data()!;
-  if (job.userId !== uid && req.user!.role !== 'admin') {
-    return res.status(403).json({ error: 'Acesso não autorizado ao job de vídeo.' });
-  }
+    if (prompt.trim().length > 5000) {
+      return res.status(400).json({
+        error:
+          'O prompt de vídeo excede o limite de 5.000 caracteres.',
+      });
+    }
 
-  // If job is processing, query operation or update progress
-  if (job.status === 'processing') {
     try {
+      await FeatureFlagService.assertEnabled(
+        'video_generation'
+      );
+    } catch {
+      return res.status(503).json({
+        error:
+          'Geração de vídeo temporariamente indisponível.',
+      });
+    }
+
+    const safety =
+      SafetyService.inspectPrompt(prompt);
+
+    if (!safety.safe) {
+      return res.status(400).json({
+        error:
+          safety.reason ||
+          'Prompt de vídeo rejeitado por segurança.',
+      });
+    }
+
+    const sanitizedPrompt =
+      SafetyService.sanitizeInput(prompt.trim());
+
+    const aspectRatio = normalizeVideoAspectRatio(
+      requestedAspectRatio
+    );
+
+    const durationSeconds =
+      normalizeDurationSeconds(requestedDuration);
+
+    const quality = normalizeVideoQuality(
+      requestedQuality
+    );
+
+    const cost = VIDEO_COSTS[quality];
+
+    const key = normalizeIdempotencyKey(
+      idempotencyKey,
+      `vid-${uid}-${Date.now()}`
+    );
+
+    let reservationId: string | null = null;
+
+    try {
+      getGenAIClient();
+
+      const reservation =
+        await CreditWalletService.reserveCredits({
+          userId: uid,
+          amount: cost,
+          operation:
+            `Reserva para geração de vídeo IA (${quality})`,
+          idempotencyKey: `res-${key}`,
+        });
+
+      reservationId = reservation.reservationId;
+
       const ai = getGenAIClient();
-      if (job.operationName && !job.operationName.startsWith('op_veo_')) {
-        const opStatus = await ai.operations.getVideosOperation({ operation: job.operationName });
-        if (opStatus.done) {
-          const videoUri = opStatus.response?.generatedVideos?.[0]?.video?.uri || '';
-          if (videoUri) {
-            await adminDb.collection('media_jobs').doc(jobId).update({
-              status: 'completed',
-              progress: 100,
-              videoUrl: videoUri,
-              completedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
 
-            await CreditWalletService.confirmConsumption({
-              userId: uid,
-              reservationId: job.reservationId,
-              amountConsumed: job.creditsReserved || 50,
-              operation: 'Renderização de Vídeo Concluída',
-              idempotencyKey: `consume-vid-${jobId}`,
-            });
+      const videoOperation =
+        await ai.models.generateVideos({
+          model:
+            process.env.VEO_MODEL ||
+            'veo-2.0-generate-001',
+          prompt: sanitizedPrompt,
+          config: {
+            aspectRatio,
+            durationSeconds,
+          },
+        });
 
-            await adminDb.collection('media_generations').doc(jobId).set({
+      const operationName = videoOperation.name;
+
+      if (!operationName) {
+        throw new Error(
+          'O provedor de vídeo não retornou uma operação válida.'
+        );
+      }
+
+      const jobId =
+        `job_vid_${Date.now()}_${Math.random()
+          .toString(36)
+          .substring(2, 9)}`;
+
+      const createdAt = new Date().toISOString();
+
+      const jobData = {
+        id: jobId,
+        userId: uid,
+        operationName,
+        type: 'video',
+        prompt: sanitizedPrompt,
+        aspectRatio,
+        durationSeconds,
+        quality,
+        model:
+          process.env.VEO_MODEL ||
+          'veo-2.0-generate-001',
+        status: 'processing',
+        progress: 10,
+        pollFailures: 0,
+        reservationId,
+        creditsReserved: cost,
+        createdAt,
+        updatedAt: createdAt,
+      };
+
+      if (!adminDb) {
+        throw new Error(
+          'Banco de dados indisponível para registrar o job de vídeo.'
+        );
+      }
+
+      await adminDb
+        .collection('media_jobs')
+        .doc(jobId)
+        .set(jobData);
+
+      return res.status(202).json({
+        success: true,
+        jobId,
+        status: 'processing',
+        progress: 10,
+        quality,
+        creditsReserved: cost,
+      });
+    } catch (error: any) {
+      if (reservationId) {
+        await CreditWalletService.releaseReservation({
+          userId: uid,
+          reservationId,
+          operation:
+            'Estorno por falha ao iniciar geração de vídeo',
+          idempotencyKey: `release-${key}`,
+        }).catch((releaseError) => {
+          console.error(
+            'Erro ao estornar reserva de vídeo:',
+            releaseError
+          );
+        });
+      }
+
+      console.error(
+        'Falha real ao iniciar vídeo:',
+        error?.message || error
+      );
+
+      return res.status(502).json({
+        error:
+          error?.message ||
+          'O provedor não conseguiu iniciar o vídeo.',
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/ai/media/video/:jobId
+ *
+ * Consulta uma operação real do Veo.
+ */
+mediaRouter.get(
+  '/video/:jobId',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+    const { jobId } = req.params;
+
+    if (!adminDb) {
+      return res.status(503).json({
+        error: 'Banco de dados indisponível.',
+      });
+    }
+
+    const docRef = adminDb
+      .collection('media_jobs')
+      .doc(jobId);
+
+    const snapshot = await docRef.get();
+
+    if (!snapshot.exists) {
+      return res.status(404).json({
+        error: 'Job de vídeo não encontrado.',
+      });
+    }
+
+    const job = snapshot.data()!;
+
+    if (
+      job.userId !== uid &&
+      req.user!.role !== 'admin'
+    ) {
+      return res.status(403).json({
+        error: 'Acesso não autorizado ao job de vídeo.',
+      });
+    }
+
+    if (job.status === 'processing') {
+      try {
+        const ai = getGenAIClient();
+
+        const operation =
+          await ai.operations.getVideosOperation({
+            operation: job.operationName,
+          });
+
+        if (operation.done) {
+          const videoUri =
+            operation.response
+              ?.generatedVideos?.[0]
+              ?.video?.uri;
+
+          if (!videoUri) {
+            throw new Error(
+              'A operação terminou sem retornar um vídeo válido.'
+            );
+          }
+
+          const completedAt =
+            new Date().toISOString();
+
+          await docRef.update({
+            status: 'completed',
+            progress: 100,
+            videoUrl: videoUri,
+            completedAt,
+            updatedAt: completedAt,
+          });
+
+          await CreditWalletService.confirmConsumption({
+            userId: job.userId,
+            reservationId: job.reservationId,
+            amountConsumed:
+              job.creditsReserved ||
+              VIDEO_COSTS.lite,
+            operation:
+              `Geração de vídeo concluída (${job.quality || 'lite'})`,
+            idempotencyKey:
+              `consume-video-${jobId}`,
+          });
+
+          await adminDb
+            .collection('media_generations')
+            .doc(jobId)
+            .set({
               id: jobId,
-              userId: uid,
+              userId: job.userId,
               type: 'video',
               prompt: job.prompt,
               url: videoUri,
+              aspectRatio: job.aspectRatio,
+              durationSeconds: job.durationSeconds,
+              quality: job.quality || 'lite',
+              model: job.model,
               status: 'completed',
-              creditsSpent: job.creditsReserved || 50,
-              createdAt: new Date().toISOString(),
+              creditsSpent:
+                job.creditsReserved ||
+                VIDEO_COSTS.lite,
+              createdAt: job.createdAt,
+              completedAt,
+              updatedAt: completedAt,
             });
 
-            job.status = 'completed';
-            job.progress = 100;
-            job.videoUrl = videoUri;
-          }
+          job.status = 'completed';
+          job.progress = 100;
+          job.videoUrl = videoUri;
+          job.updatedAt = completedAt;
+        } else {
+          const currentProgress =
+            Number(job.progress || 10);
+
+          const nextProgress = Math.min(
+            90,
+            currentProgress + 10
+          );
+
+          await docRef.update({
+            progress: nextProgress,
+            pollFailures: 0,
+            updatedAt: new Date().toISOString(),
+          });
+
+          job.progress = nextProgress;
         }
-      } else {
-        // Increment progress gradually
-        const newProgress = Math.min(95, (job.progress || 20) + 25);
-        await adminDb.collection('media_jobs').doc(jobId).update({
-          progress: newProgress,
-          updatedAt: new Date().toISOString(),
-        });
-        job.progress = newProgress;
+      } catch (error: any) {
+        const pollFailures =
+          Number(job.pollFailures || 0) + 1;
+
+        console.warn(
+          `Falha ${pollFailures} ao consultar vídeo ${jobId}:`,
+          error?.message || error
+        );
+
+        if (pollFailures >= 3) {
+          const failedAt = new Date().toISOString();
+
+          await releaseVideoReservation({
+            userId: job.userId,
+            reservationId: job.reservationId,
+            jobId,
+            operation:
+              'Estorno após falha definitiva na geração de vídeo',
+          });
+
+          await docRef.update({
+            status: 'failed',
+            progress: 0,
+            pollFailures,
+            error:
+              error?.message ||
+              'Falha ao consultar geração de vídeo.',
+            failedAt,
+            updatedAt: failedAt,
+          });
+
+          job.status = 'failed';
+          job.progress = 0;
+          job.error =
+            error?.message ||
+            'Falha ao consultar geração de vídeo.';
+          job.updatedAt = failedAt;
+        } else {
+          await docRef.update({
+            pollFailures,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
-    } catch (pollErr: any) {
-      console.warn('⚠️ Consulta de status Veo em andamento:', pollErr?.message || pollErr);
+    }
+
+    return res.json({
+      jobId: job.id,
+      status: job.status,
+      progress: Number(job.progress || 0),
+      videoUrl: job.videoUrl || null,
+      quality: job.quality || 'lite',
+      creditsReserved:
+        Number(job.creditsReserved || 0),
+      error: job.error || null,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    });
+  }
+);
+
+/**
+ * POST /api/ai/media/video/:jobId/cancel
+ */
+mediaRouter.post(
+  '/video/:jobId/cancel',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+    const { jobId } = req.params;
+
+    if (!adminDb) {
+      return res.status(503).json({
+        error: 'Banco de dados indisponível.',
+      });
+    }
+
+    const docRef = adminDb
+      .collection('media_jobs')
+      .doc(jobId);
+
+    const snapshot = await docRef.get();
+
+    if (!snapshot.exists) {
+      return res.status(404).json({
+        error: 'Job de vídeo não encontrado.',
+      });
+    }
+
+    const job = snapshot.data()!;
+
+    if (
+      job.userId !== uid &&
+      req.user!.role !== 'admin'
+    ) {
+      return res.status(403).json({
+        error: 'Acesso negado.',
+      });
+    }
+
+    if (
+      job.status === 'completed' ||
+      job.status === 'cancelled' ||
+      job.status === 'failed'
+    ) {
+      return res.json({
+        success: true,
+        status: job.status,
+        message: 'O job já foi finalizado.',
+      });
+    }
+
+    await releaseVideoReservation({
+      userId: job.userId,
+      reservationId: job.reservationId,
+      jobId,
+      operation:
+        'Estorno por cancelamento manual de vídeo',
+    });
+
+    const updatedAt = new Date().toISOString();
+
+    await docRef.set(
+      {
+        status: 'cancelled',
+        progress: 0,
+        cancelledAt: updatedAt,
+        updatedAt,
+      },
+      {
+        merge: true,
+      }
+    );
+
+    return res.json({
+      success: true,
+      status: 'cancelled',
+      message:
+        'Renderização de vídeo cancelada com sucesso.',
+    });
+  }
+);
+
+/**
+ * GET /api/ai/media/history
+ */
+mediaRouter.get(
+  '/history',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+
+    if (!adminDb) {
+      return res.status(503).json({
+        error: 'Banco de dados indisponível.',
+      });
+    }
+
+    try {
+      const snapshot = await adminDb
+        .collection('media_generations')
+        .where('userId', '==', uid)
+        .limit(50)
+        .get();
+
+      const items = snapshot.docs
+        .map((document) => document.data())
+        .sort(
+          (first, second) =>
+            new Date(second.createdAt).getTime() -
+            new Date(first.createdAt).getTime()
+        );
+
+      return res.json({
+        items,
+      });
+    } catch (error: any) {
+      console.error(
+        'Erro ao carregar histórico de mídia:',
+        error?.message || error
+      );
+
+      return res.status(500).json({
+        error:
+          'Não foi possível carregar o histórico de mídia.',
+      });
     }
   }
-
-  return res.json({
-    jobId: job.id,
-    status: job.status,
-    progress: job.progress,
-    videoUrl: job.videoUrl || null,
-    error: job.error || null,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-  });
-});
-
-/**
- * POST /api/ai/media/video/:jobId/cancel - Cancel video generation
- */
-mediaRouter.post('/video/:jobId/cancel', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const uid = req.user!.uid;
-  const { jobId } = req.params;
-
-  if (!adminDb) {
-    return res.status(500).json({ error: 'Banco de dados indisponível.' });
-  }
-
-  const docRef = adminDb.collection('media_jobs').doc(jobId);
-  const doc = await docRef.get();
-
-  if (!doc.exists) {
-    return res.status(404).json({ error: 'Job não encontrado.' });
-  }
-
-  const job = doc.data()!;
-  if (job.userId !== uid) {
-    return res.status(403).json({ error: 'Acesso negado.' });
-  }
-
-  if (job.status === 'completed' || job.status === 'cancelled') {
-    return res.json({ success: true, status: job.status, message: 'Job já finalizado.' });
-  }
-
-  if (job.reservationId) {
-    await CreditWalletService.releaseReservation({
-      userId: uid,
-      reservationId: job.reservationId,
-      operation: 'Estorno por cancelamento manual de vídeo',
-      idempotencyKey: `cancel-${jobId}`,
-    }).catch(console.error);
-  }
-
-  await docRef.set(
-    { status: 'cancelled', progress: 0, updatedAt: new Date().toISOString() },
-    { merge: true }
-  );
-
-  return res.json({ success: true, status: 'cancelled', message: 'Renderização de vídeo cancelada com sucesso.' });
-});
-
-/**
- * GET /api/ai/media/history - User media generation history
- */
-mediaRouter.get('/history', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const uid = req.user!.uid;
-
-  if (!adminDb) {
-    return res.json({ items: [] });
-  }
-
-  try {
-    const snap = await adminDb
-      .collection('media_generations')
-      .where('userId', '==', uid)
-      .limit(50)
-      .get();
-
-    const items = snap.docs.map((d) => d.data());
-    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    return res.json({ items });
-  } catch (err) {
-    return res.json({ items: [] });
-  }
-});
-
+);
