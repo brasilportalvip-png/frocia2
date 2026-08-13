@@ -606,7 +606,11 @@ mediaRouter.get(
 
         const operation =
           await ai.operations.getVideosOperation({
-            operation: job.operationName,
+            operation: {
+  name: job.operationName,
+} as unknown as Awaited<
+  ReturnType<typeof ai.models.generateVideos>
+>,
           });
 
         if (operation.done) {
