@@ -202,3 +202,97 @@ export async function apiClient<T = any>(
 
   return payload as T;
 }
+
+
+
+export async function apiClientBlob(
+  endpoint: string,
+  options: ApiClientOptions = {}
+): Promise<Blob> {
+  const headers = new Headers(options.headers);
+
+  if (!auth.currentUser) {
+    throw new ApiClientError(
+      'Faça login novamente para acessar este arquivo.',
+      401,
+      'firebase_user_unavailable'
+    );
+  }
+
+  try {
+    const token =
+      await auth.currentUser.getIdToken();
+
+    headers.set(
+      'Authorization',
+      `Bearer ${token}`
+    );
+  } catch {
+    throw new ApiClientError(
+      'Não foi possível validar sua sessão. Entre novamente.',
+      401,
+      'firebase_token_unavailable'
+    );
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(endpoint, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    if (
+      options.signal?.aborted ||
+      (
+        error instanceof DOMException &&
+        error.name === 'AbortError'
+      )
+    ) {
+      throw new ApiClientError(
+        'Download cancelado pelo usuário.',
+        499,
+        'request_aborted'
+      );
+    }
+
+    throw new ApiClientError(
+      'Não foi possível baixar o arquivo.',
+      0,
+      'network_error'
+    );
+  }
+
+  if (!response.ok) {
+    const payload =
+      await parseResponseBody(response);
+
+    const details = getErrorDetails(
+      payload,
+      response.status
+    );
+
+    throw new ApiClientError(
+      details.message,
+      response.status,
+      details.code,
+      details.correlationId
+    );
+  }
+
+  const blob = await response.blob();
+
+  if (
+    blob.size === 0 ||
+    !blob.type.toLowerCase().startsWith('video/')
+  ) {
+    throw new ApiClientError(
+      'O servidor não retornou um arquivo de vídeo válido.',
+      502,
+      'invalid_video_blob'
+    );
+  }
+
+  return blob;
+}

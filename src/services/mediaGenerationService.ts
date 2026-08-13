@@ -1,4 +1,7 @@
-import { apiClient } from './apiClient';
+import {
+  apiClient,
+  apiClientBlob,
+} from './apiClient';
 
 export type ImageAspectRatio =
   | '1:1'
@@ -96,6 +99,26 @@ function fileExtensionFromMimeType(
 }
 
 export class MediaGenerationService {
+
+
+  private static async attachPlayableVideo(
+    job: VideoJob,
+    signal?: AbortSignal
+  ): Promise<VideoJob> {
+    const videoBlob = await apiClientBlob(
+      `/api/ai/media/video/${encodeURIComponent(job.jobId)}/content`,
+      {
+        signal,
+      }
+    );
+
+    return {
+      ...job,
+      videoUrl: URL.createObjectURL(videoBlob),
+    };
+  }
+
+
   static async generateImage(
     input: GenerateImageInput
   ): Promise<GeneratedImage> {
@@ -219,14 +242,11 @@ export class MediaGenerationService {
       options?.onProgress?.(job);
 
       if (job.status === 'completed') {
-        if (!job.videoUrl) {
-          throw new Error(
-            'O vídeo foi concluído sem uma URL válida.'
-          );
-        }
-
-        return job;
-      }
+  return this.attachPlayableVideo(
+    job,
+    options?.signal
+  );
+}
 
       if (job.status === 'failed') {
         throw new Error(
@@ -307,6 +327,69 @@ export class MediaGenerationService {
       ? result.items
       : [];
   }
+
+
+
+
+  static async getLatestCompletedVideo(): Promise<
+    VideoJob | null
+  > {
+    const history = await this.getHistory();
+
+    const latestVideo = history.find(
+      (item) =>
+        item.type === 'video' &&
+        item.status === 'completed'
+    );
+
+    if (!latestVideo) {
+      return null;
+    }
+
+    const job = await this.getVideoJob(
+      latestVideo.id
+    );
+
+    if (job.status !== 'completed') {
+      return null;
+    }
+
+    return this.attachPlayableVideo(job);
+  }
+
+  static downloadVideo(job: VideoJob): void {
+    if (
+      job.status !== 'completed' ||
+      !job.videoUrl ||
+      !job.videoUrl.startsWith('blob:')
+    ) {
+      throw new Error(
+        'O arquivo do vídeo ainda não está disponível.'
+      );
+    }
+
+    const anchor =
+      document.createElement('a');
+
+    anchor.href = job.videoUrl;
+    anchor.download =
+      `frocia-video-${job.jobId}.mp4`;
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  static releaseVideoUrl(
+    videoUrl?: string | null
+  ): void {
+    if (videoUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(videoUrl);
+    }
+  }
+
+
+
 
   static downloadImage(
     image: GeneratedImage

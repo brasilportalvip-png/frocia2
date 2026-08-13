@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Readable } from 'node:stream';
 import { GoogleGenAI } from '@google/genai';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
@@ -795,7 +796,7 @@ if (operation.error) {
       jobId: job.id,
       status: job.status,
       progress: Number(job.progress || 0),
-      videoUrl: job.videoUrl || null,
+      videoUrl: null,
       quality: job.quality || 'lite',
       model: job.model || null,
       durationSeconds:
@@ -809,6 +810,188 @@ if (operation.error) {
     });
   }
 );
+
+
+
+
+
+/**
+ * GET /api/ai/media/video/:jobId/content
+ *
+ * Entrega o MP4 pelo backend sem expor a chave ou a URL privada do Google.
+ */
+mediaRouter.get(
+  '/video/:jobId/content',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+    const { jobId } = req.params;
+
+    if (!adminDb) {
+      return res.status(503).json({
+        error: 'Banco de dados indisponível.',
+      });
+    }
+
+    const snapshot = await adminDb
+      .collection('media_jobs')
+      .doc(jobId)
+      .get();
+
+    if (!snapshot.exists) {
+      return res.status(404).json({
+        error: 'Job de vídeo não encontrado.',
+      });
+    }
+
+    const job = snapshot.data()!;
+
+    if (
+      job.userId !== uid &&
+      req.user!.role !== 'admin'
+    ) {
+      return res.status(403).json({
+        error: 'Acesso não autorizado ao vídeo.',
+      });
+    }
+
+    if (
+      job.status !== 'completed' ||
+      typeof job.videoUrl !== 'string' ||
+      !job.videoUrl
+    ) {
+      return res.status(409).json({
+        error: 'O vídeo ainda não está disponível.',
+      });
+    }
+
+    let providerUrl: URL;
+
+    try {
+      providerUrl = new URL(job.videoUrl);
+    } catch {
+      return res.status(502).json({
+        error:
+          'O provedor retornou uma URL de vídeo inválida.',
+      });
+    }
+
+    if (
+      providerUrl.protocol !== 'https:' ||
+      providerUrl.hostname !==
+        'generativelanguage.googleapis.com' ||
+      !providerUrl.pathname.startsWith(
+        '/v1beta/files/'
+      )
+    ) {
+      return res.status(502).json({
+        error: 'A origem do vídeo não é permitida.',
+      });
+    }
+
+    try {
+      const providerResponse = await fetch(
+        providerUrl,
+        {
+          method: 'GET',
+          headers: {
+            'x-goog-api-key': getMediaApiKey(),
+          },
+        }
+      );
+
+      if (
+        !providerResponse.ok ||
+        !providerResponse.body
+      ) {
+        const providerError =
+          await providerResponse.text();
+
+        return res.status(502).json({
+          error:
+            `Não foi possível baixar o vídeo do provedor: HTTP ${providerResponse.status} — ${providerError}`,
+        });
+      }
+
+      res.status(200);
+
+      res.setHeader(
+        'Content-Type',
+        providerResponse.headers.get(
+          'content-type'
+        ) || 'video/mp4'
+      );
+
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="frocia-video-${jobId}.mp4"`
+      );
+
+      res.setHeader(
+        'Cache-Control',
+        'private, no-store, max-age=0'
+      );
+
+      res.setHeader(
+        'X-Content-Type-Options',
+        'nosniff'
+      );
+
+      const contentLength =
+        providerResponse.headers.get(
+          'content-length'
+        );
+
+      if (contentLength) {
+        res.setHeader(
+          'Content-Length',
+          contentLength
+        );
+      }
+
+      const stream = Readable.fromWeb(
+        providerResponse.body as any
+      );
+
+      stream.on('error', (error) => {
+        console.error(
+          `Falha ao transmitir vídeo ${jobId}:`,
+          error
+        );
+
+        if (!res.headersSent) {
+          res.status(502).json({
+            error:
+              'Falha durante a transmissão do vídeo.',
+          });
+        } else {
+          res.destroy(error as Error);
+        }
+      });
+
+      stream.pipe(res);
+      return;
+    } catch (error: any) {
+      console.error(
+        `Erro ao entregar vídeo ${jobId}:`,
+        error?.message || error
+      );
+
+      if (!res.headersSent) {
+        return res.status(502).json({
+          error:
+            'Não foi possível entregar o vídeo neste momento.',
+        });
+      }
+
+      return res.end();
+    }
+  }
+);
+
+
+
+
 
 /**
  * POST /api/ai/media/video/:jobId/cancel

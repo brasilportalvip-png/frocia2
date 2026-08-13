@@ -126,6 +126,12 @@ export const MediaGenerationModal: React.FC<
   const [isGenerating, setIsGenerating] =
     useState(false);
 
+  const [isRestoringVideo, setIsRestoringVideo] =
+    useState(false);
+
+  const [isRestoringVideo, setIsRestoringVideo] =
+    useState(false);
+
   const [generatedImage, setGeneratedImage] =
     useState<GeneratedImage | null>(null);
 
@@ -138,6 +144,29 @@ export const MediaGenerationModal: React.FC<
   const abortControllerRef =
     useRef<AbortController | null>(null);
 
+  const videoObjectUrlRef =
+    useRef<string | null>(null);
+
+  const rememberVideoUrl = (
+    job: VideoJob | null
+  ) => {
+    if (
+      videoObjectUrlRef.current &&
+      videoObjectUrlRef.current !== job?.videoUrl
+    ) {
+      MediaGenerationService.releaseVideoUrl(
+        videoObjectUrlRef.current
+      );
+    }
+
+    videoObjectUrlRef.current =
+      job?.videoUrl?.startsWith('blob:')
+        ? job.videoUrl
+        : null;
+
+    setVideoJob(job);
+  };
+
   useEffect(() => {
     if (!isOpen) {
       return;
@@ -149,7 +178,7 @@ export const MediaGenerationModal: React.FC<
     setVideoQuality('lite');
     setDurationSeconds(4);
     setGeneratedImage(null);
-    setVideoJob(null);
+    rememberVideoUrl(null);
     setErrorMessage(null);
     setIsGenerating(false);
   }, [isOpen, initialPrompt, mode]);
@@ -157,6 +186,10 @@ export const MediaGenerationModal: React.FC<
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
+
+      MediaGenerationService.releaseVideoUrl(
+        videoObjectUrlRef.current
+      );
     };
   }, []);
 
@@ -212,7 +245,7 @@ export const MediaGenerationModal: React.FC<
 
     setIsGenerating(true);
     setErrorMessage(null);
-    setVideoJob(null);
+    rememberVideoUrl(null);
 
     const abortController =
       new AbortController();
@@ -242,7 +275,7 @@ export const MediaGenerationModal: React.FC<
           }
         );
 
-      setVideoJob(completedJob);
+      rememberVideoUrl(completedJob);
       onCreditsChanged?.();
     } catch (error: unknown) {
       if (
@@ -261,6 +294,35 @@ export const MediaGenerationModal: React.FC<
     } finally {
       abortControllerRef.current = null;
       setIsGenerating(false);
+    }
+  };
+
+  const handleRestoreLatestVideo = async () => {
+    setIsRestoringVideo(true);
+    setErrorMessage(null);
+
+    try {
+      const latestVideo =
+        await MediaGenerationService
+          .getLatestCompletedVideo();
+
+      if (!latestVideo) {
+        setErrorMessage(
+          'Nenhum vídeo concluído foi encontrado no seu histórico.'
+        );
+        return;
+      }
+
+      rememberVideoUrl(latestVideo);
+    } catch (error: unknown) {
+      setErrorMessage(
+        friendlyMediaError(
+          error,
+          'Não foi possível recuperar o último vídeo.'
+        )
+      );
+    } finally {
+      setIsRestoringVideo(false);
     }
   };
 
@@ -593,15 +655,50 @@ export const MediaGenerationModal: React.FC<
               </div>
 
               {videoJob.videoUrl && (
-                <video
-                  src={videoJob.videoUrl}
-                  controls
-                  playsInline
-                  className="w-full rounded-2xl border border-white/10 bg-black"
-                />
+                <>
+                  <video
+                    src={videoJob.videoUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="w-full rounded-2xl border border-white/10 bg-black"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      MediaGenerationService.downloadVideo(
+                        videoJob
+                      )
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-4 py-3 text-xs font-black text-black transition hover:bg-cyan-300"
+                  >
+                    <Download className="h-4 w-4" />
+                    Baixar vídeo em MP4
+                  </button>
+                </>
               )}
             </section>
           )}
+
+          {mode === 'video' &&
+            !videoJob &&
+            !isGenerating && (
+              <button
+                type="button"
+                onClick={handleRestoreLatestVideo}
+                disabled={isRestoringVideo}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-xs font-bold text-cyan-200 transition hover:bg-cyan-500/20 disabled:opacity-50"
+              >
+                {isRestoringVideo ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Video className="h-4 w-4" />
+                )}
+
+                Recuperar último vídeo concluído
+              </button>
+            )}
 
           <footer className="flex flex-col-reverse gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-between">
             <button
