@@ -126,8 +126,7 @@ export const MediaGenerationModal: React.FC<
   const [isGenerating, setIsGenerating] =
     useState(false);
 
-  const [isRestoringVideo, setIsRestoringVideo] =
-    useState(false);
+  
 
   const [isRestoringVideo, setIsRestoringVideo] =
     useState(false);
