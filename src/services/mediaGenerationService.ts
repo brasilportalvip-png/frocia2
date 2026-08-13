@@ -6,8 +6,10 @@ export type ImageAspectRatio =
   | '16:9';
 
 export type VideoAspectRatio =
-  | '1:1'
+  | '9:16'
   | '16:9';
+
+export type VideoDuration = 4 | 6 | 8;
 
 export type VideoQuality =
   | 'lite'
@@ -20,7 +22,7 @@ export interface GeneratedImage {
   prompt: string;
   url: string;
   aspectRatio: ImageAspectRatio;
-  mimeType: string;
+  mimeType: 'image/jpeg';
   model: string;
   status: 'completed';
   creditsSpent: number;
@@ -37,6 +39,9 @@ export interface VideoJob {
   progress: number;
   videoUrl: string | null;
   quality: VideoQuality;
+  model?: string | null;
+  durationSeconds?: VideoDuration;
+  aspectRatio?: VideoAspectRatio;
   creditsReserved: number;
   error: string | null;
   createdAt?: string;
@@ -62,7 +67,7 @@ interface GenerateImageInput {
 interface StartVideoInput {
   prompt: string;
   aspectRatio: VideoAspectRatio;
-  durationSeconds: number;
+  durationSeconds: VideoDuration;
   quality: VideoQuality;
   idempotencyKey?: string;
 }
@@ -80,6 +85,14 @@ function createIdempotencyKey(
   return `${prefix}-${Date.now()}-${Math.random()
     .toString(36)
     .substring(2, 12)}`;
+}
+
+function fileExtensionFromMimeType(
+  mimeType: string
+): string {
+  return mimeType === 'image/png'
+    ? 'png'
+    : 'jpg';
 }
 
 export class MediaGenerationService {
@@ -121,6 +134,9 @@ export class MediaGenerationService {
       status: 'processing';
       progress: number;
       quality: VideoQuality;
+      model: string;
+      durationSeconds: VideoDuration;
+      aspectRatio: VideoAspectRatio;
       creditsReserved: number;
     }>('/api/ai/media/video', {
       method: 'POST',
@@ -150,6 +166,9 @@ export class MediaGenerationService {
       progress: result.progress,
       videoUrl: null,
       quality: result.quality,
+      model: result.model,
+      durationSeconds: result.durationSeconds,
+      aspectRatio: result.aspectRatio,
       creditsReserved: result.creditsReserved,
       error: null,
     };
@@ -295,9 +314,12 @@ export class MediaGenerationService {
     const anchor =
       document.createElement('a');
 
+    const extension =
+      fileExtensionFromMimeType(image.mimeType);
+
     anchor.href = image.url;
     anchor.download =
-      `frocia-imagem-${image.id}.png`;
+      `frocia-imagem-${image.id}.${extension}`;
 
     document.body.appendChild(anchor);
     anchor.click();

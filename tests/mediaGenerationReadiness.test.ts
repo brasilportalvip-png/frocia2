@@ -168,7 +168,7 @@ describe(
       }
     );
 
-    it(
+        it(
       'uses current image and video models',
       () => {
         expect(mediaRoutesSource).toContain(
@@ -176,15 +176,15 @@ describe(
         );
 
         expect(mediaRoutesSource).toContain(
-          "'veo-3.1-lite-generate-001'"
+          "'veo-3.1-lite-generate-preview'"
         );
 
         expect(mediaRoutesSource).toContain(
-          "'veo-3.1-fast-generate-001'"
+          "'veo-3.1-fast-generate-preview'"
         );
 
         expect(mediaRoutesSource).toContain(
-          "'veo-3.1-generate-001'"
+          "'veo-3.1-generate-preview'"
         );
 
         expect(mediaRoutesSource).not.toContain(
@@ -195,24 +195,35 @@ describe(
           "'veo-2.0-generate-001'"
         );
 
+        expect(mediaRoutesSource).not.toContain(
+          "'veo-3.1-lite-generate-001'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "'veo-3.1-fast-generate-001'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "'veo-3.1-generate-001'"
+        );
+
         expect(envExampleSource).toContain(
           'GEMINI_IMAGE_MODEL="gemini-3.1-flash-image"'
         );
 
         expect(envExampleSource).toContain(
-          'VEO_LITE_MODEL="veo-3.1-lite-generate-001"'
+          'VEO_LITE_MODEL="veo-3.1-lite-generate-preview"'
         );
 
         expect(envExampleSource).toContain(
-          'VEO_FAST_MODEL="veo-3.1-fast-generate-001"'
+          'VEO_FAST_MODEL="veo-3.1-fast-generate-preview"'
         );
 
         expect(envExampleSource).toContain(
-          'VEO_STANDARD_MODEL="veo-3.1-generate-001"'
+          'VEO_STANDARD_MODEL="veo-3.1-generate-preview"'
         );
       }
     );
-
     it(
       'uses supported video durations and aspect ratios',
       () => {
@@ -362,6 +373,75 @@ describe(
 
         expect(responseImageUrl).toBeGreaterThan(
           firestoreWrite
+        );
+      }
+        );
+
+    it(
+      'uses the media formats accepted by the providers',
+      () => {
+        expect(mediaRoutesSource).toContain(
+          "mime_type: 'image/jpeg'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "mime_type: 'image/png'"
+        );
+
+        expect(mediaServiceSource).toContain(
+          "export type VideoDuration = 4 | 6 | 8"
+        );
+
+        expect(mediaServiceSource).toContain(
+          "| '9:16'"
+        );
+
+        expect(mediaModalSource).toContain(
+          'useState<VideoDuration>(4)'
+        );
+
+        expect(mediaModalSource).toContain(
+          '<option value={4}>'
+        );
+
+        expect(mediaModalSource).toContain(
+          '<option value={6}>'
+        );
+
+        expect(mediaModalSource).toContain(
+          '<option value={8}>'
+        );
+
+        expect(mediaModalSource).not.toContain(
+          '<option value={5}>'
+        );
+
+        expect(mediaModalSource).not.toContain(
+          '<option value={7}>'
+        );
+
+        expect(mediaModalSource).toContain(
+          '<option value="9:16">'
+        );
+
+        expect(mediaModalSource).not.toContain(
+          '<option value="1:1">'
+        );
+
+        expect(mediaModalSource).toContain(
+          'Baixar imagem em JPEG'
+        );
+
+        expect(mediaModalSource).toContain(
+          'Solicitar cancelamento'
+        );
+
+        expect(mediaModalSource).not.toContain(
+          'Cancelar e devolver créditos'
+        );
+
+        expect(mediaModalSource).toContain(
+          'RESOURCE_EXHAUSTED'
         );
       }
     );

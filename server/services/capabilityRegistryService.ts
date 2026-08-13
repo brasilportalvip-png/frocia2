@@ -84,15 +84,15 @@ export class CapabilityRegistryService {
 
     const veoLiteModel =
       process.env.VEO_LITE_MODEL ||
-      'veo-3.1-lite-generate-001';
+      'veo-3.1-lite-generate-preview';
 
     const veoFastModel =
       process.env.VEO_FAST_MODEL ||
-      'veo-3.1-fast-generate-001';
+      'veo-3.1-fast-generate-preview';
 
     const veoStandardModel =
       process.env.VEO_STANDARD_MODEL ||
-      'veo-3.1-generate-001';
+      'veo-3.1-generate-preview';
 
     const capabilities: CapabilityItem[] = [
       {
@@ -322,7 +322,7 @@ export class CapabilityRegistryService {
     ];
 
     return {
-      version: '1.2.0',
+      version: '1.2.1',
       updatedAt: now,
       capabilities,
     };

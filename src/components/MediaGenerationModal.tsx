@@ -20,6 +20,7 @@ import {
   ImageAspectRatio,
   MediaGenerationService,
   VideoAspectRatio,
+  VideoDuration,
   VideoJob,
   VideoQuality,
 } from '../services/mediaGenerationService';
@@ -41,22 +42,62 @@ const VIDEO_QUALITY_OPTIONS: Array<{
   {
     id: 'lite',
     name: 'Lite',
-    description: 'Prévia rápida para ideias e testes',
+    description:
+      'Opção econômica para ideias, testes e alto volume',
     credits: 30,
   },
   {
     id: 'fast',
     name: 'Fast',
-    description: 'Equilíbrio entre velocidade e qualidade',
+    description:
+      'Equilíbrio entre velocidade e qualidade profissional',
     credits: 46,
   },
   {
     id: 'standard',
     name: 'Standard',
-    description: 'Qualidade máxima disponível',
+    description:
+      'Máxima qualidade, fidelidade e controle cinematográfico',
     credits: 120,
   },
 ];
+
+function friendlyMediaError(
+  error: unknown,
+  fallback: string
+): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : fallback;
+
+  if (
+    message.includes('RESOURCE_EXHAUSTED') ||
+    message.includes('"code":429') ||
+    message.includes('current quota')
+  ) {
+    return 'O limite temporário de geração do Google foi atingido. Nenhum crédito da Froc.IA será consumido nesta tentativa. Aguarde a renovação da cota ou confira os limites do projeto no Google AI Studio.';
+  }
+
+  if (
+    message.includes('NOT_FOUND') ||
+    message.includes('"code":404') ||
+    message.includes('is not found for API version')
+  ) {
+    return 'O modelo de mídia não está disponível para este projeto da Gemini API. Nenhum crédito será consumido.';
+  }
+
+  if (
+    message.includes('response_format.mime_type') ||
+    message.includes('mime type')
+  ) {
+    return 'O Google recusou o formato solicitado para a imagem. Nenhum crédito será consumido.';
+  }
+
+  return message || fallback;
+}
 
 export const MediaGenerationModal: React.FC<
   MediaGenerationModalProps
@@ -80,7 +121,7 @@ export const MediaGenerationModal: React.FC<
     useState<VideoQuality>('lite');
 
   const [durationSeconds, setDurationSeconds] =
-    useState(5);
+    useState<VideoDuration>(4);
 
   const [isGenerating, setIsGenerating] =
     useState(false);
@@ -103,6 +144,10 @@ export const MediaGenerationModal: React.FC<
     }
 
     setPrompt(initialPrompt);
+    setImageAspectRatio('1:1');
+    setVideoAspectRatio('16:9');
+    setVideoQuality('lite');
+    setDurationSeconds(4);
     setGeneratedImage(null);
     setVideoJob(null);
     setErrorMessage(null);
@@ -145,10 +190,12 @@ export const MediaGenerationModal: React.FC<
 
       setGeneratedImage(image);
       onCreditsChanged?.();
-    } catch (error: any) {
+    } catch (error: unknown) {
       setErrorMessage(
-        error?.message ||
-        'Não foi possível gerar a imagem.'
+        friendlyMediaError(
+          error,
+          'Não foi possível gerar a imagem.'
+        )
       );
     } finally {
       setIsGenerating(false);
@@ -197,13 +244,20 @@ export const MediaGenerationModal: React.FC<
 
       setVideoJob(completedJob);
       onCreditsChanged?.();
-    } catch (error: any) {
-      if (error?.name !== 'AbortError') {
-        setErrorMessage(
-          error?.message ||
-          'Não foi possível gerar o vídeo.'
-        );
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        error.name === 'AbortError'
+      ) {
+        return;
       }
+
+      setErrorMessage(
+        friendlyMediaError(
+          error,
+          'Não foi possível gerar o vídeo.'
+        )
+      );
     } finally {
       abortControllerRef.current = null;
       setIsGenerating(false);
@@ -224,22 +278,27 @@ export const MediaGenerationModal: React.FC<
           videoJob.jobId
         );
 
-      setVideoJob((current) =>
-        current
-          ? {
-              ...current,
-              status: 'cancelled',
-              progress: 0,
-            }
-          : null
-      );
+      if (result.success) {
+        setVideoJob((current) =>
+          current
+            ? {
+                ...current,
+                status: 'cancelled',
+                progress: 0,
+              }
+            : null
+        );
+
+        onCreditsChanged?.();
+      }
 
       setErrorMessage(result.message);
-      onCreditsChanged?.();
-    } catch (error: any) {
+    } catch (error: unknown) {
       setErrorMessage(
-        error?.message ||
-        'Não foi possível cancelar o vídeo.'
+        friendlyMediaError(
+          error,
+          'O Google não confirmou o cancelamento. A geração continuará e os créditos não serão devolvidos antecipadamente.'
+        )
       );
     } finally {
       setIsGenerating(false);
@@ -249,7 +308,7 @@ export const MediaGenerationModal: React.FC<
   const handleClose = () => {
     if (isGenerating) {
       setErrorMessage(
-        'Cancele a geração antes de fechar esta janela.'
+        'Solicite o cancelamento antes de fechar esta janela.'
       );
       return;
     }
@@ -293,8 +352,8 @@ export const MediaGenerationModal: React.FC<
 
             <p className="text-xs leading-relaxed text-white/50">
               {mode === 'image'
-                ? 'Descreva com detalhes a cena, iluminação, enquadramento, materiais, cores e atmosfera.'
-                : 'Descreva a cena, os movimentos, a câmera, a iluminação e a evolução temporal do vídeo.'}
+                ? 'Criação 2K com Gemini 3.1 Flash Image. Descreva cena, iluminação, enquadramento, materiais, cores e atmosfera.'
+                : 'Criação com Veo 3.1 e áudio. Descreva cena, movimentos, câmera, iluminação e evolução temporal.'}
             </p>
           </div>
         </header>
@@ -433,8 +492,8 @@ export const MediaGenerationModal: React.FC<
                     <option value="16:9">
                       16:9 — Paisagem
                     </option>
-                    <option value="1:1">
-                      1:1 — Quadrado
+                    <option value="9:16">
+                      9:16 — Vertical
                     </option>
                   </select>
                 </div>
@@ -449,19 +508,18 @@ export const MediaGenerationModal: React.FC<
                     disabled={isGenerating}
                     onChange={(event) =>
                       setDurationSeconds(
-                        Number(event.target.value)
+                        Number(
+                          event.target.value
+                        ) as VideoDuration
                       )
                     }
                     className="w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3 text-xs text-white outline-none focus:border-purple-400/50"
                   >
-                    <option value={5}>
-                      5 segundos
+                    <option value={4}>
+                      4 segundos
                     </option>
                     <option value={6}>
                       6 segundos
-                    </option>
-                    <option value={7}>
-                      7 segundos
                     </option>
                     <option value={8}>
                       8 segundos
@@ -504,7 +562,7 @@ export const MediaGenerationModal: React.FC<
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-xs font-black text-black transition hover:bg-emerald-400"
               >
                 <Download className="h-4 w-4" />
-                Baixar imagem em PNG
+                Baixar imagem em JPEG
               </button>
             </section>
           )}
@@ -562,7 +620,7 @@ export const MediaGenerationModal: React.FC<
                 className="flex items-center justify-center gap-2 rounded-xl bg-rose-500 px-5 py-3 text-xs font-black text-white transition hover:bg-rose-400"
               >
                 <Square className="h-4 w-4 fill-current" />
-                Cancelar e devolver créditos
+                Solicitar cancelamento
               </button>
             ) : (
               <button

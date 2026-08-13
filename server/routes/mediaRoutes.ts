@@ -29,13 +29,13 @@ const IMAGE_MODEL =
 const VIDEO_MODELS: Record<VideoQuality, string> = {
   lite:
     process.env.VEO_LITE_MODEL ||
-    'veo-3.1-lite-generate-001',
+    'veo-3.1-lite-generate-preview',
   fast:
     process.env.VEO_FAST_MODEL ||
-    'veo-3.1-fast-generate-001',
+    'veo-3.1-fast-generate-preview',
   standard:
     process.env.VEO_STANDARD_MODEL ||
-    'veo-3.1-generate-001',
+    'veo-3.1-generate-preview',
 };
 
 function getMediaApiKey(): string {
@@ -262,7 +262,7 @@ mediaRouter.post(
           input: sanitizedPrompt,
           response_format: {
             type: 'image',
-            mime_type: 'image/png',
+            mime_type: 'image/jpeg',
             aspect_ratio: aspectRatio,
             image_size: '2K',
           },
@@ -280,7 +280,7 @@ mediaRouter.post(
       }
 
       const mimeType =
-        generatedImage.mime_type || 'image/png';
+        generatedImage.mime_type || 'image/jpeg';
 
       const imageDataUrl =
         `data:${mimeType};base64,${imageBytes}`;
