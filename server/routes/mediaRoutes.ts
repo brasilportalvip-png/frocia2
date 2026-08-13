@@ -602,16 +602,57 @@ mediaRouter.get(
 
     if (job.status === 'processing') {
       try {
-        const ai = getGenAIClient();
+        
 
-        const operation =
-          await ai.operations.getVideosOperation({
-            operation: {
-  name: job.operationName,
-} as unknown as Awaited<
-  ReturnType<typeof ai.models.generateVideos>
->,
-          });
+
+const normalizedOperationName = String(
+  job.operationName
+).replace(/^\/+/, '');
+
+const operationResponse = await fetch(
+  `https://generativelanguage.googleapis.com/v1beta/${normalizedOperationName}`,
+  {
+    method: 'GET',
+    headers: {
+      'x-goog-api-key': getMediaApiKey(),
+    },
+  }
+);
+
+if (!operationResponse.ok) {
+  const providerError =
+    await operationResponse.text();
+
+  throw new Error(
+    `Falha ao consultar operação do vídeo: HTTP ${operationResponse.status} — ${providerError}`
+  );
+}
+
+const operation = await operationResponse.json() as {
+  done?: boolean;
+  response?: {
+    generatedVideos?: Array<{
+      video?: {
+        uri?: string;
+      };
+    }>;
+  };
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
+};
+
+if (operation.error) {
+  throw new Error(
+    operation.error.message ||
+    'O provedor informou falha na geração do vídeo.'
+  );
+}
+
+
+
 
         if (operation.done) {
           const videoUri =
