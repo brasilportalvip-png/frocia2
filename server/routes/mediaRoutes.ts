@@ -10,8 +10,9 @@ import { FeatureFlagService } from '../services/featureFlagService.js';
 export const mediaRouter = Router();
 
 type ImageAspectRatio = '1:1' | '4:3' | '16:9';
-type VideoAspectRatio = '1:1' | '16:9';
+type VideoAspectRatio = '9:16' | '16:9';
 type VideoQuality = 'lite' | 'fast' | 'standard';
+type VideoDuration = 4 | 6 | 8;
 
 const IMAGE_COST = 18;
 
@@ -21,7 +22,23 @@ const VIDEO_COSTS: Record<VideoQuality, number> = {
   standard: 120,
 };
 
-function getGenAIClient(): GoogleGenAI {
+const IMAGE_MODEL =
+  process.env.GEMINI_IMAGE_MODEL ||
+  'gemini-3.1-flash-image';
+
+const VIDEO_MODELS: Record<VideoQuality, string> = {
+  lite:
+    process.env.VEO_LITE_MODEL ||
+    'veo-3.1-lite-generate-001',
+  fast:
+    process.env.VEO_FAST_MODEL ||
+    'veo-3.1-fast-generate-001',
+  standard:
+    process.env.VEO_STANDARD_MODEL ||
+    'veo-3.1-generate-001',
+};
+
+function getMediaApiKey(): string {
   const apiKey = process.env.GEMINI_MEDIA_API_KEY;
 
   if (
@@ -34,8 +51,12 @@ function getGenAIClient(): GoogleGenAI {
     );
   }
 
+  return apiKey.trim();
+}
+
+function getGenAIClient(): GoogleGenAI {
   return new GoogleGenAI({
-    apiKey: apiKey.trim(),
+    apiKey: getMediaApiKey(),
   });
 }
 
@@ -52,7 +73,7 @@ function normalizeImageAspectRatio(
 function normalizeVideoAspectRatio(
   value: unknown
 ): VideoAspectRatio {
-  return value === '1:1' ? '1:1' : '16:9';
+  return value === '9:16' ? '9:16' : '16:9';
 }
 
 function normalizeVideoQuality(
@@ -67,14 +88,22 @@ function normalizeVideoQuality(
 
 function normalizeDurationSeconds(
   value: unknown
-): number {
+): VideoDuration {
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed)) {
-    return 5;
+    return 8;
   }
 
-  return Math.min(8, Math.max(5, Math.round(parsed)));
+  if (parsed <= 4) {
+    return 4;
+  }
+
+  if (parsed <= 6) {
+    return 6;
+  }
+
+  return 8;
 }
 
 function normalizeIdempotencyKey(
@@ -114,17 +143,46 @@ async function releaseVideoReservation(params: {
   });
 }
 
+async function cancelProviderVideoOperation(
+  operationName: string
+): Promise<boolean> {
+  if (
+    !operationName ||
+    !/^[A-Za-z0-9._/-]+$/.test(operationName)
+  ) {
+    return false;
+  }
+
+  const normalizedOperation =
+    operationName.replace(/^\/+/, '');
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/${normalizedOperation}:cancel`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': getMediaApiKey(),
+      },
+      body: '{}',
+    }
+  );
+
+  return response.ok;
+}
+
 /**
  * POST /api/ai/media/image
  *
- * Executa uma geração real de imagem.
- * Não cria SVG, placeholder ou resultado fictício quando o provedor falhar.
+ * Executa geração real de imagem com Gemini 3.1 Flash Image.
+ * Não cria SVG, placeholder ou resultado fictício.
  */
 mediaRouter.post(
   '/image',
   requireAuth,
   async (req: AuthenticatedRequest, res) => {
     const uid = req.user!.uid;
+
     const {
       prompt,
       aspectRatio: requestedAspectRatio = '1:1',
@@ -159,8 +217,7 @@ mediaRouter.post(
       });
     }
 
-    const safety =
-      SafetyService.inspectPrompt(prompt);
+    const safety = SafetyService.inspectPrompt(prompt);
 
     if (!safety.safe) {
       return res.status(400).json({
@@ -185,6 +242,8 @@ mediaRouter.post(
     let reservationId: string | null = null;
 
     try {
+      getGenAIClient();
+
       const reservation =
         await CreditWalletService.reserveCredits({
           userId: uid,
@@ -197,23 +256,22 @@ mediaRouter.post(
 
       const ai = getGenAIClient();
 
-      const response = await ai.models.generateImages({
-        model:
-          process.env.IMAGEN_MODEL ||
-          'imagen-3.0-generate-002',
-        prompt: sanitizedPrompt,
-        config: {
-          numberOfImages: 1,
-          outputMimeType: 'image/png',
-          aspectRatio,
-        },
-      });
+      const interaction =
+        await ai.interactions.create({
+          model: IMAGE_MODEL,
+          input: sanitizedPrompt,
+          response_format: {
+            type: 'image',
+            mime_type: 'image/png',
+            aspect_ratio: aspectRatio,
+            image_size: '2K',
+          },
+        });
 
       const generatedImage =
-        response.generatedImages?.[0];
+        interaction.output_image;
 
-      const imageBytes =
-        generatedImage?.image?.imageBytes;
+      const imageBytes = generatedImage?.data;
 
       if (!imageBytes) {
         throw new Error(
@@ -221,8 +279,11 @@ mediaRouter.post(
         );
       }
 
+      const mimeType =
+        generatedImage.mime_type || 'image/png';
+
       const imageDataUrl =
-        `data:image/png;base64,${imageBytes}`;
+        `data:${mimeType};base64,${imageBytes}`;
 
       const docId =
         `img_${Date.now()}_${Math.random()
@@ -234,7 +295,6 @@ mediaRouter.post(
       /*
        * O Base64 não é gravado no Firestore porque documentos possuem
        * limite de tamanho. A imagem é devolvida diretamente ao navegador.
-       * O armazenamento persistente será conectado em arquivo próprio.
        */
       const mediaRecord = {
         id: docId,
@@ -242,12 +302,11 @@ mediaRouter.post(
         type: 'image',
         prompt: sanitizedPrompt,
         aspectRatio,
-        mimeType: 'image/png',
-        model:
-          process.env.IMAGEN_MODEL ||
-          'imagen-3.0-generate-002',
+        resolution: '2K',
+        mimeType,
+        model: IMAGE_MODEL,
         status: 'completed',
-        storageStatus: 'awaiting_persistent_storage',
+        storageStatus: 'temporary_browser_delivery',
         creditsSpent: IMAGE_COST,
         createdAt,
         updatedAt: createdAt,
@@ -310,8 +369,7 @@ mediaRouter.post(
 /**
  * POST /api/ai/media/video
  *
- * Inicia um job real no provedor. Se o Veo não aceitar a operação,
- * nenhum job fictício será criado e os créditos serão estornados.
+ * Inicia um job real no Veo 3.1 correspondente à qualidade escolhida.
  */
 mediaRouter.post(
   '/video',
@@ -322,7 +380,7 @@ mediaRouter.post(
     const {
       prompt,
       aspectRatio: requestedAspectRatio = '16:9',
-      durationSeconds: requestedDuration = 5,
+      durationSeconds: requestedDuration = 8,
       quality: requestedQuality = 'lite',
       idempotencyKey,
     } = req.body || {};
@@ -355,8 +413,7 @@ mediaRouter.post(
       });
     }
 
-    const safety =
-      SafetyService.inspectPrompt(prompt);
+    const safety = SafetyService.inspectPrompt(prompt);
 
     if (!safety.safe) {
       return res.status(400).json({
@@ -381,6 +438,7 @@ mediaRouter.post(
     );
 
     const cost = VIDEO_COSTS[quality];
+    const selectedModel = VIDEO_MODELS[quality];
 
     const key = normalizeIdempotencyKey(
       idempotencyKey,
@@ -407,9 +465,7 @@ mediaRouter.post(
 
       const videoOperation =
         await ai.models.generateVideos({
-          model:
-            process.env.VEO_MODEL ||
-            'veo-2.0-generate-001',
+          model: selectedModel,
           prompt: sanitizedPrompt,
           config: {
             aspectRatio,
@@ -441,9 +497,7 @@ mediaRouter.post(
         aspectRatio,
         durationSeconds,
         quality,
-        model:
-          process.env.VEO_MODEL ||
-          'veo-2.0-generate-001',
+        model: selectedModel,
         status: 'processing',
         progress: 10,
         pollFailures: 0,
@@ -470,6 +524,9 @@ mediaRouter.post(
         status: 'processing',
         progress: 10,
         quality,
+        model: selectedModel,
+        durationSeconds,
+        aspectRatio,
         creditsReserved: cost,
       });
     } catch (error: any) {
@@ -601,6 +658,8 @@ mediaRouter.get(
               quality: job.quality || 'lite',
               model: job.model,
               status: 'completed',
+              storageStatus:
+                'temporary_provider_delivery',
               creditsSpent:
                 job.creditsReserved ||
                 VIDEO_COSTS.lite,
@@ -682,6 +741,10 @@ mediaRouter.get(
       progress: Number(job.progress || 0),
       videoUrl: job.videoUrl || null,
       quality: job.quality || 'lite',
+      model: job.model || null,
+      durationSeconds:
+        Number(job.durationSeconds || 0),
+      aspectRatio: job.aspectRatio || '16:9',
       creditsReserved:
         Number(job.creditsReserved || 0),
       error: job.error || null,
@@ -693,6 +756,8 @@ mediaRouter.get(
 
 /**
  * POST /api/ai/media/video/:jobId/cancel
+ *
+ * Só devolve os créditos se o provedor confirmar o cancelamento.
  */
 mediaRouter.post(
   '/video/:jobId/cancel',
@@ -742,12 +807,35 @@ mediaRouter.post(
       });
     }
 
+    let providerCancelled = false;
+
+    try {
+      providerCancelled =
+        await cancelProviderVideoOperation(
+          job.operationName
+        );
+    } catch (error: any) {
+      console.warn(
+        'O provedor recusou o cancelamento do vídeo:',
+        error?.message || error
+      );
+    }
+
+    if (!providerCancelled) {
+      return res.status(409).json({
+        success: false,
+        status: 'processing',
+        message:
+          'O provedor não confirmou o cancelamento. A geração continuará e os créditos não foram devolvidos para evitar prejuízo financeiro.',
+      });
+    }
+
     await releaseVideoReservation({
       userId: job.userId,
       reservationId: job.reservationId,
       jobId,
       operation:
-        'Estorno por cancelamento manual de vídeo',
+        'Estorno após cancelamento confirmado pelo provedor',
     });
 
     const updatedAt = new Date().toISOString();
@@ -756,6 +844,7 @@ mediaRouter.post(
       {
         status: 'cancelled',
         progress: 0,
+        providerCancelled: true,
         cancelledAt: updatedAt,
         updatedAt,
       },
@@ -768,7 +857,7 @@ mediaRouter.post(
       success: true,
       status: 'cancelled',
       message:
-        'Renderização de vídeo cancelada com sucesso.',
+        'Renderização cancelada e créditos devolvidos.',
     });
   }
 );

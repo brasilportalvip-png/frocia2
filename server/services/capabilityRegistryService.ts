@@ -44,6 +44,11 @@ export class CapabilityRegistryService {
       process.env.GEMINI_API_KEY.trim().length > 5
     );
 
+    const mediaGeminiOk = Boolean(
+      process.env.GEMINI_MEDIA_API_KEY &&
+      process.env.GEMINI_MEDIA_API_KEY.trim().length > 5
+    );
+
     const firebaseOk = isFirebaseAdminConfigured();
 
     const mercadoPagoOk =
@@ -53,12 +58,12 @@ export class CapabilityRegistryService {
       SelfEvolutionPolicyEngine.isSelfEvolutionEnabled();
 
     const imageGenerationAvailable =
-      geminiOk &&
+      mediaGeminiOk &&
       process.env.IMAGE_GENERATION_AVAILABLE === 'true' &&
       process.env.IMAGE_GENERATION_ENABLED === 'true';
 
     const videoGenerationAvailable =
-      geminiOk &&
+      mediaGeminiOk &&
       process.env.VIDEO_GENERATION_AVAILABLE === 'true' &&
       process.env.VIDEO_GENERATION_ENABLED === 'true';
 
@@ -72,6 +77,22 @@ export class CapabilityRegistryService {
         process.env.GITHUB_APP_TOKEN
       ) &&
       Boolean(process.env.VERCEL_TOKEN);
+
+    const imageModel =
+      process.env.GEMINI_IMAGE_MODEL ||
+      'gemini-3.1-flash-image';
+
+    const veoLiteModel =
+      process.env.VEO_LITE_MODEL ||
+      'veo-3.1-lite-generate-001';
+
+    const veoFastModel =
+      process.env.VEO_FAST_MODEL ||
+      'veo-3.1-fast-generate-001';
+
+    const veoStandardModel =
+      process.env.VEO_STANDARD_MODEL ||
+      'veo-3.1-generate-001';
 
     const capabilities: CapabilityItem[] = [
       {
@@ -192,27 +213,25 @@ export class CapabilityRegistryService {
           imageGenerationAvailable
             ? 'available'
             : 'disabled',
-        provider: 'Google Imagen',
-        model:
-          process.env.IMAGEN_MODEL ||
-          'imagen-3.0-generate-002',
+        provider: 'Google Gemini — Nano Banana 2',
+        model: imageModel,
         cost: {
           credits: 18,
           description:
-            '18 créditos por imagem concluída',
+            '18 créditos por imagem 2K concluída',
         },
         limits:
-          'Uma imagem por execução; proporções 1:1, 4:3 e 16:9',
+          'Uma imagem 2K por execução; proporções 1:1, 4:3 e 16:9',
         requirements: [
-          'GEMINI_API_KEY',
+          'GEMINI_MEDIA_API_KEY',
           'IMAGE_GENERATION_AVAILABLE=true',
           'IMAGE_GENERATION_ENABLED=true',
         ],
         lastVerifiedAt: now,
         evidence:
           imageGenerationAvailable
-            ? 'Provedor de imagem homologado e ativado explicitamente'
-            : 'Bloqueado até teste real do provedor e armazenamento',
+            ? 'Chave exclusiva e ativação explícita confirmadas'
+            : 'Desativado até homologação real e ativação explícita',
       },
       {
         id: 'video_generation',
@@ -222,27 +241,28 @@ export class CapabilityRegistryService {
           videoGenerationAvailable
             ? 'available'
             : 'disabled',
-        provider: 'Google Veo',
+        provider: 'Google Veo 3.1',
         model:
-          process.env.VEO_MODEL ||
-          'veo-2.0-generate-001',
+          `Lite: ${veoLiteModel}; ` +
+          `Fast: ${veoFastModel}; ` +
+          `Standard: ${veoStandardModel}`,
         cost: {
           credits: 30,
           description:
             'Lite: 30; Fast: 46; Standard: 120 créditos',
         },
         limits:
-          'Job assíncrono real, polling, cancelamento e estorno em falhas',
+          'Vídeos de 4, 6 ou 8 segundos; formatos 16:9 e 9:16; polling e cancelamento confirmado pelo provedor',
         requirements: [
-          'GEMINI_API_KEY',
+          'GEMINI_MEDIA_API_KEY',
           'VIDEO_GENERATION_AVAILABLE=true',
           'VIDEO_GENERATION_ENABLED=true',
         ],
         lastVerifiedAt: now,
         evidence:
           videoGenerationAvailable
-            ? 'Provedor de vídeo homologado e ativado explicitamente'
-            : 'Bloqueado até teste real do Veo e armazenamento',
+            ? 'Chave exclusiva e ativação explícita confirmadas'
+            : 'Desativado até homologação real e ativação explícita',
       },
       {
         id: 'github_vercel_deploy',
@@ -302,7 +322,7 @@ export class CapabilityRegistryService {
     ];
 
     return {
-      version: '1.1.0',
+      version: '1.2.0',
       updatedAt: now,
       capabilities,
     };

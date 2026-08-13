@@ -88,6 +88,29 @@ describe(
     );
 
     it(
+      'uses a dedicated media API key',
+      () => {
+        expect(mediaRoutesSource).toContain(
+          'process.env.GEMINI_MEDIA_API_KEY'
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          'const apiKey = process.env.GEMINI_API_KEY'
+        );
+
+        expect(
+          capabilityRegistrySource
+        ).toContain(
+          'process.env.GEMINI_MEDIA_API_KEY'
+        );
+
+        expect(envExampleSource).toContain(
+          'GEMINI_MEDIA_API_KEY='
+        );
+      }
+    );
+
+    it(
       'never creates fake image or video results',
       () => {
         expect(mediaRoutesSource).not.toContain(
@@ -134,13 +157,87 @@ describe(
         expect(
           capabilityRegistrySource
         ).toContain(
-          '18 créditos por imagem concluída'
+          '18 créditos por imagem 2K concluída'
         );
 
         expect(
           capabilityRegistrySource
         ).toContain(
           'Lite: 30; Fast: 46; Standard: 120 créditos'
+        );
+      }
+    );
+
+    it(
+      'uses current image and video models',
+      () => {
+        expect(mediaRoutesSource).toContain(
+          "'gemini-3.1-flash-image'"
+        );
+
+        expect(mediaRoutesSource).toContain(
+          "'veo-3.1-lite-generate-001'"
+        );
+
+        expect(mediaRoutesSource).toContain(
+          "'veo-3.1-fast-generate-001'"
+        );
+
+        expect(mediaRoutesSource).toContain(
+          "'veo-3.1-generate-001'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "'imagen-3.0-generate-002'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "'veo-2.0-generate-001'"
+        );
+
+        expect(envExampleSource).toContain(
+          'GEMINI_IMAGE_MODEL="gemini-3.1-flash-image"'
+        );
+
+        expect(envExampleSource).toContain(
+          'VEO_LITE_MODEL="veo-3.1-lite-generate-001"'
+        );
+
+        expect(envExampleSource).toContain(
+          'VEO_FAST_MODEL="veo-3.1-fast-generate-001"'
+        );
+
+        expect(envExampleSource).toContain(
+          'VEO_STANDARD_MODEL="veo-3.1-generate-001"'
+        );
+      }
+    );
+
+    it(
+      'uses supported video durations and aspect ratios',
+      () => {
+        expect(mediaRoutesSource).toContain(
+          "type VideoDuration = 4 | 6 | 8"
+        );
+
+        expect(mediaRoutesSource).toContain(
+          "type VideoAspectRatio = '9:16' | '16:9'"
+        );
+
+        expect(mediaRoutesSource).not.toContain(
+          "type VideoAspectRatio = '1:1' | '16:9'"
+        );
+
+        expect(mediaRoutesSource).toContain(
+          'return 4;'
+        );
+
+        expect(mediaRoutesSource).toContain(
+          'return 6;'
+        );
+
+        expect(mediaRoutesSource).toContain(
+          'return 8;'
         );
       }
     );
@@ -183,7 +280,7 @@ describe(
     );
 
     it(
-      'supports video polling, cancellation and credit refunds',
+      'requires provider confirmation before cancellation refund',
       () => {
         expect(mediaServiceSource).toContain(
           'waitForVideo'
@@ -198,62 +295,75 @@ describe(
         );
 
         expect(mediaRoutesSource).toContain(
-          'Estorno por cancelamento manual de vídeo'
+          'cancelProviderVideoOperation'
+        );
+
+        expect(mediaRoutesSource).toContain(
+          'if (!providerCancelled)'
+        );
+
+        expect(mediaRoutesSource).toContain(
+          'Estorno após cancelamento confirmado pelo provedor'
         );
 
         expect(mediaRoutesSource).toContain(
           'Estorno após falha definitiva na geração de vídeo'
         );
+
+        expect(mediaRoutesSource).not.toContain(
+          'Estorno por cancelamento manual de vídeo'
+        );
       }
     );
 
     it(
-  'does not persist image base64 inside Firestore',
-  () => {
-    expect(mediaRoutesSource).toContain(
-      'storageStatus'
-    );
+      'does not persist image base64 inside Firestore',
+      () => {
+        expect(mediaRoutesSource).toContain(
+          'storageStatus'
+        );
 
-    expect(mediaRoutesSource).toContain(
-      'awaiting_persistent_storage'
-    );
+        expect(mediaRoutesSource).toContain(
+          'temporary_browser_delivery'
+        );
 
-    const mediaRecordStart =
-      mediaRoutesSource.indexOf(
-        'const mediaRecord = {'
-      );
+        const mediaRecordStart =
+          mediaRoutesSource.indexOf(
+            'const mediaRecord = {'
+          );
 
-    const firestoreWrite =
-      mediaRoutesSource.indexOf(
-        '.set(mediaRecord)',
-        mediaRecordStart
-      );
+        const firestoreWrite =
+          mediaRoutesSource.indexOf(
+            '.set(mediaRecord)',
+            mediaRecordStart
+          );
 
-    expect(mediaRecordStart).toBeGreaterThan(-1);
-    expect(firestoreWrite).toBeGreaterThan(
-      mediaRecordStart
-    );
+        expect(mediaRecordStart).toBeGreaterThan(-1);
 
-    const persistedRecordSource =
-      mediaRoutesSource.slice(
-        mediaRecordStart,
-        firestoreWrite
-      );
+        expect(firestoreWrite).toBeGreaterThan(
+          mediaRecordStart
+        );
 
-    expect(
-      persistedRecordSource
-    ).not.toContain('url: imageDataUrl');
+        const persistedRecordSource =
+          mediaRoutesSource.slice(
+            mediaRecordStart,
+            firestoreWrite
+          );
 
-    const responseImageUrl =
-      mediaRoutesSource.indexOf(
-        'url: imageDataUrl',
-        firestoreWrite
-      );
+        expect(
+          persistedRecordSource
+        ).not.toContain('imageDataUrl');
+
+        const responseImageUrl =
+          mediaRoutesSource.indexOf(
+            'url: imageDataUrl',
+            firestoreWrite
+          );
 
         expect(responseImageUrl).toBeGreaterThan(
-      firestoreWrite
+          firestoreWrite
+        );
+      }
     );
-  }
-);
   }
 );
