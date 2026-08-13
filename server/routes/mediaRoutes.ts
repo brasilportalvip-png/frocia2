@@ -22,7 +22,7 @@ const VIDEO_COSTS: Record<VideoQuality, number> = {
 };
 
 function getGenAIClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_MEDIA_API_KEY;
 
   if (
     !apiKey ||
@@ -30,7 +30,7 @@ function getGenAIClient(): GoogleGenAI {
     apiKey.includes('MY_')
   ) {
     throw new Error(
-      'GEMINI_API_KEY não configurada no servidor.'
+      'GEMINI_MEDIA_API_KEY não configurada no servidor.'
     );
   }
 
