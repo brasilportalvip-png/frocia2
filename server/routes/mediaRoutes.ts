@@ -631,12 +631,19 @@ if (!operationResponse.ok) {
 const operation = await operationResponse.json() as {
   done?: boolean;
   response?: {
-    generatedVideos?: Array<{
+  generatedVideos?: Array<{
+    video?: {
+      uri?: string;
+    };
+  }>;
+  generateVideoResponse?: {
+    generatedSamples?: Array<{
       video?: {
         uri?: string;
       };
     }>;
   };
+};
   error?: {
     code?: number;
     message?: string;
@@ -656,9 +663,13 @@ if (operation.error) {
 
         if (operation.done) {
           const videoUri =
-            operation.response
-              ?.generatedVideos?.[0]
-              ?.video?.uri;
+  operation.response
+    ?.generateVideoResponse
+    ?.generatedSamples?.[0]
+    ?.video?.uri ||
+  operation.response
+    ?.generatedVideos?.[0]
+    ?.video?.uri;
 
           if (!videoUri) {
             throw new Error(
