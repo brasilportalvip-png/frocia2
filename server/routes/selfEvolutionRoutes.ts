@@ -1,9 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import {
-  adminDb,
-  isFirebaseAdminConfigured
-} from '../lib/firebaseAdmin.js';
+import { adminDb } from '../lib/firebaseAdmin.js';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { requireAdmin } from '../middlewares/requireAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
@@ -38,36 +35,18 @@ const emergencyStopSchema = z.object({
 }).strict();
 
 // GET /api/admin/self-evolution/status
-selfEvolutionRouter.get(
-  '/status',
-  requireAuth,
-  requireAdmin,
-  async (
-    _req: AuthenticatedRequest,
-    res
-  ) => {
-    const [
-      budget,
-      candidates,
-      enabled
-    ] = await Promise.all([
-      BudgetService.getBudgetStatus(),
-      ImprovementPlannerService.getCandidates(),
-      SelfEvolutionPolicyEngine
-        .isSelfEvolutionEnabledPersisted()
-    ]);
+selfEvolutionRouter.get('/status', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res) => {
+  const budget = await BudgetService.getBudgetStatus();
+  const candidates = await ImprovementPlannerService.getCandidates();
 
-    return res.json({
-      enabled,
-      autonomousProductionDeployAllowed:
-        SelfEvolutionPolicyEngine
-          .isAutonomousProductionDeployAllowed(),
-      budget,
-      candidatesCount: candidates.length,
-      timestamp: new Date().toISOString()
-    });
-  }
-);
+  return res.json({
+    enabled: SelfEvolutionPolicyEngine.isSelfEvolutionEnabled(),
+    autonomousProductionDeployAllowed: SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed(),
+    budget,
+    candidatesCount: candidates.length,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // GET /api/admin/self-evolution/candidates
 selfEvolutionRouter.get('/candidates', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res) => {
@@ -167,99 +146,39 @@ selfEvolutionRouter.get('/audit', requireAuth, requireAdmin, async (_req: Authen
 });
 
 // POST /api/admin/self-evolution/emergency-stop
-selfEvolutionRouter.post(
-  '/emergency-stop',
-  requireAuth,
-  requireAdmin,
-  async (
-    req: AuthenticatedRequest,
-    res
-  ) => {
-    const bodyVal =
-      emergencyStopSchema.safeParse(
-        req.body || {}
-      );
+selfEvolutionRouter.post('/emergency-stop', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const bodyVal = emergencyStopSchema.safeParse(req.body || {});
+  const reason = bodyVal.success && bodyVal.data.reason ? bodyVal.data.reason : 'Interrupção de emergência acionada pelo painel administrativo.';
 
-    if (!bodyVal.success) {
-      return res.status(400).json({
-        error:
-          'Corpo da requisição inválido para parada emergencial.'
-      });
-    }
+  const previousState = process.env.SELF_EVOLUTION_ENABLED ?? 'true';
+  process.env.SELF_EVOLUTION_ENABLED = 'false';
+  SelfEvolutionPolicyEngine.setSystemEnabled(false);
 
-    const reason =
-      bodyVal.data.reason ||
-      'Interrupção de emergência acionada pelo painel administrativo.';
-
-    if (!isFirebaseAdminConfigured()) {
-      SelfEvolutionPolicyEngine.setSystemEnabled(
-        false
-      );
-
-      return res.status(503).json({
-        success: false,
-        error:
-          'A instância local foi interrompida, mas a parada global não pôde ser confirmada porque o Firebase Admin não está configurado.'
-      });
-    }
-
+  if (adminDb) {
     try {
-      await adminDb
-        .collection('self_evolution_config')
-        .doc('system')
-        .set(
-          {
-            SELF_EVOLUTION_ENABLED: false,
-            stoppedBy: req.user!.uid,
-            stoppedAt:
-              new Date().toISOString(),
-            reason
-          },
-          { merge: true }
-        );
-    } catch (error) {
-      console.error(
-        'Erro ao salvar estado de parada de emergência no Firestore:',
-        error
-      );
-
-      SelfEvolutionPolicyEngine.setSystemEnabled(
-        false
-      );
-
-      return res.status(503).json({
-        success: false,
-        error:
-          'A instância local foi interrompida, mas não foi possível confirmar a parada global no Firestore.'
-      });
+      await adminDb.collection('self_evolution_config').doc('system').set({
+        SELF_EVOLUTION_ENABLED: false,
+        stoppedBy: req.user!.uid,
+        stoppedAt: new Date().toISOString(),
+        reason,
+      }, { merge: true });
+    } catch (err) {
+      console.error('Erro ao salvar estado de parada de emergência no Firestore:', err);
     }
-
-    SelfEvolutionPolicyEngine.setSystemEnabled(
-      false
-    );
-
-    await AuditService.logEvent({
-      actor: req.user!.uid,
-      action: 'emergency_stop',
-      resource: 'self_evolution_system',
-      previousState: {
-        SELF_EVOLUTION_ENABLED: true
-      },
-      newState: {
-        SELF_EVOLUTION_ENABLED: false
-      },
-      riskLevel: 'R3',
-      result: 'success',
-      reason,
-      correlationId:
-        (req as any).correlationId
-    });
-
-    return res.json({
-      success: true,
-      message:
-        'Parada de emergência persistida no Firestore e aplicada globalmente.'
-    });
   }
-);
+
+  await AuditService.logEvent({
+    actor: req.user!.uid,
+    action: 'emergency_stop',
+    resource: 'self_evolution_system',
+    previousState: { SELF_EVOLUTION_ENABLED: previousState },
+    newState: { SELF_EVOLUTION_ENABLED: 'false' },
+    riskLevel: 'R3',
+    result: 'success',
+    reason,
+    correlationId: (req as any).correlationId,
+  });
+
+  return res.json({ success: true, message: 'Parada de emergência executada. Sistema de autoevolução desativado.' });
+});
 

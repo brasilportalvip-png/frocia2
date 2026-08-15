@@ -30,27 +30,23 @@ export const FEATURE_FLAG_DEFINITIONS = {
     protectedByKillSwitch: true
   },
   image_generation: {
-  name: 'Geração de imagens',
-  category: 'Multimídia',
-  description:
-    'Libera chamadas reais de geração de imagens somente após homologação do provedor.',
-  defaultEnabled:
-    process.env.IMAGE_GENERATION_ENABLED === 'true',
-  available:
-    process.env.IMAGE_GENERATION_AVAILABLE === 'true',
-  protectedByKillSwitch: true
-},
+    name: 'Geração de imagens',
+    category: 'Multimídia',
+    description:
+      'Libera chamadas de geração de imagens quando o provedor correspondente estiver homologado.',
+    defaultEnabled: false,
+    available: false,
+    protectedByKillSwitch: true
+  },
   video_generation: {
-  name: 'Geração de vídeos',
-  category: 'Multimídia',
-  description:
-    'Libera chamadas reais de geração de vídeos somente após homologação do provedor.',
-  defaultEnabled:
-    process.env.VIDEO_GENERATION_ENABLED === 'true',
-  available:
-    process.env.VIDEO_GENERATION_AVAILABLE === 'true',
-  protectedByKillSwitch: true
-}
+    name: 'Geração de vídeos',
+    category: 'Multimídia',
+    description:
+      'Libera chamadas de geração de vídeos quando o provedor correspondente estiver homologado.',
+    defaultEnabled: false,
+    available: false,
+    protectedByKillSwitch: true
+  }
 } as const;
 
 export type FeatureFlagKey =

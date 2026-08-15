@@ -90,13 +90,12 @@ export class AIRouter {
     fallbackModels = Array.from(new Set(fallbackModels)).filter((m) => m !== selectedModel);
 
     const estimatedCredits = CostService.estimateReservationCeiling(
-  selectedModel,
-  prompt,
-  hasImages,
-  requiresTools,
-  effectiveRequiresSearch,
-  mode
-);
+      selectedModel,
+      prompt,
+      hasImages,
+      requiresTools,
+      effectiveRequiresSearch
+    );
 
     return {
       selectedModel,

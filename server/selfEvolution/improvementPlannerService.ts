@@ -1,8 +1,5 @@
 import crypto from 'crypto';
-import {
-  adminDb,
-  isFirebaseAdminConfigured,
-} from '../lib/firebaseAdmin.js';
+import { adminDb } from '../lib/firebaseAdmin.js';
 import { ImprovementCandidate, RiskLevel } from './selfEvolutionTypes.js';
 import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 
@@ -50,7 +47,7 @@ export class ImprovementPlannerService {
       updatedAt: new Date().toISOString(),
     };
 
-    if (isFirebaseAdminConfigured()) {
+    if (adminDb) {
       try {
         await adminDb.collection('self_evolution_candidates').doc(candidate.id).set(candidate);
       } catch (err) {
@@ -63,7 +60,7 @@ export class ImprovementPlannerService {
   }
 
   static async getCandidates(limit: number = 50): Promise<ImprovementCandidate[]> {
-    if (isFirebaseAdminConfigured()) {
+    if (adminDb) {
       try {
         const snapshot = await adminDb
           .collection('self_evolution_candidates')
@@ -83,7 +80,7 @@ export class ImprovementPlannerService {
   }
 
   static async getCandidateById(id: string): Promise<ImprovementCandidate | undefined> {
-    if (isFirebaseAdminConfigured()) {
+    if (adminDb) {
       try {
         const doc = await adminDb.collection('self_evolution_candidates').doc(id).get();
         if (doc.exists) {
@@ -100,7 +97,7 @@ export class ImprovementPlannerService {
   static async updateCandidateState(id: string, newState: ImprovementCandidate['state']): Promise<boolean> {
     const updatedAt = new Date().toISOString();
 
-    if (isFirebaseAdminConfigured()) {
+    if (adminDb) {
       try {
         const docRef = adminDb.collection('self_evolution_candidates').doc(id);
         const doc = await docRef.get();

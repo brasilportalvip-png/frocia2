@@ -1,10 +1,4 @@
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  lazy,
-  Suspense
-} from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { PreviewFrame } from './components/PreviewFrame';
@@ -23,11 +17,6 @@ const IntegrationsPage = lazy(() => import('./components/IntegrationsPage').then
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
 const AuthModal = lazy(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
 const CostEstimationModal = lazy(() => import('./components/CostEstimationModal').then(m => ({ default: m.CostEstimationModal })));
-const MediaGenerationModal = lazy(() =>
-  import('./components/MediaGenerationModal').then((module) => ({
-    default: module.MediaGenerationModal,
-  }))
-);
 import {
   GeneratedSite,
   ChatMessage,
@@ -87,56 +76,25 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-
-const activeRequestControllerRef =
-  useRef<AbortController | null>(null);
-
-const [isRefining, setIsRefining] = useState<boolean>(false);
+  const [isRefining, setIsRefining] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [selectedChatMode, setSelectedChatMode] = useState<ChatMode>('Inteligente');
   const [activeArtifact, setActiveArtifact] = useState<ArtifactData | null>(null);
   const [isArtifactOpen, setIsArtifactOpen] = useState<boolean>(false);
 
- const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
-
-const [mediaModal, setMediaModal] = useState<{
-  isOpen: boolean;
-  mode: 'image' | 'video';
-  initialPrompt: string;
-}>({
-  isOpen: false,
-  mode: 'image',
-  initialPrompt: '',
-});
-
-const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+  const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(false);
   const [conversationsError, setConversationsError] = useState<string | null>(null);
   const [messagesLoading, setMessagesLoading] = useState<boolean>(false);
 
-  const [currentConversationId, setCurrentConversationId] =
-  useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
-const handleStopGeneration = () => {
-  const controller =
-    activeRequestControllerRef.current;
-
-  if (
-    controller &&
-    !controller.signal.aborted
-  ) {
-    controller.abort();
-  }
-
-  activeRequestControllerRef.current = null;
-  setIsGenerating(false);
-};
-
-const fetchConversations = async () => {
+  const fetchConversations = async () => {
     if (!isAuthenticated) return;
     setConversationsLoading(true);
     setConversationsError(null);
@@ -390,149 +348,81 @@ const fetchConversations = async () => {
   }, [isAuthenticated]);
 
   // Generate Site with froc.ia AI
-
-
-
-
-
-
-
-
-
- const handleGenerateSite = async (
-  data: {
-    prompt: string;
-    category: string;
-    colorPalette: string;
-    tone: string;
-    features: string[];
-  },
-  files: UploadedFile[] = []
-) => {
-  if (!isAuthenticated) {
-    setIsAuthOpen(true);
-    setErrorMsg(
-      'É necessário fazer login para gerar projetos com a Froc.IA.'
-    );
-    return;
-  }
-
-  activeRequestControllerRef.current?.abort();
-
-  const requestController =
-    new AbortController();
-
-  activeRequestControllerRef.current =
-    requestController;
-
-  setIsGenerating(true);
-  setErrorMsg(null);
-
-  try {
-    const attachments =
-      toAIAttachmentPayloads(files);
-
-    const result = await apiClient<{
-      siteTitle: string;
-      description: string;
-      html: string;
-      suggestedRefinements: string[];
-    }>('/api/generate-site', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify({
-        ...data,
-        attachments,
-        modelName: selectedModel
-      })
-    });
-
-    const sitePayload = {
-      title:
-        result.siteTitle ||
-        'Novo Projeto Froc.IA',
-      description:
-        result.description ||
-        data.prompt,
-      prompt: data.prompt,
-      category: data.category,
-      colorPalette: data.colorPalette,
-      tone: data.tone,
-      html: result.html,
-      suggestedRefinements:
-        result.suggestedRefinements || []
-    };
-
-    const saveRes = await apiClient<{
-      project: GeneratedSite;
-    }>('/api/projects', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify(sitePayload)
-    });
-
-    const createdProject =
-      saveRes.project;
-
-    setActiveSite(createdProject);
-
-    const updatedList = [
-      createdProject,
-      ...savedSites
-    ];
-
-    saveSitesToStorage(updatedList);
-
-    await refreshProfile();
-
-    setChatMessages([
-      {
-        id: `msg-${Date.now()}`,
-        sender: 'ai',
-        text:
-          `🎉 Seu projeto "${createdProject.title}" foi criado e salvo com sucesso! O que gostaria de personalizar a seguir?`,
-        timestamp: Date.now()
-      }
-    ]);
-  } catch (error: any) {
-    if (
-      error?.code ===
-      'request_aborted'
-    ) {
-      setErrorMsg(null);
+  const handleGenerateSite = async (
+    data: {
+      prompt: string;
+      category: string;
+      colorPalette: string;
+      tone: string;
+      features: string[];
+    },
+    files: UploadedFile[] = []
+  ) => {
+    if (!isAuthenticated) {
+      setIsAuthOpen(true);
+      setErrorMsg('É necessário fazer login para gerar projetos com a Froc.IA.');
       return;
     }
 
-    console.error(error);
+    setIsGenerating(true);
+    setErrorMsg(null);
 
-    setErrorMsg(
-      error?.message ||
-      'Erro ao gerar o projeto. Tente novamente.'
-    );
-  } finally {
-    if (
-      activeRequestControllerRef.current ===
-      requestController
-    ) {
-      activeRequestControllerRef.current =
-        null;
+    try {
+      const attachments = toAIAttachmentPayloads(files);
 
+      const result = await apiClient<{
+        siteTitle: string;
+        description: string;
+        html: string;
+        suggestedRefinements: string[];
+      }>('/api/generate-site', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...data,
+          attachments,
+          modelName: selectedModel
+        })
+      });
+
+      const sitePayload = {
+        title: result.siteTitle || 'Novo Projeto Froc.IA',
+        description: result.description || data.prompt,
+        prompt: data.prompt,
+        category: data.category,
+        colorPalette: data.colorPalette,
+        tone: data.tone,
+        html: result.html,
+        suggestedRefinements: result.suggestedRefinements || []
+      };
+
+      // Save project to backend
+      const saveRes = await apiClient<{ project: GeneratedSite }>('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify(sitePayload)
+      });
+      const createdProject = saveRes.project;
+
+      setActiveSite(createdProject);
+      const updatedList = [createdProject, ...savedSites];
+      saveSitesToStorage(updatedList);
+
+      await refreshProfile();
+
+      setChatMessages([
+        {
+          id: `msg-${Date.now()}`,
+          sender: 'ai',
+          text: `🎉 Seu projeto "${createdProject.title}" foi criado e salvo com sucesso! O que gostaria de personalizar a seguir?`,
+          timestamp: Date.now()
+        }
+      ]);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Erro ao gerar o projeto. Tente novamente.');
+    } finally {
       setIsGenerating(false);
     }
-  }
-};
-
-
-
-
-
-
-
-
-
-
-
-
+  };
 
   // Refine Site with froc.ia AI
   const handleRefineSite = async (instruction: string) => {
@@ -610,256 +500,162 @@ const fetchConversations = async () => {
 
 
 
-  
+  const handleGeneralChat = async (
+    text: string,
+    mode: ChatMode,
+    files: UploadedFile[] = []
+  ) => {
+    const prompt = text.trim();
 
+    if (!prompt) return;
 
-
-
-
-
-const handleGeneralChat = async (
-  text: string,
-  mode: ChatMode,
-  files: UploadedFile[] = []
-) => {
-  const prompt = text.trim();
-
-  if (!prompt) return;
-
-  if (!isAuthenticated) {
-    setIsAuthOpen(true);
-    setErrorMsg(
-      'É necessário fazer login para conversar com a Froc.IA.'
-    );
-    return;
-  }
-
-  if (profileError || !authUser) {
-    setErrorMsg(
-      'Operação bloqueada: Não foi possível carregar seu perfil e saldo do servidor. Tente novamente.'
-    );
-    return;
-  }
-
-  const apiMode =
-    CHAT_MODE_TO_AI_MODE[mode];
-
-  if (!apiMode) {
-    setErrorMsg(
-      `O modo ${mode} ainda não está homologado para produção.`
-    );
-    return;
-  }
-
-  activeRequestControllerRef.current?.abort();
-
-  const requestController =
-    new AbortController();
-
-  activeRequestControllerRef.current =
-    requestController;
-
-  const userMessage: ChatMessage = {
-    id: `user-${Date.now()}`,
-    sender: 'user',
-    text: prompt,
-    timestamp: Date.now()
-  };
-
-  setChatMessages((current) => [
-    ...current,
-    userMessage
-  ]);
-
-  setIsGenerating(true);
-  setErrorMsg(null);
-
-  try {
-    let activeConvId =
-      currentConversationId;
-
-    if (!activeConvId) {
-      const convRes = await apiClient<{
-        conversation: Conversation;
-      }>('/api/conversations', {
-        method: 'POST',
-        signal: requestController.signal,
-        body: JSON.stringify({
-          title:
-            prompt.slice(0, 30) ||
-            'Nova Conversa',
-          mode: apiMode
-        })
-      });
-
-      if (convRes?.conversation?.id) {
-        activeConvId =
-          convRes.conversation.id;
-
-        setCurrentConversationId(
-          activeConvId
-        );
-
-        try {
-          localStorage.setItem(
-            `frocia_active_conv_${currentUser.id}`,
-            activeConvId
-          );
-        } catch {
-          // O histórico continuará salvo no servidor.
-        }
-
-        setConversations((previous) => [
-          convRes.conversation,
-          ...previous
-        ]);
-      } else {
-        throw new Error(
-          'Não foi possível registrar a conversa no servidor. Execução de IA interrompida.'
-        );
-      }
+    if (!isAuthenticated) {
+      setIsAuthOpen(true);
+      setErrorMsg(
+        'É necessário fazer login para conversar com a Froc.IA.'
+      );
+      return;
     }
 
-    const knowledgeBaseIds =
-      Array.from(
-        new Set(
-          files
-            .filter(
-              (file) =>
-                file.source ===
-                  'knowledge-base' &&
-                typeof file.url ===
-                  'string' &&
-                file.url.length > 0
-            )
-            .map(
-              (file) =>
-                file.url as string
-            )
-        )
+    if (profileError || !authUser) {
+      setErrorMsg(
+        'Operação bloqueada: Não foi possível carregar seu perfil e saldo do servidor. Tente novamente.'
       );
+      return;
+    }
 
-    const directFiles = files.filter(
-      (file) =>
-        file.source !== 'knowledge-base'
-    );
+    const apiMode =
+      CHAT_MODE_TO_AI_MODE[mode];
 
-    const attachments =
-      toAIAttachmentPayloads(
-        directFiles
+    if (!apiMode) {
+      setErrorMsg(
+        `O modo ${mode} ainda não está homologado para produção.`
       );
+      return;
+    }
 
-    const stableExecutionKey =
-      typeof crypto !== 'undefined' &&
-      crypto.randomUUID
-        ? crypto.randomUUID()
-        : `exec-${Date.now()}-${Math.random()
-            .toString(36)
-            .substring(2)}`;
-
-    const result = await apiClient<{
-      text: string;
-      modelUsed: string;
-      executionId: string;
-      consumedCredits: number;
-      citations?: Array<{
-        title: string;
-        uri: string;
-        snippet?: string;
-      }>;
-      fallbackUsed: boolean;
-    }>('/api/ai/executions', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify({
-        prompt,
-        mode: apiMode,
-        conversationId: activeConvId,
-        attachments,
-        knowledgeBaseIds,
-        idempotencyKey:
-          stableExecutionKey
-      })
-    });
-
-    const responseText =
-      result.text ||
-      'A IA não retornou conteúdo.';
-
-    const aiMessage: ChatMessage = {
-      id: `ai-${Date.now()}`,
-      sender: 'ai',
-      text: responseText,
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: 'user',
+      text: prompt,
       timestamp: Date.now()
     };
 
     setChatMessages((current) => [
       ...current,
-      aiMessage
+      userMessage
     ]);
+    setIsGenerating(true);
+    setErrorMsg(null);
 
-    await refreshProfile();
-  } catch (error: any) {
-    if (
-      error?.code ===
-      'request_aborted'
-    ) {
-      setErrorMsg(null);
+    try {
+      let activeConvId = currentConversationId;
+
+      if (!activeConvId) {
+        const convRes = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: prompt.slice(0, 30) || 'Nova Conversa',
+            mode: apiMode
+          })
+        });
+
+        if (convRes?.conversation?.id) {
+          activeConvId = convRes.conversation.id;
+          setCurrentConversationId(activeConvId);
+          try {
+            localStorage.setItem(`frocia_active_conv_${currentUser.id}`, activeConvId);
+          } catch (e) {}
+          setConversations((prev) => [convRes.conversation, ...prev]);
+        } else {
+          throw new Error('Não foi possível registrar a conversa no servidor. Execução de IA interrompida.');
+        }
+      }
+
+      const knowledgeBaseIds = Array.from(
+        new Set(
+          files
+            .filter(
+              (file) =>
+                file.source === 'knowledge-base' &&
+                typeof file.url === 'string' &&
+                file.url.length > 0
+            )
+            .map((file) => file.url as string)
+        )
+      );
+      const directFiles = files.filter(
+        (file) => file.source !== 'knowledge-base'
+      );
+      const attachments =
+        toAIAttachmentPayloads(directFiles);
+
+      const stableExecutionKey =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `exec-${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
+      const result = await apiClient<{
+        text: string;
+        modelUsed: string;
+        executionId: string;
+        consumedCredits: number;
+        citations?: Array<{
+          title: string;
+          uri: string;
+          snippet?: string;
+        }>;
+        fallbackUsed: boolean;
+      }>('/api/ai/executions', {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt,
+          mode: apiMode,
+          conversationId: activeConvId,
+          attachments,
+          knowledgeBaseIds,
+          idempotencyKey: stableExecutionKey
+        })
+      });
+
+      const responseText =
+        result.text ||
+        'A IA não retornou conteúdo.';
+
+      const aiMessage: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        sender: 'ai',
+        text: responseText,
+        timestamp: Date.now()
+      };
+
+      setChatMessages((current) => [
+        ...current,
+        aiMessage
+      ]);
+
+      await refreshProfile();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível concluir a solicitação.';
+
+      setErrorMsg(message);
 
       setChatMessages((current) => [
         ...current,
         {
-          id: `ai-cancelled-${Date.now()}`,
+          id: `ai-error-${Date.now()}`,
           sender: 'ai',
-          text:
-            'Geração interrompida pelo usuário.',
+          text: `Não foi possível concluir a solicitação: ${message}`,
           timestamp: Date.now()
         }
       ]);
-
-      return;
-    }
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : 'Não foi possível concluir a solicitação.';
-
-    setErrorMsg(message);
-
-    setChatMessages((current) => [
-      ...current,
-      {
-        id: `ai-error-${Date.now()}`,
-        sender: 'ai',
-        text:
-          `Não foi possível concluir a solicitação: ${message}`,
-        timestamp: Date.now()
-      }
-    ]);
-  } finally {
-    if (
-      activeRequestControllerRef.current ===
-      requestController
-    ) {
-      activeRequestControllerRef.current =
-        null;
-
+    } finally {
       setIsGenerating(false);
     }
-  }
-};
-
-
-
-
-
-
-
-
-
-
-
+  };
 
   const handleSelectTemplate = (template: SiteTemplate) => {
 
@@ -1096,54 +892,33 @@ const handleGeneralChat = async (
              
 
 
-             onSendMessage={async (text, mode, files = []) => {
-  if (mode === 'Criador de projetos') {
-    await handleGenerateSite(
-      {
-        prompt: text,
-        category: 'Software / Tecnologia',
-        colorPalette: 'Cyber Purple & Gold',
-        tone: 'Profissional',
-        features: [
-          'Responsivo',
-          'Formulário',
-          'FAQ',
-        ],
-      },
-      files
-    );
-    return;
-  }
+              onSendMessage={async (text, mode, files = []) => {
+                if (mode === 'Criador de projetos') {
+                  await handleGenerateSite({
+                    prompt: text,
+                    category: 'Software / Tecnologia',
+                    colorPalette: 'Cyber Purple & Gold',
+                    tone: 'Profissional',
+                    features: [
+                      'Responsivo',
+                      'Formulário',
+                      'FAQ'
+                    ]
+                  }, files);
+                  return;
+                }
 
-  if (mode === 'Imagem') {
-    setMediaModal({
-      isOpen: true,
-      mode: 'image',
-      initialPrompt: text,
-    });
-    return;
-  }
-
-  if (mode === 'Vídeo') {
-    setMediaModal({
-      isOpen: true,
-      mode: 'video',
-      initialPrompt: text,
-    });
-    return;
-  }
-
-  await handleGeneralChat(
-    text,
-    mode,
-    files
-  );
-}}
+                await handleGeneralChat(
+                  text,
+                  mode,
+                  files
+                );
+              }}
 
 
 
 
-              onStopGeneration={handleStopGeneration}
+              onStopGeneration={() => setIsGenerating(false)}
               isGenerating={isGenerating}
               selectedMode={selectedChatMode}
               setSelectedMode={setSelectedChatMode}
@@ -1225,26 +1000,8 @@ const handleGeneralChat = async (
       </div>
 
       <Suspense fallback={null}>
-  {/* Image and Video Generation Modal */}
-  {mediaModal.isOpen && (
-    <MediaGenerationModal
-      isOpen={mediaModal.isOpen}
-      mode={mediaModal.mode}
-      initialPrompt={mediaModal.initialPrompt}
-      onClose={() =>
-        setMediaModal((current) => ({
-          ...current,
-          isOpen: false,
-        }))
-      }
-      onCreditsChanged={() => {
-        void refreshProfile();
-      }}
-    />
-  )}
-
-  {/* Cost Confirmation Modal */}
-  {costModal.isOpen && (
+        {/* Cost Confirmation Modal */}
+        {costModal.isOpen && (
           <CostEstimationModal
             isOpen={costModal.isOpen}
             onClose={() => setCostModal({ ...costModal, isOpen: false })}

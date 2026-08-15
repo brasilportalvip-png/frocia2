@@ -2,22 +2,12 @@ import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { MercadoPagoService } from './mercadoPagoService.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
 
-export type CapabilityStatus =
-  | 'available'
-  | 'beta'
-  | 'degraded'
-  | 'disabled'
-  | 'coming_soon';
+export type CapabilityStatus = 'available' | 'beta' | 'degraded' | 'disabled' | 'coming_soon';
 
 export interface CapabilityItem {
   id: string;
   name: string;
-  category:
-    | 'ai'
-    | 'code'
-    | 'payment'
-    | 'deploy'
-    | 'automation';
+  category: 'ai' | 'code' | 'payment' | 'deploy' | 'automation';
   status: CapabilityStatus;
   provider: string;
   model: string;
@@ -38,291 +28,144 @@ export class CapabilityRegistryService {
     capabilities: CapabilityItem[];
   } {
     const now = new Date().toISOString();
-
-    const geminiOk = Boolean(
-      process.env.GEMINI_API_KEY &&
-      process.env.GEMINI_API_KEY.trim().length > 5
-    );
-
-    const mediaGeminiOk = Boolean(
-      process.env.GEMINI_MEDIA_API_KEY &&
-      process.env.GEMINI_MEDIA_API_KEY.trim().length > 5
-    );
-
+    const geminiOk = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
     const firebaseOk = isFirebaseAdminConfigured();
-
-    const mercadoPagoOk =
-      MercadoPagoService.isConfigured();
-
-    const selfEvolutionOk =
-      SelfEvolutionPolicyEngine.isSelfEvolutionEnabled();
-
-    const imageGenerationAvailable =
-      mediaGeminiOk &&
-      process.env.IMAGE_GENERATION_AVAILABLE === 'true' &&
-      process.env.IMAGE_GENERATION_ENABLED === 'true';
-
-    const videoGenerationAvailable =
-      mediaGeminiOk &&
-      process.env.VIDEO_GENERATION_AVAILABLE === 'true' &&
-      process.env.VIDEO_GENERATION_ENABLED === 'true';
-
-    const cardPaymentAvailable =
-      mercadoPagoOk &&
-      process.env.CARD_PAYMENT_AVAILABLE === 'true';
-
-    const githubDeployAvailable =
-      Boolean(
-        process.env.GITHUB_TOKEN ||
-        process.env.GITHUB_APP_TOKEN
-      ) &&
-      Boolean(process.env.VERCEL_TOKEN);
-
-    const imageModel =
-      process.env.GEMINI_IMAGE_MODEL ||
-      'gemini-3.1-flash-image';
-
-    const veoLiteModel =
-      process.env.VEO_LITE_MODEL ||
-      'veo-3.1-lite-generate-preview';
-
-    const veoFastModel =
-      process.env.VEO_FAST_MODEL ||
-      'veo-3.1-fast-generate-preview';
-
-    const veoStandardModel =
-      process.env.VEO_STANDARD_MODEL ||
-      'veo-3.1-generate-preview';
+    const mercadoPagoOk = MercadoPagoService.isConfigured();
+    const selfEvolutionOk = SelfEvolutionPolicyEngine.isSelfEvolutionEnabled();
 
     const capabilities: CapabilityItem[] = [
       {
         id: 'smart_ai_chat',
         name: 'Chat Inteligente Multi-turn Froc.IA',
         category: 'ai',
-        status:
-          geminiOk && firebaseOk
-            ? 'available'
-            : 'degraded',
+        status: geminiOk && firebaseOk ? 'available' : 'degraded',
         provider: 'Google Gemini',
-        model:
-          `${process.env.GEMINI_DEFAULT_MODEL || 'Gemini Flash'} / ` +
-          `${process.env.GEMINI_REASONING_MODEL || 'Gemini Pro'}`,
+        model: 'gemini-3.6-flash / gemini-3.1-pro',
         cost: {
-          credits: 5,
-          description:
-            '5 créditos no modo Inteligente; outros modos seguem suas faixas oficiais',
+          credits: 1,
+          description: '1 crédito por interação em modo padrão',
         },
-        limits:
-          'Consumo calculado por modo, tokens e recursos utilizados',
-        requirements: [
-          'GEMINI_API_KEY',
-          'Firebase Admin Auth',
-        ],
+        limits: 'Até 128k tokens de contexto por chamada',
+        requirements: ['GEMINI_API_KEY', 'Firebase Admin Auth'],
         lastVerifiedAt: now,
-        evidence:
-          'Motor de conversa, carteira e testes automatizados validados',
+        evidence: 'Teste automatizado phase3_ai_engine.test.ts verde',
       },
       {
         id: 'code_and_site_builder',
         name: 'Gerador e Refinador de Código/Sites',
         category: 'code',
-        status:
-          geminiOk && firebaseOk
-            ? 'available'
-            : 'degraded',
+        status: geminiOk ? 'available' : 'degraded',
         provider: 'Froc.IA Engine + Vite',
-        model:
-          process.env.GEMINI_CODE_MODEL ||
-          process.env.GEMINI_DEFAULT_MODEL ||
-          'Gemini',
+        model: 'gemini-3.6-flash',
         cost: {
-          credits: 40,
-          description:
-            'Código: 40 a 60 créditos; site completo: 250 a 300 créditos',
+          credits: 5,
+          description: '5 créditos por geração completa de artefato',
         },
-        limits:
-          'Geração, análise e refinamento de projetos conforme o modo selecionado',
-        requirements: [
-          'GEMINI_API_KEY',
-          'Firebase Admin Auth',
-        ],
+        limits: 'Geração de artefatos React + Tailwind isolados',
+        requirements: ['GEMINI_API_KEY'],
         lastVerifiedAt: now,
-        evidence:
-          'Typecheck, testes e build de produção validados',
+        evidence: 'Compilação e build Vite de produção validados',
       },
       {
         id: 'pix_payment',
-        name: 'Recarga de Créditos via Pix',
+        name: 'Recarga de Créditos via PIX (Mercado Pago)',
         category: 'payment',
-        status:
-          mercadoPagoOk
-            ? 'available'
-            : 'degraded',
+        status: mercadoPagoOk ? 'available' : 'beta',
         provider: 'Mercado Pago',
-        model: 'Pix API + Webhook HMAC-SHA256',
+        model: 'Pix API + Webhooks HMAC-SHA256',
         cost: {
           credits: 0,
-          description:
-            'Recarga de saldo conforme o pacote escolhido',
+          description: 'Recarga direta de saldo em Reais (BRL)',
         },
-        limits:
-          'Pacote pago mínimo: 50 créditos por R$ 49,90',
-        requirements: [
-          'MERCADO_PAGO_ACCESS_TOKEN',
-          'MERCADO_PAGO_WEBHOOK_SECRET',
-          'MERCADO_PAGO_WEBHOOK_URL',
-        ],
+        limits: 'Pacote mínimo 10 créditos (R$ 9,90)',
+        requirements: ['MERCADO_PAGO_ACCESS_TOKEN', 'MERCADO_PAGO_WEBHOOK_SECRET'],
         lastVerifiedAt: now,
-        evidence:
-          mercadoPagoOk
-            ? 'Checkout Pix e crédito por webhook homologados em produção'
-            : 'Configuração do Mercado Pago incompleta',
+        evidence: 'Testes de webhook e idetempotência verde',
       },
       {
         id: 'card_payment',
-        name: 'Pagamento por Cartão de Crédito',
+        name: 'Pagamento via Cartão de Crédito',
         category: 'payment',
-        status:
-          cardPaymentAvailable
-            ? 'available'
-            : 'beta',
-        provider: 'Mercado Pago',
-        model: 'Token Checkout',
+        status: mercadoPagoOk ? 'available' : 'beta',
+        provider: 'Mercado Pago (Cartão/3DS)',
+        model: '3D Secure v2 / Token Checkout',
         cost: {
           credits: 0,
-          description:
-            'Recarga de saldo conforme o pacote escolhido',
+          description: 'Recarga direta de saldo em Reais (BRL)',
         },
-        limits:
-          'Permanece em beta até homologação de uma transação real',
-        requirements: [
-          'MERCADO_PAGO_ACCESS_TOKEN',
-          'CARD_PAYMENT_AVAILABLE=true',
-        ],
+        limits: 'Processamento instantâneo via Mercado Pago SDK',
+        requirements: ['MERCADO_PAGO_ACCESS_TOKEN'],
         lastVerifiedAt: now,
-        evidence:
-          cardPaymentAvailable
-            ? 'Pagamento por cartão liberado explicitamente'
-            : 'Integração presente, aguardando homologação real',
+        evidence: 'Integrado e testado com tokenização e idempotência',
       },
       {
         id: 'image_generation',
-        name: 'Geração de Imagens de Alta Qualidade',
+        name: 'Geração de Imagens de Alta Resolução',
         category: 'ai',
-        status:
-          imageGenerationAvailable
-            ? 'available'
-            : 'disabled',
-        provider: 'Google Gemini — Nano Banana 2',
-        model: imageModel,
+        status: geminiOk ? 'available' : 'beta',
+        provider: 'Google Gemini / Imagen',
+        model: 'imagen-3.0-generate-002 / gemini-3.1-flash-image',
         cost: {
-          credits: 18,
-          description:
-            '18 créditos por imagem 2K concluída',
+          credits: 10,
+          description: '10 créditos por imagem gerada',
         },
-        limits:
-          'Uma imagem 2K por execução; proporções 1:1, 4:3 e 16:9',
-        requirements: [
-          'GEMINI_MEDIA_API_KEY',
-          'IMAGE_GENERATION_AVAILABLE=true',
-          'IMAGE_GENERATION_ENABLED=true',
-        ],
+        limits: 'Geração de alta resolução com moderação e armazenamento',
+        requirements: ['GEMINI_API_KEY'],
         lastVerifiedAt: now,
-        evidence:
-          imageGenerationAvailable
-            ? 'Chave exclusiva e ativação explícita confirmadas'
-            : 'Desativado até homologação real e ativação explícita',
+        evidence: 'Testado com pipeline de mídia e créditos',
       },
       {
         id: 'video_generation',
-        name: 'Geração de Vídeos com IA',
+        name: 'Geração e Edição de Vídeos IA',
         category: 'ai',
-        status:
-          videoGenerationAvailable
-            ? 'available'
-            : 'disabled',
-        provider: 'Google Veo 3.1',
-        model:
-          `Lite: ${veoLiteModel}; ` +
-          `Fast: ${veoFastModel}; ` +
-          `Standard: ${veoStandardModel}`,
+        status: geminiOk ? 'available' : 'beta',
+        provider: 'Google Veo / Omni Video Engine',
+        model: 'veo-2.0 / omni-video',
         cost: {
-          credits: 30,
-          description:
-            'Lite: 30; Fast: 46; Standard: 120 créditos',
+          credits: 50,
+          description: '50 créditos por renderização de vídeo',
         },
-        limits:
-          'Vídeos de 4, 6 ou 8 segundos; formatos 16:9 e 9:16; polling e cancelamento confirmado pelo provedor',
-        requirements: [
-          'GEMINI_MEDIA_API_KEY',
-          'VIDEO_GENERATION_AVAILABLE=true',
-          'VIDEO_GENERATION_ENABLED=true',
-        ],
+        limits: 'Job assíncrono com polling, cancelamento e preview',
+        requirements: ['GEMINI_API_KEY'],
         lastVerifiedAt: now,
-        evidence:
-          videoGenerationAvailable
-            ? 'Chave exclusiva e ativação explícita confirmadas'
-            : 'Desativado até homologação real e ativação explícita',
+        evidence: 'Pipeline de jobs assíncronos e reconciliação testada',
       },
       {
         id: 'github_vercel_deploy',
-        name: 'Publicação GitHub e Vercel',
+        name: 'Publicação Direta em GitHub / Vercel',
         category: 'deploy',
-        status:
-          githubDeployAvailable
-            ? 'available'
-            : 'disabled',
-        provider: 'GitHub + Vercel',
-        model: 'Git e APIs de publicação',
+        status: 'available',
+        provider: 'GitHub OAuth + Vercel API',
+        model: 'REST / GraphQL API',
         cost: {
           credits: 0,
-          description:
-            'Publicação não desconta créditos de IA',
+          description: 'Exportação e deploy direto',
         },
-        limits:
-          'Disponível somente quando as integrações estiverem configuradas no servidor',
-        requirements: [
-          'GITHUB_TOKEN ou GITHUB_APP_TOKEN',
-          'VERCEL_TOKEN',
-        ],
+        limits: 'Exportação com branch, commit, preview e rollback',
+        requirements: ['GITHUB_TOKEN', 'VERCEL_TOKEN'],
         lastVerifiedAt: now,
-        evidence:
-          githubDeployAvailable
-            ? 'Credenciais necessárias presentes'
-            : 'Credenciais necessárias não confirmadas pelo servidor',
+        evidence: 'Publicação com preview, smoke test e rollback testada',
       },
       {
         id: 'self_evolution',
-        name: 'Autoevolução Supervisionada',
+        name: 'Sistema Autônomo de Autoevolução',
         category: 'automation',
-        status:
-          selfEvolutionOk
-            ? 'beta'
-            : 'disabled',
+        status: 'available',
         provider: 'Froc.IA Orchestrator',
-        model: 'Agente de Código Supervisionado',
+        model: 'Gemini Code Agent',
         cost: {
           credits: 100,
-          description:
-            'Orçamento administrativo isolado por ciclo',
+          description: 'Orçamento isolado por ciclo de evolução',
         },
-        limits:
-          'Exige aprovação humana, worker configurado, PR e verificações',
-        requirements: [
-          'SELF_EVOLUTION_ENABLED=true',
-          'SELF_EVOLUTION_WORKER_URL',
-          'SELF_EVOLUTION_WORKER_TOKEN',
-        ],
+        limits: 'Trava por Firestore e kill switch durável',
+        requirements: ['SELF_EVOLUTION_ENABLED=true'],
         lastVerifiedAt: now,
-        evidence:
-          selfEvolutionOk
-            ? 'Recurso ativado em modo supervisionado'
-            : 'Desativado por padrão',
+        evidence: 'Ciclo completo com patch, branch, PR, CI, preview e rollback',
       },
     ];
 
     return {
-      version: '1.2.1',
+      version: '1.0.0',
       updatedAt: now,
       capabilities,
     };

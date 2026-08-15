@@ -80,8 +80,7 @@ export interface ExecutionParams {
   jsonSchema?: Record<string, any>;
   tools?: string[];
   knowledgeBaseIds?: string[];
-modelOverride?: string;
-abortSignal?: AbortSignal;
+  modelOverride?: string;
 }
 
 export interface ExecutionRecord {

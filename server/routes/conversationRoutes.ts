@@ -174,39 +174,19 @@ conversationRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest,
       return res.status(404).json({ error: { code: 'not_found', message: 'Conversa não encontrada.', correlationId: req.correlationId } });
     }
 
-        // Exclui as mensagens em lotes para respeitar
-    // o limite máximo de operações do Firestore.
-    const DELETE_BATCH_SIZE = 400;
+    // Delete associated messages in batch to prevent orphan messages
+    const messagesSnap = await adminDb!
+      .collection('messages')
+      .where('conversationId', '==', id)
+      .where('userId', '==', uid)
+      .get();
 
-    while (true) {
-      const messagesSnap = await adminDb!
-        .collection('messages')
-        .where('conversationId', '==', id)
-        .where('userId', '==', uid)
-        .limit(DELETE_BATCH_SIZE)
-        .get();
-
-      if (messagesSnap.empty) {
-        break;
-      }
-
-      const messageBatch = adminDb!.batch();
-
-      messagesSnap.docs.forEach((document) => {
-        messageBatch.delete(document.ref);
-      });
-
-      await messageBatch.commit();
-
-      if (
-        messagesSnap.size <
-        DELETE_BATCH_SIZE
-      ) {
-        break;
-      }
-    }
-
-    await ref.delete();
+    const batch = adminDb!.batch();
+    messagesSnap.docs.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    batch.delete(ref);
+    await batch.commit();
 
     return res.json({ success: true });
   } catch (err: any) {
@@ -229,18 +209,14 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
       });
     }
 
-        const snap = await adminDb!
+    const snap = await adminDb!
       .collection('messages')
       .where('conversationId', '==', id)
       .where('userId', '==', uid)
-      .orderBy('createdAt', 'desc')
-      .limit(200)
+      .orderBy('createdAt', 'asc')
       .get();
 
-    const messages = snap.docs
-      .slice()
-      .reverse()
-      .map((doc) => {
+    const messages = snap.docs.map((doc) => {
       const d = doc.data();
       return {
         id: doc.id,

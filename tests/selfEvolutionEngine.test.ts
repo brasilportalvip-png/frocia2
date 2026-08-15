@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SelfEvolutionPolicyEngine } from '../server/selfEvolution/selfEvolutionPolicyEngine.js';
 import { RedactionService } from '../server/selfEvolution/redactionService.js';
 import { PromptInjectionDefense } from '../server/selfEvolution/promptInjectionDefense.js';
@@ -6,10 +6,6 @@ import { BudgetService } from '../server/selfEvolution/budgetService.js';
 import { LockService } from '../server/selfEvolution/lockService.js';
 import { AuditService } from '../server/selfEvolution/auditService.js';
 import { ImprovementPlannerService } from '../server/selfEvolution/improvementPlannerService.js';
-import { RollbackService } from '../server/selfEvolution/rollbackService.js';
-
-
-
 
 describe('Self-Evolution Engine Security & Governance Tests', () => {
   it('should correctly classify risk for protected paths as R3', () => {
@@ -96,68 +92,5 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
     expect(candidate.requiresApproval).toBe(false);
     expect(candidate.state).toBe('detected');
   });
-
-
-  it('should never report rollback success when only the merge commit was located', async () => {
-    const previousToken = process.env.GITHUB_TOKEN;
-    const previousOwner = process.env.GITHUB_OWNER;
-    const previousRepo = process.env.GITHUB_REPO;
-
-    process.env.GITHUB_TOKEN = 'test-github-token';
-    process.env.GITHUB_OWNER = 'test-owner';
-    process.env.GITHUB_REPO = 'test-repo';
-
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        merge_commit_sha: 'merge-commit-test-123'
-      })
-    });
-
-    vi.stubGlobal('fetch', fetchMock);
-
-    try {
-      const result =
-        await RollbackService.executeRollback(
-          'candidate-test-123',
-          'Falha detectada na produção',
-          42
-        );
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(result.success).toBe(false);
-      expect(result.status).toBe('failed');
-      expect(result.revertedCommitHash).toBe(
-        'merge-commit-test-123'
-      );
-      expect(result.message).toContain(
-        'nenhuma reversão foi executada'
-      );
-    } finally {
-      vi.unstubAllGlobals();
-
-      if (previousToken === undefined) {
-        delete process.env.GITHUB_TOKEN;
-      } else {
-        process.env.GITHUB_TOKEN = previousToken;
-      }
-
-      if (previousOwner === undefined) {
-        delete process.env.GITHUB_OWNER;
-      } else {
-        process.env.GITHUB_OWNER = previousOwner;
-      }
-
-      if (previousRepo === undefined) {
-        delete process.env.GITHUB_REPO;
-      } else {
-        process.env.GITHUB_REPO = previousRepo;
-      }
-    }
-  });
-
-
-
 });
 

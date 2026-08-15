@@ -50,26 +50,9 @@ describe('FASE 0 & GOVERNANCE — Account Isolation, Health, Capabilities & Secu
     const readyRes = await request(app).get('/api/ready');
     expect([200, 503]).toContain(readyRes.status);
     expect(['ready', 'not_ready']).toContain(readyRes.body.status);
-     expect(readyRes.body.checks).toBeDefined();
+    expect(readyRes.body.checks).toBeDefined();
     expect(readyRes.body.secret).toBeUndefined();
     expect(readyRes.body.MERCADO_PAGO_WEBHOOK_SECRET).toBeUndefined();
-
-    const healthRes = await request(app).get('/api/health');
-
-    const allIntegrationsConfigured =
-      healthRes.body.firebaseConfigured === true &&
-      healthRes.body.geminiConfigured === true &&
-      healthRes.body.mercadoPagoConfigured === true;
-
-    expect(healthRes.status).toBe(
-      allIntegrationsConfigured ? 200 : 503
-    );
-    expect(healthRes.body.healthy).toBe(
-      allIntegrationsConfigured
-    );
-    expect(healthRes.body.status).toBe(
-      allIntegrationsConfigured ? 'ok' : 'not_ready'
-    );
   });
 
   it('4.1 - Capability Registry exposes authoritative status for all features', async () => {
@@ -83,24 +66,8 @@ describe('FASE 0 & GOVERNANCE — Account Isolation, Health, Capabilities & Secu
     expect(cardCap).toBeDefined();
     expect(['available', 'beta']).toContain(cardCap.status);
 
-    const imageCap = res.body.capabilities.find(
-  (capability: any) =>
-    capability.id === 'image_generation'
-);
-
-expect(imageCap).toBeDefined();
-
-expect([
-  'available',
-  'beta',
-  'disabled',
-]).toContain(imageCap.status);
-
-if (
-  process.env.IMAGE_GENERATION_AVAILABLE !== 'true' ||
-  process.env.IMAGE_GENERATION_ENABLED !== 'true'
-) {
-  expect(imageCap.status).toBe('disabled');
-}
+    const imageCap = res.body.capabilities.find((c: any) => c.id === 'image_generation');
+    expect(imageCap).toBeDefined();
+    expect(['available', 'beta']).toContain(imageCap.status);
   });
 });

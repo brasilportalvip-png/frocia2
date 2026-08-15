@@ -23,11 +23,10 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     costProfile: 'Standard Flash',
     pricing: {
       inputTokensPerCredit: 5000,
-      outputTokensPerCredit: 2000,
-      baseCreditCost: 2,
+      outputTokensPerCredit: 1000,
+      baseCreditCost: 5,
     },
   },
-
   [env.GEMINI_FAST_MODEL]: {
     id: env.GEMINI_FAST_MODEL,
     provider: 'google',
@@ -49,11 +48,10 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     costProfile: 'Fast Flash Lite',
     pricing: {
       inputTokensPerCredit: 10000,
-      outputTokensPerCredit: 3000,
-      baseCreditCost: 1,
+      outputTokensPerCredit: 2000,
+      baseCreditCost: 2,
     },
   },
-
   [env.GEMINI_REASONING_MODEL]: {
     id: env.GEMINI_REASONING_MODEL,
     provider: 'google',
@@ -76,10 +74,9 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     pricing: {
       inputTokensPerCredit: 1000,
       outputTokensPerCredit: 250,
-      baseCreditCost: 8,
+      baseCreditCost: 20,
     },
   },
-
   [env.GEMINI_EMBEDDING_MODEL]: {
     id: env.GEMINI_EMBEDDING_MODEL,
     provider: 'google',
@@ -111,8 +108,7 @@ export function getModelDefinition(modelId: string): AIModelDefinition {
   if (DEFAULT_MODELS_CONFIG[modelId]) {
     return DEFAULT_MODELS_CONFIG[modelId];
   }
-
-  // Modelo desconhecido utiliza a mesma cobrança segura do modelo padrão.
+  // Fallback to standard definition
   return {
     id: modelId,
     provider: 'google',
@@ -134,8 +130,8 @@ export function getModelDefinition(modelId: string): AIModelDefinition {
     costProfile: 'Custom Model',
     pricing: {
       inputTokensPerCredit: 5000,
-      outputTokensPerCredit: 2000,
-      baseCreditCost: 2,
+      outputTokensPerCredit: 1000,
+      baseCreditCost: 5,
     },
   };
 }

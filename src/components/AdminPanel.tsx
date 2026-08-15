@@ -115,11 +115,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
       const result = await apiClient('/api/admin/grant-credits', {
         method: 'POST',
         body: JSON.stringify({
-  userEmail: grantEmail,
-  amount: grantAmount,
-  reason: grantReason,
-  idempotencyKey: crypto.randomUUID(),
-}),
+          userEmail: grantEmail,
+          amount: grantAmount,
+          reason: grantReason,
+        }),
       });
 
       setGrantMessage(`✔ ${grantAmount} créditos concedidos para ${grantEmail} com sucesso! (Novo saldo: ${result.availableAfter})`);

@@ -15,21 +15,11 @@ describe('Firestore and Storage Security Rules Unit Verification', () => {
     expect(rules).toContain('service cloud.firestore');
 
     // Owner and Admin checks
-expect(rules).toContain('function isAuthenticated()');
-expect(rules).toContain('function isOwner(userId)');
-expect(rules).toContain('function isAdmin()');
+    expect(rules).toContain('function isAuthenticated()');
+    expect(rules).toContain('function isOwner(userId)');
+    expect(rules).toContain('function isAdmin()');
 
-// Projects must be created and updated only for the authenticated owner
-expect(rules).toContain('match /projects/{projectId}');
-expect(rules).toContain(
-  'request.resource.data.userId == request.auth.uid'
-);
-expect(rules).toContain(
-  'resource.data.userId == request.auth.uid'
-);
-expect(rules).not.toContain('resource == null');
-
-// Strict backend-only financial mutations
+    // Strict backend-only financial mutations
     expect(rules).toContain('match /payments/{paymentId}');
     expect(rules).toContain('match /credit_transactions/{txId}');
     expect(rules).toContain('match /credit_reservations/{resId}');

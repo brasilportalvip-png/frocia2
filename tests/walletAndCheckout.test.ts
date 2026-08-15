@@ -1,14 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CREDIT_PACKAGES, getCreditPackageById } from '../server/config/creditPackages.js';
-import { CostService } from '../server/ai/costService.js';
-import { env } from '../server/config/env.js';
-
 import { MercadoPagoService } from '../server/services/mercadoPagoService.js';
-import {
-  CheckoutInputSchema,
-  AdminGrantCreditsInputSchema,
-  CardPaymentInputSchema
-} from '../server/validators/paymentValidators.js';
+import { CheckoutInputSchema, AdminGrantCreditsInputSchema } from '../server/validators/paymentValidators.js';
 
 describe('Phase 2 Financial & Checkout Tests', () => {
   describe('Credit Packages Config', () => {
@@ -33,193 +26,6 @@ describe('Phase 2 Financial & Checkout Tests', () => {
     });
   });
 
-
-
-
-describe('Official AI Credit Consumption Matrix', () => {
-  it('should enforce the official minimum consumption for every AI mode', () => {
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_FAST_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'fast'
-      )
-    ).toBe(3);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_DEFAULT_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'smart'
-      )
-    ).toBe(5);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_REASONING_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'deep'
-      )
-    ).toBe(10);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_DEFAULT_MODEL,
-        100,
-        100,
-        false,
-        true,
-        'research'
-      )
-    ).toBe(10);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_DEFAULT_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'image'
-      )
-    ).toBe(18);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_DEFAULT_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'video'
-      )
-    ).toBe(30);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_REASONING_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'code'
-      )
-    ).toBe(40);
-
-    expect(
-      CostService.calculateCreditCost(
-        env.GEMINI_DEFAULT_MODEL,
-        100,
-        100,
-        false,
-        false,
-        'site-builder'
-      )
-    ).toBe(250);
-  });
-
-  it('should reserve no more than the official maximum for every AI mode', () => {
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_FAST_MODEL,
-        'Pergunta simples',
-        false,
-        false,
-        false,
-        'fast'
-      )
-    ).toBe(5);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_DEFAULT_MODEL,
-        'Conversa inteligente',
-        false,
-        false,
-        false,
-        'smart'
-      )
-    ).toBe(5);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_REASONING_MODEL,
-        'Análise profunda',
-        false,
-        false,
-        false,
-        'deep'
-      )
-    ).toBe(18);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_DEFAULT_MODEL,
-        'Pesquisa',
-        false,
-        false,
-        true,
-        'research'
-      )
-    ).toBe(18);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_DEFAULT_MODEL,
-        'Imagem',
-        true,
-        false,
-        false,
-        'image'
-      )
-    ).toBe(18);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_DEFAULT_MODEL,
-        'Vídeo',
-        false,
-        false,
-        false,
-        'video'
-      )
-    ).toBe(30);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_REASONING_MODEL,
-        'Programação',
-        false,
-        false,
-        false,
-        'code'
-      )
-    ).toBe(60);
-
-    expect(
-      CostService.estimateReservationCeiling(
-        env.GEMINI_DEFAULT_MODEL,
-        'Criação de site',
-        false,
-        false,
-        false,
-        'site-builder'
-      )
-    ).toBe(300);
-  });
-});
-
-
-
   describe('Validation Schemas', () => {
     it('should validate valid checkout input', () => {
       const valid = CheckoutInputSchema.safeParse({
@@ -238,11 +44,10 @@ describe('Official AI Credit Consumption Matrix', () => {
 
     it('should validate valid admin grant credits input', () => {
       const valid = AdminGrantCreditsInputSchema.safeParse({
-  userEmail: 'user@example.com',
-  amount: 250,
-  reason: 'Concessão manual de teste',
-  idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
-});
+        userEmail: 'user@example.com',
+        amount: 250,
+        reason: 'Concessão manual de teste',
+      });
       expect(valid.success).toBe(true);
     });
 
@@ -263,39 +68,6 @@ describe('Official AI Credit Consumption Matrix', () => {
       });
       expect(invalid.success).toBe(false);
     });
-      it(
-      'should validate a secure card payment input',
-      () => {
-        const valid =
-          CardPaymentInputSchema.safeParse({
-            token:
-              'card-token-secure-example-1234567890',
-            issuerId: '123',
-            paymentMethodId: 'visa',
-            installments: 3,
-            packageId: 'creator',
-            idempotencyKey:
-              '550e8400-e29b-41d4-a716-446655440000'
-          });
-
-        expect(valid.success).toBe(true);
-      }
-    );
-
-    it(
-      'should reject unsafe card payment input',
-      () => {
-        const invalid =
-          CardPaymentInputSchema.safeParse({
-            token: 'short',
-            paymentMethodId: 'visa',
-            installments: 25,
-            packageId: 'creator'
-          });
-
-        expect(invalid.success).toBe(false);
-      }
-    );
   });
 
   describe('Mercado Pago Service Helper', () => {

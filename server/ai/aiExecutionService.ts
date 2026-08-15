@@ -11,8 +11,6 @@ import { ExecutionParams, MessageCitation } from './types/ai.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import { FeatureFlagService } from '../services/featureFlagService.js';
-import { ModelRegistry } from './modelRegistry.js';
-import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
 
 export class AIExecutionService {
   /**
@@ -128,42 +126,6 @@ export class AIExecutionService {
         completedAt: null,
       });
 
-
-
-
-
-
-
-
-const abortSignal =
-  ExecutionAbortRegistry.register(executionId);
-
-const abortFromRequest = () => {
-  ExecutionAbortRegistry.cancel(
-    executionId!,
-    'Conexão encerrada pelo cliente.'
-  );
-};
-
-if (params.abortSignal?.aborted) {
-  abortFromRequest();
-} else {
-  params.abortSignal?.addEventListener(
-    'abort',
-    abortFromRequest,
-    { once: true }
-  );
-}
-
-
-
-
-
-
-
-
-
-
       // 5. Assemble Context
       const assembled = await ContextBuilder.assemble({
         userId,
@@ -184,21 +146,15 @@ if (params.abortSignal?.aborted) {
       const enableSearchGrounding = mode === 'research' || route.reasonCode === 'mode_research_grounded';
 
       // 6. Execute with Primary Model and Fallback
-try {
-  const primaryModelConfig =
-    ModelRegistry.getModel(modelToUse);
-
-  const res = await GeminiProvider.generate({
+      try {
+        const res = await GeminiProvider.generate({
           model: modelToUse,
           systemInstruction: assembled.systemInstruction,
           userMessage: assembled.userMessage,
           attachments,
           responseFormat,
           enableSearchGrounding,
-abortSignal,
-timeoutMs: primaryModelConfig.timeoutMs,
-maxRetries: primaryModelConfig.maxRetries,
-});
+        });
 
         aiResponseText = res.text;
         inputTokens = res.inputTokens;
@@ -218,13 +174,6 @@ maxRetries: primaryModelConfig.maxRetries,
           modelToUse = route.fallbackModels[0];
           fallbackUsed = true;
 
-
-const fallbackModelConfig =
-  ModelRegistry.getModel(modelToUse);
-
-
-
-
           const fbRes = await GeminiProvider.generate({
             model: modelToUse,
             systemInstruction: assembled.systemInstruction,
@@ -232,10 +181,7 @@ const fallbackModelConfig =
             attachments,
             responseFormat,
             enableSearchGrounding,
-abortSignal,
-timeoutMs: fallbackModelConfig.timeoutMs,
-maxRetries: fallbackModelConfig.maxRetries,
-});
+          });
 
           aiResponseText = fbRes.text;
           inputTokens = fbRes.inputTokens;
@@ -252,24 +198,13 @@ maxRetries: fallbackModelConfig.maxRetries,
         }
       }
     } catch (execErr: any) {
-  if (executionId) {
-    ExecutionAbortRegistry.clear(executionId);
-  }
-
-  // Execution failed: Release Reservation!
-      try {
-  await CreditWalletService.releaseReservation({
-    userId,
-    reservationId,
-    operation: `Estorno por falha na execucao de IA (${execErr.message || 'erro desconhecido'})`,
-    idempotencyKey: `rel-${idempotencyKey}`,
-  });
-} catch (releaseError) {
-  console.warn(
-    'A reserva já estava liberada ou o estorno falhou:',
-    releaseError
-  );
-}
+      // Execution failed: Release Reservation!
+      await CreditWalletService.releaseReservation({
+        userId,
+        reservationId,
+        operation: `Estorno por falha na execucao de IA (${execErr.message || 'erro desconhecido'})`,
+        idempotencyKey: `rel-${idempotencyKey}`,
+      });
 
       if (executionId) {
         await ExecutionTraceService.updateTrace(executionId, {
@@ -280,21 +215,14 @@ maxRetries: fallbackModelConfig.maxRetries,
       }
 
       throw execErr;
-   }
+    }
 
-if (executionId) {
-  ExecutionAbortRegistry.clear(executionId);
-}
-
-// 7. Calculate Actual Consumed Credits
-const consumedCredits = CostService.calculateCreditCost(
-  modelToUse,
-  inputTokens,
-  outputTokens,
-  false,
-  mode === 'research',
-  mode
-);
+    // 7. Calculate Actual Consumed Credits
+    const consumedCredits = CostService.calculateCreditCost(
+      modelToUse,
+      inputTokens,
+      outputTokens
+    );
 
     const latencyMs = Date.now() - startTime;
 
