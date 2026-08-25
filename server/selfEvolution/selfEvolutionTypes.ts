@@ -29,6 +29,53 @@ export type CandidateState =
 
 export type RiskLevel = 'R0' | 'R1' | 'R2' | 'R3';
 
+export const COMMITTEE_ROLES = [
+  'product',
+  'architecture',
+  'ux_ui',
+  'frontend',
+  'backend',
+  'data',
+  'security',
+  'qa',
+  'devops',
+  'independent_verifier'
+] as const;
+
+export type CommitteeRole =
+  (typeof COMMITTEE_ROLES)[number];
+
+export type CommitteeVerdict =
+  | 'approved'
+  | 'changes_required'
+  | 'blocked';
+
+export interface CommitteeReview {
+  id: string;
+  candidateId: string;
+  role: CommitteeRole;
+  actorUid: string;
+  commitSha: string;
+  verdict: CommitteeVerdict;
+  summary: string;
+  fileRefs: string[];
+  testRefs: string[];
+  evidenceRefs: string[];
+  risks: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommitteeGateResult {
+  status: 'approved' | 'blocked' | 'incomplete';
+  approved: boolean;
+  reason: string;
+  missingRoles: CommitteeRole[];
+  staleRoles: CommitteeRole[];
+  invalidRoles: CommitteeRole[];
+  conflictingRoles: CommitteeRole[];
+}
+
 export type MemoryType =
   | 'user_preference'
   | 'project_context'
@@ -109,6 +156,7 @@ export interface ImprovementCandidate {
   requiresApproval: boolean;
   state: CandidateState;
   branchName?: string;
+  headCommitSha?: string;
   pullRequestUrl?: string;
   previewUrl?: string;
   createdAt: string;

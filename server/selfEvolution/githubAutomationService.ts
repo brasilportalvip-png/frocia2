@@ -47,6 +47,9 @@ interface GitHubReferenceResponse {
 interface GitHubPullRequestResponse {
   html_url?: string;
   number?: number;
+  head?: {
+    sha?: string;
+  };
 }
 
 export class GithubAutomationService {
@@ -264,6 +267,8 @@ export class GithubAutomationService {
             status: 'success',
             success: true,
             branchName,
+            commitSha:
+              existing.head?.sha,
             pullRequestUrl:
               existing.html_url,
             pullRequestId:

@@ -12,7 +12,8 @@ import {
   ShieldCheck,
   ChevronRight,
   Camera,
-  Check
+  Check,
+  Brain
 } from 'lucide-react';
 import { UserProfile, AppNavigationMode } from '../types';
 
@@ -21,6 +22,7 @@ interface UserDropdownProps {
   setNavMode: (mode: AppNavigationMode) => void;
   onLogout?: () => void;
   onOpenAvatarModal?: () => void;
+  onOpenMemoryManager?: () => void;
   onCloseDropdown: () => void;
 }
 
@@ -29,6 +31,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
   setNavMode,
   onLogout,
   onOpenAvatarModal,
+  onOpenMemoryManager,
   onCloseDropdown,
 }) => {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
@@ -121,6 +124,23 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
         >
           + Comprar mais créditos via Pix
         </button>
+
+        {onOpenMemoryManager && (
+          <button
+            type="button"
+            onClick={() => {
+              onCloseDropdown();
+              onOpenMemoryManager();
+            }}
+            className="flex w-full items-center justify-between rounded-xl p-2.5 text-xs font-semibold text-white/80 hover:bg-white/10 hover:text-white transition-all"
+          >
+            <span className="flex items-center gap-2.5">
+              <Brain className="h-4 w-4 text-emerald-400" />
+              <span>Memórias da Froc.IA</span>
+            </span>
+            <ChevronRight className="h-3.5 w-3.5 text-white/30" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Items */}

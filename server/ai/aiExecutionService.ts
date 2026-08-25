@@ -45,6 +45,7 @@ export class AIExecutionService {
 
     const {
       userId,
+      userDisplayName,
       conversationId,
       projectId,
       mode,
@@ -167,6 +168,7 @@ if (params.abortSignal?.aborted) {
       // 5. Assemble Context
       const assembled = await ContextBuilder.assemble({
         userId,
+        userDisplayName,
         mode,
         prompt: sanitizedPrompt,
         conversationId,

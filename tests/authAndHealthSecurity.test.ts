@@ -1,11 +1,24 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { requireAuth } from '../server/middlewares/requireAuth.js';
+import {
+  normalizeAuthenticatedName,
+  requireAuth
+} from '../server/middlewares/requireAuth.js';
 import { STARTER_TEMPLATES } from '../src/data/templates.js';
 import { adminAuth } from '../server/lib/firebaseAdmin.js';
 
 describe('P0 Security & Contract Verification Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('normaliza o nome autenticado antes de usá-lo na aplicação', () => {
+    expect(normalizeAuthenticatedName('  Flavio   Souza  ')).toBe(
+      'Flavio Souza'
+    );
+    expect(normalizeAuthenticatedName('Flavio\nSouza')).toBe(
+      'FlavioSouza'
+    );
+    expect(normalizeAuthenticatedName(' ')).toBeUndefined();
   });
 
   it('should reject requests with missing authorization header', async () => {

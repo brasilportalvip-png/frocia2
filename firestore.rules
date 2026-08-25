@@ -155,6 +155,20 @@ service cloud.firestore {
   );
 }
 
+    // Project deployment evidence (Backend writes, Owner/Admin reads)
+    match /project_deployments/{deploymentId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Immutable deployment and rollback events (Backend only)
+    match /project_deployment_events/{eventId} {
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if false;
+    }
+
     // Media Generations & Jobs
     match /media_generations/{genId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());

@@ -12,6 +12,7 @@ const createMemorySchema = z.object({
   category: z.string().max(50).default('general'),
   content: z.string().min(1).max(2000),
   userApproved: z.boolean().default(true),
+  validUntil: z.string().datetime().nullable().optional(),
 }).refine((data) => {
   if ((data.scope === 'project' || data.scope === 'conversation') && !data.scopeId) {
     return false;
@@ -29,6 +30,7 @@ const updateMemorySchema = z.object({
   content: z.string().min(1).max(2000).optional(),
   status: z.enum(['active', 'superseded', 'deleted']).optional(),
   userApproved: z.boolean().optional(),
+  validUntil: z.string().datetime().nullable().optional(),
 }).refine((data) => Object.keys(data).length > 0, {
   message: 'Ao menos um campo valido deve ser informado para atualizacao.',
 });
@@ -39,11 +41,15 @@ memoryRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
     const uid = req.user!.uid;
     const { projectId, conversationId } = req.query;
 
-    const memories = await MemoryService.getActiveMemories(
-      uid,
-      projectId as string | undefined,
-      conversationId as string | undefined
-    );
+    const manage = req.query.manage === 'true';
+    const memories = manage
+      ? await MemoryService.listMemories(uid)
+      : await MemoryService.getActiveMemories(
+          uid,
+          projectId as string | undefined,
+          conversationId as string | undefined,
+          typeof req.query.prompt === 'string' ? req.query.prompt : ''
+        );
 
     return res.json({ memories });
   } catch (err: any) {
@@ -73,7 +79,7 @@ memoryRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       });
     }
 
-    const { scope, scopeId, category, content, userApproved } = parsed.data;
+    const { scope, scopeId, category, content, userApproved, validUntil } = parsed.data;
 
     const memoryId = await MemoryService.saveMemory(uid, {
       scope,
@@ -83,13 +89,13 @@ memoryRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       source: 'user_manual',
       confidence: 1.0,
       validFrom: new Date().toISOString(),
-      validUntil: null,
+      validUntil: validUntil || null,
       status: 'active',
       userApproved,
     });
 
     return res.json({
-      memory: { id: memoryId, userId: uid, scope, scopeId: scopeId || null, category, content, status: 'active', createdAt: new Date().toISOString() },
+      memory: { id: memoryId, userId: uid, scope, scopeId: scopeId || null, category, content, status: 'active', userApproved, validUntil: validUntil || null, createdAt: new Date().toISOString() },
     });
   } catch (err: any) {
     return res.status(500).json({

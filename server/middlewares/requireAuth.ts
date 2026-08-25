@@ -2,6 +2,23 @@ import { Response, NextFunction } from 'express';
 import { adminAuth, adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
 
+export function normalizeAuthenticatedName(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value
+    .normalize('NFKC')
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+
+  return normalized.length >= 2
+    ? normalized
+    : undefined;
+}
+
 export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
@@ -38,24 +55,41 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     const uid = decodedToken.uid;
     const email = decodedToken.email || '';
     let role: 'admin' | 'user' = 'user';
+    let profileName: string | undefined;
 
     if (decodedToken.role === 'admin' || decodedToken.admin === true) {
       role = 'admin';
-    } else if (isFirebaseAdminConfigured() && adminDb) {
+    }
+
+    if (isFirebaseAdminConfigured() && adminDb) {
       try {
         const userDoc = await adminDb.collection('users').doc(uid).get();
-        if (userDoc.exists && userDoc.data()?.role === 'admin') {
-          role = 'admin';
+
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+
+          if (userData?.role === 'admin') {
+            role = 'admin';
+          }
+
+          profileName =
+            normalizeAuthenticatedName(userData?.displayName) ||
+            normalizeAuthenticatedName(userData?.name);
         }
       } catch {
         // Non-blocking
       }
     }
 
+    const tokenName = normalizeAuthenticatedName(decodedToken.name);
+    const emailFallback = normalizeAuthenticatedName(
+      email ? email.split('@')[0] : undefined
+    );
+
     req.user = {
       uid,
       email,
-      name: decodedToken.name || (email ? email.split('@')[0] : 'Usuário'),
+      name: profileName || tokenName || emailFallback || 'Usuário',
       picture: decodedToken.picture || '',
       emailVerified: decodedToken.email_verified === true,
       role,
@@ -66,4 +100,3 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     return res.status(401).json({ error: 'Token de autenticação inválido ou expirado.' });
   }
 }
-

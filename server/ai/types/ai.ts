@@ -69,6 +69,7 @@ export interface ToolDeclaration {
 
 export interface ExecutionParams {
   userId: string;
+  userDisplayName?: string;
   conversationId?: string | null;
   projectId?: string | null;
   mode: AIMode;
@@ -80,8 +81,8 @@ export interface ExecutionParams {
   jsonSchema?: Record<string, any>;
   tools?: string[];
   knowledgeBaseIds?: string[];
-modelOverride?: string;
-abortSignal?: AbortSignal;
+  modelOverride?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface ExecutionRecord {

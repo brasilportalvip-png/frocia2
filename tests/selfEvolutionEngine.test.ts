@@ -7,11 +7,191 @@ import { LockService } from '../server/selfEvolution/lockService.js';
 import { AuditService } from '../server/selfEvolution/auditService.js';
 import { ImprovementPlannerService } from '../server/selfEvolution/improvementPlannerService.js';
 import { RollbackService } from '../server/selfEvolution/rollbackService.js';
+import { CommitteeGateService } from '../server/selfEvolution/committeeGateService.js';
+import {
+  COMMITTEE_ROLES,
+  CommitteeReview
+} from '../server/selfEvolution/selfEvolutionTypes.js';
+import { validateRequirementTracker } from '../server/selfEvolution/requirementTrackerValidator.js';
 
 
 
 
 describe('Self-Evolution Engine Security & Governance Tests', () => {
+  const committeeCommit =
+    '0123456789abcdef0123456789abcdef01234567';
+
+  function completeCommittee(): CommitteeReview[] {
+    return COMMITTEE_ROLES.map(
+      (role, index) => ({
+        id: `review-${index}`,
+        candidateId: 'candidate-committee-test',
+        role,
+        actorUid: `actor-${index}`,
+        commitSha: committeeCommit,
+        verdict: 'approved',
+        summary:
+          `Parecer concreto do papel ${role}.`,
+        fileRefs: [
+          `server/reviewed-file-${index}.ts`
+        ],
+        testRefs: [
+          `committee test ${index}`
+        ],
+        evidenceRefs: [
+          `ci://run/${index}`
+        ],
+        risks: [],
+        createdAt:
+          '2026-08-25T00:00:00.000Z',
+        updatedAt:
+          '2026-08-25T00:00:00.000Z'
+      })
+    );
+  }
+
+  it('approves only a complete committee reviewing the same commit', () => {
+    const gate =
+      CommitteeGateService.evaluateReviews({
+        candidateId: 'candidate-committee-test',
+        commitSha: committeeCommit,
+        riskLevel: 'R1',
+        reviews: completeCommittee()
+      });
+
+    expect(gate.approved).toBe(true);
+    expect(gate.status).toBe('approved');
+    expect(gate.missingRoles).toEqual([]);
+  });
+
+  it('blocks committee roles sharing the same identity', () => {
+    const reviews = completeCommittee();
+    reviews[reviews.length - 1].actorUid =
+      reviews[3].actorUid;
+
+    const gate =
+      CommitteeGateService.evaluateReviews({
+        candidateId: 'candidate-committee-test',
+        commitSha: committeeCommit,
+        riskLevel: 'R1',
+        reviews
+      });
+
+    expect(gate.approved).toBe(false);
+    expect(gate.status).toBe('blocked');
+    expect(gate.reason).toContain(
+      'mesma identidade'
+    );
+  });
+
+  it('blocks an approved opinion without concrete evidence', () => {
+    const reviews = completeCommittee();
+    const securityReview = reviews.find(
+      (review) => review.role === 'security'
+    )!;
+    securityReview.evidenceRefs = [];
+    securityReview.fileRefs = [];
+    securityReview.testRefs = [];
+    securityReview.risks = [];
+
+    const gate =
+      CommitteeGateService.evaluateReviews({
+        candidateId: 'candidate-committee-test',
+        commitSha: committeeCommit,
+        riskLevel: 'R1',
+        reviews
+      });
+
+    expect(gate.approved).toBe(false);
+    expect(gate.invalidRoles).toContain(
+      'security'
+    );
+  });
+
+  it('requires a separate human identity for high-risk release', () => {
+    const reviews = completeCommittee();
+    const withoutHuman =
+      CommitteeGateService.evaluateReviews({
+        candidateId: 'candidate-committee-test',
+        commitSha: committeeCommit,
+        riskLevel: 'R3',
+        reviews
+      });
+    const withHuman =
+      CommitteeGateService.evaluateReviews({
+        candidateId: 'candidate-committee-test',
+        commitSha: committeeCommit,
+        riskLevel: 'R3',
+        reviews,
+        humanApproverUid: 'human-admin-separate'
+      });
+
+    expect(withoutHuman.status).toBe(
+      'incomplete'
+    );
+    expect(withHuman.approved).toBe(true);
+  });
+
+  it('rejects VERIFIED in the tracker without independent evidence', () => {
+    const row = {
+      id: 'PM-12-999',
+      section: '12. TRACKER',
+      subsection: 'Proteção',
+      requirement:
+        'Bloquear VERIFIED sem evidência.',
+      risk: 'critical',
+      owner: 'implementer',
+      implementationFiles: [],
+      testFiles: [],
+      testNames: [],
+      command: '',
+      result: '',
+      commit: '',
+      environment: '',
+      evidence: '',
+      independentReviewer: '',
+      residualRisk: 'Não avaliado.',
+      state: 'VERIFIED'
+    };
+
+    expect(() =>
+      validateRequirementTracker(
+        `${JSON.stringify(row)}\n`
+      )
+    ).toThrow(
+      'não pode ser VERIFIED sem implementationFiles'
+    );
+  });
+
+  it('accepts an OPEN tracker row without invented evidence', () => {
+    const row = {
+      id: 'PM-12-998',
+      section: '12. TRACKER',
+      subsection: 'Integridade',
+      requirement:
+        'Manter requisitos não comprovados em OPEN.',
+      risk: 'high',
+      owner: 'evidence-service',
+      implementationFiles: [],
+      testFiles: [],
+      testNames: [],
+      command: '',
+      result: '',
+      commit: '',
+      environment: '',
+      evidence: '',
+      independentReviewer: '',
+      residualRisk: 'Não avaliado.',
+      state: 'OPEN'
+    };
+
+    expect(
+      validateRequirementTracker(
+        `${JSON.stringify(row)}\n`
+      ).requirementCount
+    ).toBe(1);
+  });
+
   it('should correctly classify risk for protected paths as R3', () => {
     const risk = SelfEvolutionPolicyEngine.classifyRisk([
       'server/middlewares/requireAuth.ts',
@@ -160,4 +340,3 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
 
 
 });
-

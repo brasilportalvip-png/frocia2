@@ -485,6 +485,7 @@ aiRouter.post(
       const assembled =
         await ContextBuilder.assemble({
           userId: uid,
+          userDisplayName: req.user!.name,
           mode,
           prompt: sanitizedPrompt,
           conversationId,
@@ -699,6 +700,7 @@ aiRouter.post(
         await AIExecutionService.execute(
           {
             userId: req.user!.uid,
+            userDisplayName: req.user!.name,
             ...parsedRequest,
             abortSignal:
               requestAbortController.signal
