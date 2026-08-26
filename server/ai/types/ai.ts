@@ -175,6 +175,18 @@ export interface ExecutionRecord {
   requestSensitivity?: RequestSensitivity;
   requiresSearch?: boolean;
   toolsRequested?: string[];
+  researchEvidenceStatus?:
+    | 'not_requested'
+    | 'supported'
+    | 'limited'
+    | 'unsupported';
+  ragEvidenceStatus?:
+    | 'not_requested'
+    | 'supported'
+    | 'limited'
+    | 'unsupported';
+  sourceCount?: number;
+  sourceDomains?: string[];
 }
 
 export interface Conversation {
@@ -190,11 +202,14 @@ export interface Conversation {
 }
 
 export interface MessageCitation {
+  index?: number;
   title: string;
   uri: string;
   snippet?: string;
   sourceType: 'web' | 'knowledge_base';
   docId?: string;
+  domain?: string;
+  retrievedAt?: string;
 }
 
 export interface Message {
@@ -260,10 +275,16 @@ export interface KnowledgeChunk {
   knowledgeBaseId: string;
   userId: string;
   text: string;
+  filename?: string;
   page?: number;
   section?: string;
   chunkIndex: number;
   contentHash: string;
+  revisionId?: string;
+  documentVersion?: string;
+  sourceUrl?: string;
+  effectiveAt?: string | null;
+  expiresAt?: string | null;
   embeddingModel: string;
   embeddingVersion: string;
   embedding?: number[];

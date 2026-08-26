@@ -45,6 +45,8 @@ interface KnowledgeDocumentApi {
   status: string;
   chunkCount: number;
   contentHash: string;
+  version?: string;
+  revisionNumber?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -122,6 +124,7 @@ export const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({
   onSelectBaseForChat
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reindexInputRef = useRef<HTMLInputElement>(null);
   const [bases, setBases] = useState<KnowledgeBaseApi[]>([]);
   const [documents, setDocuments] = useState<KnowledgeDocumentApi[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState<string | null>(null);
@@ -133,6 +136,8 @@ export const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [reindexingDocument, setReindexingDocument] =
+    useState<KnowledgeDocumentApi | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -341,6 +346,79 @@ export const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({
     }
   };
 
+  const handleReindexFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    const document = reindexingDocument;
+
+    if (!file || !document || !selectedBase || isUploading) {
+      setReindexingDocument(null);
+      return;
+    }
+
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const mimeType = MIME_BY_EXTENSION[extension];
+
+    if (!mimeType) {
+      setError('Formato não aceito para reindexação.');
+      setReindexingDocument(null);
+      return;
+    }
+
+    if (file.size === 0 || file.size > MAX_DOCUMENT_BYTES) {
+      setError(
+        file.size === 0
+          ? 'O arquivo selecionado está vazio.'
+          : 'O documento excede o limite de 750 KB.'
+      );
+      setReindexingDocument(null);
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const contentText = await file.text();
+      if (!contentText.trim()) {
+        throw new Error('O documento não possui texto indexável.');
+      }
+
+      const response = await apiClient<{
+        document: KnowledgeDocumentApi;
+        duplicate: boolean;
+      }>(
+        `/api/knowledge-bases/${encodeURIComponent(
+          selectedBase.id
+        )}/documents/${encodeURIComponent(document.id)}/reindex`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            filename: file.name,
+            contentText,
+            mimeType
+          })
+        }
+      );
+
+      setNotice(
+        response.duplicate
+          ? 'O arquivo selecionado é idêntico à revisão atual.'
+          : `Nova revisão indexada em ${response.document.chunkCount} parte(s).`
+      );
+      await loadDetails(selectedBase.id);
+      await loadBases(selectedBase.id);
+    } catch (reindexError) {
+      setError(getErrorMessage(reindexError));
+    } finally {
+      setIsUploading(false);
+      setReindexingDocument(null);
+    }
+  };
+
   const handleDeleteBase = async () => {
     if (!selectedBase || deletingId) return;
     if (!window.confirm(`Excluir definitivamente a base “${selectedBase.name}”, todos os documentos e vetores?`)) return;
@@ -445,9 +523,10 @@ export const KnowledgeBaseModal: React.FC<KnowledgeBaseModalProps> = ({
                 {notice && <div className="flex items-start gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-xs text-emerald-200"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><span>{notice}</span></div>}
 
                 <input ref={fileInputRef} type="file" accept=".txt,.md,.csv,.json,.html,.htm,.css,.js,.jsx,.ts,.tsx,.yaml,.yml,.sql,.py,.xml" onChange={(event) => void handleFile(event)} className="hidden" />
+                <input ref={reindexInputRef} type="file" accept=".txt,.md,.csv,.json,.html,.htm,.css,.js,.jsx,.ts,.tsx,.yaml,.yml,.sql,.py,.xml" onChange={(event) => void handleReindexFile(event)} className="hidden" />
                 <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-amber-400/25 bg-amber-400/[0.045] p-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="text-xs font-bold text-white">Adicionar documento textual</div><div className="mt-1 text-[10px] text-white/40">TXT, MD, CSV, JSON, código, YAML, SQL ou XML — máximo 750 KB</div></div><button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="froc-gold-button flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black disabled:opacity-50">{isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{isUploading ? 'Indexando...' : 'Selecionar arquivo'}</button></div>
 
-                <section><div className="mb-2 flex items-center justify-between"><h4 className="text-xs font-black uppercase tracking-wider text-white/55">Documentos indexados</h4>{isLoadingDetails && <Loader2 className="h-4 w-4 animate-spin text-amber-300" />}</div><div className="space-y-2">{!isLoadingDetails && documents.length === 0 ? <div className="rounded-2xl border border-white/10 p-6 text-center text-xs text-white/35">Adicione o primeiro documento para ativar esta base no chat.</div> : documents.map((document) => <div key={document.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-3"><span className="rounded-xl bg-white/5 p-2 text-amber-300"><FileText className="h-4 w-4" /></span><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold">{document.filename}</div><div className="mt-1 text-[10px] text-white/40">{formatBytes(document.sizeBytes)} • {document.chunkCount} parte(s) • {formatDate(document.createdAt)}</div></div><button type="button" onClick={() => void handleDeleteDocument(document)} disabled={Boolean(deletingId)} className="rounded-xl p-2 text-red-300/70 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-40" title="Excluir documento">{deletingId === document.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button></div>)}</div></section>
+                <section><div className="mb-2 flex items-center justify-between"><h4 className="text-xs font-black uppercase tracking-wider text-white/55">Documentos indexados</h4>{isLoadingDetails && <Loader2 className="h-4 w-4 animate-spin text-amber-300" />}</div><div className="space-y-2">{!isLoadingDetails && documents.length === 0 ? <div className="rounded-2xl border border-white/10 p-6 text-center text-xs text-white/35">Adicione o primeiro documento para ativar esta base no chat.</div> : documents.map((document) => <div key={document.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-3"><span className="rounded-xl bg-white/5 p-2 text-amber-300"><FileText className="h-4 w-4" /></span><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold">{document.filename}</div><div className="mt-1 text-[10px] text-white/40">{formatBytes(document.sizeBytes)} • {document.chunkCount} parte(s) • {document.version || 'v1'} • {formatDate(document.createdAt)}</div></div><button type="button" onClick={() => { setReindexingDocument(document); window.setTimeout(() => reindexInputRef.current?.click(), 0); }} disabled={isUploading || Boolean(deletingId)} className="rounded-xl p-2 text-amber-300/70 hover:bg-amber-400/10 hover:text-amber-200 disabled:opacity-40" title="Selecionar uma nova revisão para reindexar"><RefreshCw className={`h-4 w-4 ${reindexingDocument?.id === document.id && isUploading ? 'animate-spin' : ''}`} /></button><button type="button" onClick={() => void handleDeleteDocument(document)} disabled={Boolean(deletingId)} className="rounded-xl p-2 text-red-300/70 hover:bg-red-400/10 hover:text-red-300 disabled:opacity-40" title="Excluir documento">{deletingId === document.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button></div>)}</div></section>
 
                 {onSelectBaseForChat && <button type="button" onClick={handleUseInChat} disabled={isUploading || selectedBase.chunksCount < 1} className="froc-gold-button flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-45"><Sparkles className="h-4 w-4" /> Usar esta base no chat</button>}
               </div>

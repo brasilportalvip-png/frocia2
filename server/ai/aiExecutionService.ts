@@ -7,12 +7,17 @@ import { ExecutionTraceService } from './executionTraceService.js';
 import { ModelHealthService } from './modelHealthService.js';
 import { CostService } from './costService.js';
 import { CitationService } from './citationService.js';
-import { ExecutionParams, MessageCitation } from './types/ai.js';
+import {
+  ExecutionParams,
+  KnowledgeChunk,
+  MessageCitation,
+} from './types/ai.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import { FeatureFlagService } from '../services/featureFlagService.js';
 import { ModelRegistry } from './modelRegistry.js';
 import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
+import { ResearchEvidenceService } from './researchEvidenceService.js';
 
 export class AIExecutionService {
   /**
@@ -28,6 +33,12 @@ export class AIExecutionService {
     consumedCredits: number;
     citations: MessageCitation[];
     fallbackUsed: boolean;
+    evidence: {
+      researchStatus: string;
+      ragStatus: string;
+      sourceCount: number;
+      sourceDomains: string[];
+    };
   }> {
     await FeatureFlagService.assertEnabled('ai_chat');
 
@@ -107,6 +118,10 @@ export class AIExecutionService {
     let outputTokens = 0;
     let startTime = Date.now();
     const citations: MessageCitation[] = [];
+    let ragChunksUsed: KnowledgeChunk[] = [];
+    const enableSearchGrounding =
+      plan.classification.requiresSearch ||
+      route.reasonCode === 'mode_research_grounded';
 
     try {
       // 4. Create Execution Trace
@@ -195,16 +210,14 @@ if (params.abortSignal?.aborted) {
         requestPolicy: plan.systemPolicy,
       });
 
+      ragChunksUsed = assembled.ragChunksUsed;
+
       // Add RAG Citations
       for (const chunk of assembled.ragChunksUsed) {
         citations.push(CitationService.buildRAGCitationPill(chunk));
       }
 
       startTime = Date.now();
-      const enableSearchGrounding =
-        plan.classification.requiresSearch ||
-        route.reasonCode === 'mode_research_grounded';
-
       // 6. Execute with Primary Model and Fallback
 try {
   const primaryModelConfig =
@@ -273,7 +286,7 @@ maxRetries: fallbackModelConfig.maxRetries,
           throw primaryErr;
         }
       }
-    } catch (execErr: any) {
+      } catch (execErr: any) {
   if (executionId) {
     ExecutionAbortRegistry.clear(executionId);
   }
@@ -303,6 +316,34 @@ maxRetries: fallbackModelConfig.maxRetries,
 
       throw execErr;
    }
+
+const mergedCitations = CitationService.mergeCitations(
+  citations.filter(
+    (citation) => citation.sourceType === 'web'
+  ),
+  citations.filter(
+    (citation) =>
+      citation.sourceType === 'knowledge_base'
+  )
+);
+
+citations.splice(
+  0,
+  citations.length,
+  ...mergedCitations
+);
+
+const evidence = ResearchEvidenceService.finalize({
+  text: aiResponseText,
+  citations,
+  requiresSearch: enableSearchGrounding,
+  sensitivity: plan.classification.sensitivity,
+  knowledgeBaseRequested:
+    knowledgeBaseIds.length > 0,
+  ragChunksUsed,
+});
+
+aiResponseText = evidence.text;
 
 if (executionId) {
   ExecutionAbortRegistry.clear(executionId);
@@ -395,6 +436,11 @@ const consumedCredits = CostService.calculateCreditCost(
       consumedCredits,
       latencyMs,
       fallbackUsed,
+      researchEvidenceStatus:
+        evidence.researchStatus,
+      ragEvidenceStatus: evidence.ragStatus,
+      sourceCount: evidence.sourceCount,
+      sourceDomains: evidence.sourceDomains,
       completedAt: new Date().toISOString(),
     });
 
@@ -405,6 +451,12 @@ const consumedCredits = CostService.calculateCreditCost(
       consumedCredits,
       citations,
       fallbackUsed,
+      evidence: {
+        researchStatus: evidence.researchStatus,
+        ragStatus: evidence.ragStatus,
+        sourceCount: evidence.sourceCount,
+        sourceDomains: evidence.sourceDomains,
+      },
     };
   }
 }

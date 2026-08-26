@@ -16,6 +16,28 @@ const MAX_RETRIEVAL_CANDIDATES = 1_000;
 const FIRESTORE_IN_LIMIT = 10;
 const EMBEDDING_CONCURRENCY = 5;
 
+export interface RAGDocumentMetadata {
+  revisionId?: string;
+  version?: string;
+  sourceUrl?: string;
+  effectiveAt?: string | null;
+  expiresAt?: string | null;
+}
+
+export interface RAGDocumentState {
+  userId: string;
+  knowledgeBaseId: string;
+  status: string;
+  activeRevisionId?: string;
+  expiresAt?: string | null;
+}
+
+interface ChunkEligibilityContext {
+  userId: string;
+  selectedBaseIds: Set<string>;
+  now: Date;
+}
+
 function sha256(value: string): string {
   return createHash('sha256')
     .update(value, 'utf8')
@@ -47,6 +69,107 @@ function timestampToIso(value: unknown): string {
   }
 
   return new Date().toISOString();
+}
+
+function optionalTimestampToIso(
+  value: unknown
+): string | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  if (
+    value &&
+    typeof value === 'object' &&
+    'toDate' in value &&
+    typeof (value as { toDate?: unknown }).toDate === 'function'
+  ) {
+    return (value as { toDate: () => Date })
+      .toDate()
+      .toISOString();
+  }
+
+  const parsed = new Date(value as string | number | Date);
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toISOString();
+}
+
+export function isKnowledgeChunkEligible(
+  data: Record<string, unknown>,
+  documentState: RAGDocumentState | undefined,
+  context: ChunkEligibilityContext
+): boolean {
+  if (!documentState) return false;
+
+  const chunkUserId = String(data.userId || '');
+  const chunkBaseId = String(
+    data.knowledgeBaseId || ''
+  );
+  const revisionId = String(data.revisionId || '');
+
+  if (
+    chunkUserId !== context.userId ||
+    documentState.userId !== context.userId ||
+    documentState.knowledgeBaseId !== chunkBaseId ||
+    (context.selectedBaseIds.size > 0 &&
+      !context.selectedBaseIds.has(chunkBaseId)) ||
+    documentState.status !== 'indexed'
+  ) {
+    return false;
+  }
+
+  if (
+    documentState.activeRevisionId &&
+    revisionId !== documentState.activeRevisionId
+  ) {
+    return false;
+  }
+
+  const expiresAt = optionalTimestampToIso(
+    documentState.expiresAt || data.expiresAt
+  );
+
+  return !expiresAt || new Date(expiresAt) > context.now;
+}
+
+async function loadDocumentStates(
+  documentIds: string[]
+): Promise<Map<string, RAGDocumentState>> {
+  const states = new Map<string, RAGDocumentState>();
+
+  for (const group of divideIntoGroups(documentIds, 100)) {
+    if (group.length === 0) continue;
+
+    const snapshots = await adminDb.getAll(
+      ...group.map((documentId) =>
+        adminDb
+          .collection('knowledge_documents')
+          .doc(documentId)
+      )
+    );
+
+    for (const snapshot of snapshots) {
+      if (!snapshot.exists) continue;
+      const data = snapshot.data() || {};
+
+      states.set(snapshot.id, {
+        userId: String(data.userId || ''),
+        knowledgeBaseId: String(
+          data.knowledgeBaseId || ''
+        ),
+        status: String(data.status || ''),
+        activeRevisionId: data.activeRevisionId
+          ? String(data.activeRevisionId)
+          : undefined,
+        expiresAt: optionalTimestampToIso(
+          data.expiresAt
+        ),
+      });
+    }
+  }
+
+  return states;
 }
 
 function splitIntoChunks(text: string): string[] {
@@ -221,8 +344,39 @@ export class RAGService {
         )
       ];
 
+      const documentStates =
+        await loadDocumentStates([
+          ...new Set(
+            [...documentsById.values()]
+              .map((document) =>
+                String(
+                  document.data().documentId || ''
+                )
+              )
+              .filter(Boolean)
+          ),
+        ]);
+      const eligibilityContext = {
+        userId,
+        selectedBaseIds: new Set(selectedBaseIds),
+        now: new Date(),
+      };
+
       for (const document of documentsById.values()) {
         const data = document.data();
+        const documentId = String(
+          data.documentId || ''
+        );
+
+        if (
+          !isKnowledgeChunkEligible(
+            data,
+            documentStates.get(documentId),
+            eligibilityContext
+          )
+        ) {
+          continue;
+        }
 
         const embedding = Array.isArray(data.embedding)
           ? data.embedding
@@ -263,14 +417,15 @@ export class RAGService {
         results.push({
           chunk: {
             id: document.id,
-            documentId: String(
-              data.documentId || ''
-            ),
+            documentId,
             knowledgeBaseId: String(
               data.knowledgeBaseId || ''
             ),
             userId: String(data.userId || ''),
             text: String(data.text || ''),
+            filename: data.filename
+              ? String(data.filename)
+              : undefined,
             page: data.page,
             section: data.section,
             chunkIndex: Number(
@@ -278,6 +433,21 @@ export class RAGService {
             ),
             contentHash: String(
               data.contentHash || ''
+            ),
+            revisionId: data.revisionId
+              ? String(data.revisionId)
+              : undefined,
+            documentVersion: data.documentVersion
+              ? String(data.documentVersion)
+              : undefined,
+            sourceUrl: data.sourceUrl
+              ? String(data.sourceUrl)
+              : undefined,
+            effectiveAt: optionalTimestampToIso(
+              data.effectiveAt
+            ),
+            expiresAt: optionalTimestampToIso(
+              data.expiresAt
             ),
             embeddingModel: String(
               data.embeddingModel ||
@@ -321,7 +491,8 @@ export class RAGService {
     knowledgeBaseId: string,
     documentId: string,
     filename: string,
-    text: string
+    text: string,
+    metadata: RAGDocumentMetadata = {}
   ): Promise<number> {
     const normalizedText = text.trim();
 
@@ -330,6 +501,9 @@ export class RAGService {
     }
 
     const chunks = splitIntoChunks(normalizedText);
+    const revisionId =
+      metadata.revisionId ||
+      sha256(normalizedText).slice(0, 24);
 
     if (chunks.length === 0) {
       return 0;
@@ -369,7 +543,7 @@ export class RAGService {
 
         preparedChunks.push({
           id: sha256(
-            `${userId}:${knowledgeBaseId}:${documentId}:${chunkIndex}`
+            `${userId}:${knowledgeBaseId}:${documentId}:${revisionId}:${chunkIndex}`
           ),
           data: {
             documentId,
@@ -377,6 +551,13 @@ export class RAGService {
             userId,
             filename,
             text: chunkText,
+            revisionId,
+            documentVersion:
+              metadata.version || 'v1',
+            sourceUrl: metadata.sourceUrl || null,
+            effectiveAt:
+              metadata.effectiveAt || null,
+            expiresAt: metadata.expiresAt || null,
             chunkIndex,
             contentHash: sha256(chunkText),
             embeddingModel:
@@ -454,5 +635,60 @@ export class RAGService {
     }
 
     return deleted;
+  }
+
+  static async deleteDocumentRevisionChunks(
+    userId: string,
+    documentId: string,
+    revisionId: string
+  ): Promise<number> {
+    return this.deleteMatchingDocumentChunks(
+      userId,
+      documentId,
+      (data) =>
+        String(data.revisionId || '') === revisionId
+    );
+  }
+
+  static async deleteObsoleteDocumentChunks(
+    userId: string,
+    documentId: string,
+    activeRevisionId: string
+  ): Promise<number> {
+    return this.deleteMatchingDocumentChunks(
+      userId,
+      documentId,
+      (data) =>
+        String(data.revisionId || '') !== activeRevisionId
+    );
+  }
+
+  private static async deleteMatchingDocumentChunks(
+    userId: string,
+    documentId: string,
+    predicate: (data: Record<string, unknown>) => boolean
+  ): Promise<number> {
+    const snapshot = await adminDb
+      .collection('knowledge_chunks')
+      .where('userId', '==', userId)
+      .where('documentId', '==', documentId)
+      .get();
+    const references = snapshot.docs
+      .filter((document) => predicate(document.data()))
+      .map((document) => document.ref);
+
+    for (
+      let offset = 0;
+      offset < references.length;
+      offset += DELETE_BATCH_SIZE
+    ) {
+      const batch = adminDb.batch();
+      references
+        .slice(offset, offset + DELETE_BATCH_SIZE)
+        .forEach((reference) => batch.delete(reference));
+      await batch.commit();
+    }
+
+    return references.length;
   }
 }

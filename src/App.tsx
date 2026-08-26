@@ -763,9 +763,12 @@ const handleGeneralChat = async (
       executionId: string;
       consumedCredits: number;
       citations?: Array<{
+        index?: number;
         title: string;
         uri: string;
         snippet?: string;
+        sourceType?: 'web' | 'knowledge_base';
+        domain?: string;
       }>;
       fallbackUsed: boolean;
     }>('/api/ai/executions', {
@@ -790,7 +793,8 @@ const handleGeneralChat = async (
       id: `ai-${Date.now()}`,
       sender: 'ai',
       text: responseText,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      citations: result.citations ?? []
     };
 
     setChatMessages((current) => [

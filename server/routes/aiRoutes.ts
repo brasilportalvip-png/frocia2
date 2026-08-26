@@ -16,6 +16,7 @@ import { ExecutionTraceService } from '../ai/executionTraceService.js';
 import { ExecutionAbortRegistry } from '../ai/executionAbortRegistry.js';
 import { ModelRegistry } from '../ai/modelRegistry.js';
 import { CitationService } from '../ai/citationService.js';
+import { ResearchEvidenceService } from '../ai/researchEvidenceService.js';
 import { CostService } from '../ai/costService.js';
 import {
   InvalidAIAttachmentError,
@@ -23,7 +24,8 @@ import {
 } from '../validators/aiAttachmentValidators.js';
 import {
   AIMode,
-  ExecutionParams
+  ExecutionParams,
+  MessageCitation
 } from '../ai/types/ai.js';
 import { SafetyService } from '../ai/safetyService.js';
 import {
@@ -532,8 +534,12 @@ aiRouter.post(
     });
 
     let fullOutput = '';
+    let streamCitations: MessageCitation[] = [];
     const startTime = Date.now();
     let isClosed = false;
+    const bufferForEvidence =
+      enableSearchGrounding ||
+      knowledgeBaseIds.length > 0;
 
     res.once('close', () => {
       if (!res.writableEnded) {
@@ -558,6 +564,11 @@ aiRouter.post(
           knowledgeBaseIds,
           requestPolicy: plan.systemPolicy
         });
+
+      streamCitations =
+        assembled.ragChunksUsed.map((chunk) =>
+          CitationService.buildRAGCitationPill(chunk)
+        );
 
       const stream =
         GeminiProvider.generateStream({
@@ -585,9 +596,11 @@ aiRouter.post(
         if (chunk.text) {
           fullOutput += chunk.text;
 
-          sendEvent('token', {
-            text: chunk.text
-          });
+          if (!bufferForEvidence) {
+            sendEvent('token', {
+              text: chunk.text
+            });
+          }
         }
 
         if (chunk.groundingMetadata) {
@@ -596,12 +609,51 @@ aiRouter.post(
               chunk.groundingMetadata
             );
 
-          if (citations.length > 0) {
-            sendEvent('citations', {
-              citations
-            });
-          }
+          streamCitations =
+            CitationService.mergeCitations(
+              citations,
+              streamCitations
+            );
         }
+      }
+
+      streamCitations =
+        CitationService.mergeCitations(
+          streamCitations.filter(
+            (citation) =>
+              citation.sourceType === 'web'
+          ),
+          streamCitations.filter(
+            (citation) =>
+              citation.sourceType ===
+              'knowledge_base'
+          )
+        );
+
+      const evidence =
+        ResearchEvidenceService.finalize({
+          text: fullOutput,
+          citations: streamCitations,
+          requiresSearch: enableSearchGrounding,
+          sensitivity:
+            plan.classification.sensitivity,
+          knowledgeBaseRequested:
+            knowledgeBaseIds.length > 0,
+          ragChunksUsed: assembled.ragChunksUsed
+        });
+
+      fullOutput = evidence.text;
+
+      if (bufferForEvidence) {
+        sendEvent('token', {
+          text: fullOutput
+        });
+      }
+
+      if (streamCitations.length > 0) {
+        sendEvent('citations', {
+          citations: streamCitations
+        });
       }
 
       const inputTokens =
@@ -644,6 +696,13 @@ aiRouter.post(
           inputTokens,
           outputTokens,
           consumedCredits,
+          researchEvidenceStatus:
+            evidence.researchStatus,
+          ragEvidenceStatus:
+            evidence.ragStatus,
+          sourceCount: evidence.sourceCount,
+          sourceDomains:
+            evidence.sourceDomains,
           latencyMs:
             Date.now() - startTime,
           completedAt:
@@ -659,7 +718,15 @@ aiRouter.post(
         executionId,
         consumedCredits,
         totalTokens:
-          inputTokens + outputTokens
+          inputTokens + outputTokens,
+        evidence: {
+          researchStatus:
+            evidence.researchStatus,
+          ragStatus: evidence.ragStatus,
+          sourceCount: evidence.sourceCount,
+          sourceDomains:
+            evidence.sourceDomains
+        }
       });
 
       res.end();

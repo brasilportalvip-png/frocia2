@@ -268,13 +268,27 @@ export class ContextBuilder {
           .join('\n');
     }
 
+    const selectedKnowledgeBaseIds = [
+      ...new Set(
+        (knowledgeBaseIds || [])
+          .filter(
+            (id): id is string =>
+              typeof id === 'string' &&
+              id.trim().length > 0
+          )
+          .map((id) => id.trim())
+      ),
+    ];
+
     const ragResults =
-      await RAGService.retrieveRelevantChunks(
-        userId,
-        prompt,
-        knowledgeBaseIds,
-        3
-      );
+      selectedKnowledgeBaseIds.length > 0
+        ? await RAGService.retrieveRelevantChunks(
+            userId,
+            prompt,
+            selectedKnowledgeBaseIds,
+            3
+          )
+        : [];
 
     const safeRagResults = ragResults
       .map((result) => {
@@ -321,6 +335,12 @@ export class ContextBuilder {
               `</documento_nao_confiavel>`
           )
           .join('\n\n');
+    } else if (selectedKnowledgeBaseIds.length > 0) {
+      ragSection =
+        '\n\n[STATUS DA BASE DE CONHECIMENTO]\n' +
+        '- Nenhum trecho relevante foi encontrado nas bases selecionadas.\n' +
+        '- Não use conhecimento geral como se tivesse vindo dos documentos.\n' +
+        '- Informe claramente que a resposta não está sustentada pela base.';
     }
 
     const fullSystemInstruction =
