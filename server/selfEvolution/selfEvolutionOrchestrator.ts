@@ -10,6 +10,7 @@ import { PreviewDeploymentService } from './previewDeploymentService.js';
 import { ReleaseDecisionService } from './releaseDecisionService.js';
 import { RollbackService } from './rollbackService.js';
 import { CandidateState } from './selfEvolutionTypes.js';
+import { CommitteeGateService } from './committeeGateService.js';
 
 export class SelfEvolutionOrchestrator {
   static async processCandidateLifecycle(candidateId: string, actor: string = 'system'): Promise<{
@@ -100,7 +101,16 @@ export class SelfEvolutionOrchestrator {
         }
 
         candidate.branchName = pr.branchName;
+        candidate.headCommitSha = pr.commitSha;
         candidate.pullRequestUrl = pr.pullRequestUrl;
+        await ImprovementPlannerService.updateCandidateMetadata(
+          candidateId,
+          {
+            branchName: pr.branchName,
+            headCommitSha: pr.commitSha,
+            pullRequestUrl: pr.pullRequestUrl
+          }
+        );
         await ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
 
         // CI Check
@@ -129,6 +139,12 @@ export class SelfEvolutionOrchestrator {
         }
 
         candidate.previewUrl = preview.previewUrl;
+        await ImprovementPlannerService.updateCandidateMetadata(
+          candidateId,
+          {
+            previewUrl: preview.previewUrl
+          }
+        );
         await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_deployed');
 
         if (candidate.riskLevel === 'R2' || candidate.riskLevel === 'R3') {
@@ -153,7 +169,17 @@ export class SelfEvolutionOrchestrator {
     const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) return { success: false, message: 'Candidato não encontrado.' };
 
-    const decision = ReleaseDecisionService.canReleaseToProduction(candidate, true);
+    const committeeGate =
+      await CommitteeGateService.evaluateCandidate(
+        candidate,
+        adminUid
+      );
+
+    const decision = ReleaseDecisionService.canReleaseToProduction(
+      candidate,
+      true,
+      committeeGate
+    );
     if (!decision.canRelease) {
       return { success: false, message: decision.reason };
     }
@@ -232,4 +258,3 @@ export class SelfEvolutionOrchestrator {
     };
   }
 }
-

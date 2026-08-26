@@ -24,6 +24,9 @@ jobs:
       - name: Clean Install Dependencies
         run: npm ci
 
+      - name: Validate Prompt Master Tracker
+        run: npm run validate:tracker
+
       - name: TypeScript Linting
         run: npm run lint
 

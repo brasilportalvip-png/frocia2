@@ -1,10 +1,25 @@
-import { ImprovementCandidate } from './selfEvolutionTypes.js';
+import {
+  CommitteeGateResult,
+  ImprovementCandidate
+} from './selfEvolutionTypes.js';
 
 export class ReleaseDecisionService {
-  static canReleaseToProduction(candidate: ImprovementCandidate, isHumanApproved: boolean): {
+  static canReleaseToProduction(
+    candidate: ImprovementCandidate,
+    isHumanApproved: boolean,
+    committeeGate: CommitteeGateResult
+  ): {
     canRelease: boolean;
     reason: string;
   } {
+    if (!committeeGate.approved) {
+      return {
+        canRelease: false,
+        reason:
+          `Comitê independente não aprovou: ${committeeGate.reason}`
+      };
+    }
+
     if (candidate.riskLevel === 'R3' || candidate.riskLevel === 'R2') {
       if (!isHumanApproved) {
         return {

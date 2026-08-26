@@ -13,6 +13,13 @@ import { SelfEvolutionOrchestrator } from '../selfEvolution/selfEvolutionOrchest
 import { EvaluationEngine } from '../selfEvolution/evaluationEngine.js';
 import { BudgetService } from '../selfEvolution/budgetService.js';
 import { AuditService } from '../selfEvolution/auditService.js';
+import {
+  CommitteeGateService,
+  CommitteePersistenceUnavailableError
+} from '../selfEvolution/committeeGateService.js';
+import {
+  COMMITTEE_ROLES
+} from '../selfEvolution/selfEvolutionTypes.js';
 
 export const selfEvolutionRouter = Router();
 
@@ -35,6 +42,45 @@ const rollbackBodySchema = z.object({
 
 const emergencyStopSchema = z.object({
   reason: z.string().min(3).max(500).optional(),
+}).strict();
+
+const committeeReferenceSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) => !/[\x00-\x1F\x7F]/.test(value),
+    'Referência contém caractere de controle.'
+  );
+
+const committeeReviewSchema = z.object({
+  role: z.enum(COMMITTEE_ROLES),
+  commitSha: z
+    .string()
+    .regex(/^[a-f0-9]{7,40}$/i),
+  verdict: z.enum([
+    'approved',
+    'changes_required',
+    'blocked'
+  ]),
+  summary: z.string().trim().min(10).max(2000),
+  fileRefs: z
+    .array(committeeReferenceSchema)
+    .max(100)
+    .default([]),
+  testRefs: z
+    .array(committeeReferenceSchema)
+    .max(100)
+    .default([]),
+  evidenceRefs: z
+    .array(committeeReferenceSchema)
+    .min(1)
+    .max(100),
+  risks: z
+    .array(committeeReferenceSchema)
+    .max(100)
+    .default([])
 }).strict();
 
 // GET /api/admin/self-evolution/status
@@ -88,6 +134,141 @@ selfEvolutionRouter.get('/candidates/:id', requireAuth, requireAdmin, async (req
   }
   return res.json({ candidate });
 });
+
+// POST /api/admin/self-evolution/committee/:id/reviews
+selfEvolutionRouter.post(
+  '/committee/:id/reviews',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const paramVal = candidateIdSchema.safeParse(
+      req.params
+    );
+    const bodyVal = committeeReviewSchema.safeParse(
+      req.body
+    );
+
+    if (!paramVal.success || !bodyVal.success) {
+      return res.status(400).json({
+        error:
+          'Parecer do comitê inválido.',
+        details: bodyVal.success
+          ? []
+          : bodyVal.error.issues.map(
+              (issue) => issue.message
+            )
+      });
+    }
+
+    const candidate =
+      await ImprovementPlannerService
+        .getCandidateById(
+          paramVal.data.id
+        );
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: 'Candidato não encontrado.'
+      });
+    }
+
+    if (
+      !candidate.headCommitSha ||
+      candidate.headCommitSha !==
+        bodyVal.data.commitSha
+    ) {
+      return res.status(409).json({
+        error:
+          'O parecer não corresponde ao commit atual do candidato.'
+      });
+    }
+
+    try {
+      const review =
+        await CommitteeGateService.submitReview({
+          candidateId: candidate.id,
+          actorUid: req.user!.uid,
+          ...bodyVal.data
+        });
+
+      await AuditService.logEvent({
+        actor: req.user!.uid,
+        action: 'committee_review_submitted',
+        resource: candidate.id,
+        newState: {
+          role: review.role,
+          verdict: review.verdict,
+          commitSha: review.commitSha
+        },
+        riskLevel: candidate.riskLevel,
+        result: 'success',
+        correlationId:
+          (req as any).correlationId,
+        commitHash: review.commitSha,
+        prUrl: candidate.pullRequestUrl
+      });
+
+      return res.status(201).json({ review });
+    } catch (error) {
+      if (
+        error instanceof
+        CommitteePersistenceUnavailableError
+      ) {
+        return res.status(503).json({
+          error: error.message
+        });
+      }
+
+      console.error(
+        'Erro ao persistir parecer do comitê:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          'Não foi possível persistir o parecer do comitê.'
+      });
+    }
+  }
+);
+
+// GET /api/admin/self-evolution/committee/:id/gate
+selfEvolutionRouter.get(
+  '/committee/:id/gate',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const paramVal = candidateIdSchema.safeParse(
+      req.params
+    );
+
+    if (!paramVal.success) {
+      return res.status(400).json({
+        error: 'ID de candidato inválido.'
+      });
+    }
+
+    const candidate =
+      await ImprovementPlannerService
+        .getCandidateById(
+          paramVal.data.id
+        );
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: 'Candidato não encontrado.'
+      });
+    }
+
+    const gate =
+      await CommitteeGateService
+        .evaluateCandidate(candidate);
+
+    return res.status(
+      gate.status === 'approved' ? 200 : 409
+    ).json({ gate });
+  }
+);
 
 // POST /api/admin/self-evolution/candidates/:id/approve-work
 selfEvolutionRouter.post('/candidates/:id/approve-work', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -262,4 +443,3 @@ selfEvolutionRouter.post(
     });
   }
 );
-

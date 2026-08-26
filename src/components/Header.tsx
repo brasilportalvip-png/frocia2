@@ -30,6 +30,7 @@ import {
 import { UserDropdown } from './UserDropdown';
 import { AvatarUploadModal } from './AvatarUploadModal';
 import { ModelSelectorModal } from './ModelSelectorModal';
+import { MemoryManagerModal } from './MemoryManagerModal';
 
 const FROC_LOGO_URL =
   'https://portalvipbrasil.com.br/wp-content/uploads/2026/08/frocialogo-removebg-preview.png';
@@ -77,6 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
+  const [isMemoryManagerOpen, setIsMemoryManagerOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -379,6 +381,7 @@ export const Header: React.FC<HeaderProps> = ({
                 setNavMode={setNavMode}
                 onLogout={onLogout}
                 onOpenAvatarModal={() => setIsAvatarModalOpen(true)}
+                onOpenMemoryManager={() => setIsMemoryManagerOpen(true)}
                 onCloseDropdown={() => setIsUserDropdownOpen(false)}
               />
             )}
@@ -408,6 +411,11 @@ export const Header: React.FC<HeaderProps> = ({
         onClose={() => setIsModelModalOpen(false)}
         selectedModel={selectedModel}
         onSelectModel={setSelectedModel}
+      />
+
+      <MemoryManagerModal
+        isOpen={isMemoryManagerOpen}
+        onClose={() => setIsMemoryManagerOpen(false)}
       />
     </header>
   );

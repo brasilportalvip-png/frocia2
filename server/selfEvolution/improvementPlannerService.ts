@@ -119,5 +119,56 @@ export class ImprovementPlannerService {
     candidate.updatedAt = updatedAt;
     return true;
   }
-}
 
+  static async updateCandidateMetadata(
+    id: string,
+    metadata: Pick<
+      ImprovementCandidate,
+      | 'branchName'
+      | 'headCommitSha'
+      | 'pullRequestUrl'
+      | 'previewUrl'
+    >
+  ): Promise<boolean> {
+    const cleaned = Object.fromEntries(
+      Object.entries(metadata).filter(
+        ([, value]) => value !== undefined
+      )
+    );
+    const updatedAt = new Date().toISOString();
+
+    if (isFirebaseAdminConfigured()) {
+      try {
+        const docRef = adminDb
+          .collection('self_evolution_candidates')
+          .doc(id);
+        const doc = await docRef.get();
+
+        if (doc.exists) {
+          await docRef.update({
+            ...cleaned,
+            updatedAt
+          });
+          return true;
+        }
+      } catch (err) {
+        console.error(
+          'Erro ao atualizar metadados do candidato:',
+          err
+        );
+      }
+    }
+
+    const candidate =
+      this.inMemoryCandidates.find(
+        (item) => item.id === id
+      );
+
+    if (!candidate) {
+      return false;
+    }
+
+    Object.assign(candidate, cleaned, { updatedAt });
+    return true;
+  }
+}

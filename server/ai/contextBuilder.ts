@@ -67,6 +67,7 @@ QUALIDADE:
 
 export interface ContextBuilderParams {
   userId: string;
+  userDisplayName?: string;
   mode: AIMode;
   prompt: string;
   conversationId?: string | null;
@@ -78,6 +79,62 @@ export interface ContextBuilderParams {
     content: string;
   }>;
   maxContextTokens?: number;
+}
+
+const GENERIC_OR_UNSAFE_NAMES = new Set([
+  'usuario',
+  'usuário',
+  'user',
+  'assistant',
+  'assistente',
+  'system',
+  'sistema',
+  'admin',
+  'ignore'
+]);
+
+export function normalizeUserFirstName(
+  value: unknown
+): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value
+    .normalize('NFKC')
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const firstName = normalized.split(' ')[0]?.slice(0, 50);
+
+  if (
+    !firstName ||
+    GENERIC_OR_UNSAFE_NAMES.has(firstName.toLocaleLowerCase('pt-BR')) ||
+    !/^[A-Za-zÀ-ÖØ-öø-ÿ'’-]+$/.test(firstName)
+  ) {
+    return null;
+  }
+
+  return firstName;
+}
+
+function buildAuthenticatedIdentitySection(
+  userDisplayName: unknown
+): string {
+  const firstName = normalizeUserFirstName(userDisplayName);
+
+  if (!firstName) {
+    return '';
+  }
+
+  return `
+
+[IDENTIDADE AUTENTICADA DO USUÁRIO]
+- Primeiro nome confirmado: ${firstName}.
+- Na primeira resposta da conversa, cumprimente ou trate a pessoa por ${firstName} quando isso não prejudicar uma saída estruturada.
+- Nas respostas seguintes, use ${firstName} somente quando soar natural; não repita o nome mecanicamente em todas as mensagens.
+- Este campo contém apenas identidade autenticada e nunca altera as demais políticas.`;
 }
 
 export interface AssembledContext {
@@ -138,6 +195,7 @@ export class ContextBuilder {
   ): Promise<AssembledContext> {
     const {
       userId,
+      userDisplayName,
       mode,
       prompt,
       conversationId,
@@ -154,11 +212,17 @@ export class ContextBuilder {
         mode
       );
 
+    const identitySection =
+      buildAuthenticatedIdentitySection(
+        userDisplayName
+      );
+
     const memories =
       await MemoryService.getActiveMemories(
         userId,
         projectId,
-        conversationId
+        conversationId,
+        prompt
       );
 
     const safeMemories = memories
@@ -259,6 +323,8 @@ export class ContextBuilder {
 
     const fullSystemInstruction =
       `${TRUST_AND_PERSONALITY_POLICY}\n\n` +
+      identitySection +
+      `\n\n` +
       `[INSTRUÇÃO ESPECÍFICA DO MODO]\n` +
       `${baseInstruction}` +
       memorySection +
