@@ -19,6 +19,7 @@
     "test:ai": "vitest run tests/phase3_ai_engine.test.ts",
     "test:foundation": "vitest run tests/aiRequestOrchestrator.test.ts",
     "test:tools": "vitest run tests/toolExecutionService.test.ts",
+    "test:research-rag": "vitest run tests/researchAndRagEvidence.test.ts",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "tsx scripts/validate-requirement-tracker.ts"
   },

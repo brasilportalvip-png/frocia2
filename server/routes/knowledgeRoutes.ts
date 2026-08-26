@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { RAGService } from '../ai/ragService.js';
+import { normalizePublicHttpsUrl } from '../ai/citationService.js';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { createRateLimiter } from '../middlewares/rateLimiter.js';
@@ -27,6 +28,21 @@ const CreateKnowledgeBaseSchema = z
     description: z.string().trim().max(500).default('')
   })
   .strict();
+
+const DocumentMetadataSchema = {
+  version: z.string().trim().min(1).max(40).optional(),
+  sourceUrl: z
+    .string()
+    .trim()
+    .max(2_000)
+    .refine(
+      (value) => normalizePublicHttpsUrl(value) !== null,
+      'A URL de origem deve ser HTTPS pública.'
+    )
+    .optional(),
+  effectiveAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: z.string().datetime({ offset: true }).optional()
+};
 
 const AddKnowledgeDocumentSchema = z
   .object({
@@ -58,9 +74,24 @@ const AddKnowledgeDocumentSchema = z
         'application/json',
         'application/xml'
       ])
-      .default('text/plain')
+      .default('text/plain'),
+    ...DocumentMetadataSchema
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.effectiveAt &&
+      value.expiresAt &&
+      new Date(value.expiresAt) <= new Date(value.effectiveAt)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['expiresAt'],
+        message:
+          'A expiração deve ser posterior ao início de vigência.'
+      });
+    }
+  });
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -267,6 +298,15 @@ knowledgeRouter.get(
             status: String(data.status || 'unknown'),
             chunkCount: Number(data.chunkCount || 0),
             contentHash: String(data.contentHash || ''),
+            version: String(data.version || 'v1'),
+            revisionNumber: Number(data.revisionNumber || 1),
+            sourceUrl: data.sourceUrl ? String(data.sourceUrl) : null,
+            effectiveAt: data.effectiveAt
+              ? timestampToIso(data.effectiveAt)
+              : null,
+            expiresAt: data.expiresAt
+              ? timestampToIso(data.expiresAt)
+              : null,
             createdAt: timestampToIso(data.createdAt),
             updatedAt: timestampToIso(data.updatedAt)
           };
@@ -359,6 +399,36 @@ knowledgeRouter.post(
       }
 
       const contentHash = sha256(parsed.data.contentText);
+      const revisionId = contentHash.slice(0, 24);
+      const duplicateSnapshot = await adminDb
+        .collection('knowledge_documents')
+        .where('knowledgeBaseId', '==', knowledgeBaseId)
+        .where('userId', '==', uid)
+        .limit(MAX_DOCUMENTS_PER_BASE)
+        .get();
+      const duplicateDocument = duplicateSnapshot.docs.find(
+        (document) =>
+          String(document.data().contentHash || '') === contentHash &&
+          document.data().status === 'indexed'
+      );
+
+      if (duplicateDocument) {
+        const data = duplicateDocument.data();
+        return res.status(200).json({
+          document: {
+            id: duplicateDocument.id,
+            filename: String(data.filename || parsed.data.filename),
+            mimeType: String(data.mimeType || parsed.data.mimeType),
+            sizeBytes: Number(data.sizeBytes || sizeBytes),
+            status: 'indexed',
+            chunkCount: Number(data.chunkCount || 0),
+            contentHash,
+            version: String(data.version || 'v1')
+          },
+          duplicate: true
+        });
+      }
+
       const documentId = sha256(`${uid}:${knowledgeBaseId}:${contentHash}`).slice(0, 40);
       const documentReference = adminDb
         .collection('knowledge_documents')
@@ -388,6 +458,12 @@ knowledgeRouter.post(
         mimeType: parsed.data.mimeType,
         sizeBytes,
         contentHash,
+        activeRevisionId: revisionId,
+        revisionNumber: 1,
+        version: parsed.data.version || 'v1',
+        sourceUrl: parsed.data.sourceUrl || null,
+        effectiveAt: parsed.data.effectiveAt || null,
+        expiresAt: parsed.data.expiresAt || null,
         status: 'processing',
         chunkCount: 0,
         createdAt: FieldValue.serverTimestamp(),
@@ -400,7 +476,14 @@ knowledgeRouter.post(
           knowledgeBaseId,
           documentId,
           parsed.data.filename,
-          parsed.data.contentText
+          parsed.data.contentText,
+          {
+            revisionId,
+            version: parsed.data.version || 'v1',
+            sourceUrl: parsed.data.sourceUrl,
+            effectiveAt: parsed.data.effectiveAt,
+            expiresAt: parsed.data.expiresAt
+          }
         );
 
         if (chunkCount === 0) {
@@ -446,6 +529,184 @@ knowledgeRouter.post(
         error: {
           code: 'document_index_failed',
           message: 'Erro ao indexar documento na base de conhecimento.',
+          correlationId: req.correlationId
+        }
+      });
+    }
+  }
+);
+
+knowledgeRouter.post(
+  '/knowledge-bases/:id/documents/:documentId/reindex',
+  requireAuth,
+  knowledgeLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    if (!isFirebaseAdminConfigured()) return configurationError(req, res);
+
+    const parsed = AddKnowledgeDocumentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_knowledge_document',
+          message:
+            parsed.error.issues[0]?.message ||
+            'Documento inválido.',
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    const sizeBytes = Buffer.byteLength(
+      parsed.data.contentText,
+      'utf8'
+    );
+    if (sizeBytes > MAX_DOCUMENT_BYTES) {
+      return res.status(413).json({
+        error: {
+          code: 'knowledge_document_too_large',
+          message: 'O documento excede o limite de 750 KB.',
+          correlationId: req.correlationId
+        }
+      });
+    }
+
+    const uid = req.user!.uid;
+    const knowledgeBaseId = req.params.id;
+    const documentId = req.params.documentId;
+    const documentReference = adminDb
+      .collection('knowledge_documents')
+      .doc(documentId);
+    let stagedRevisionId: string | null = null;
+
+    try {
+      const ownedBase = await getOwnedBase(uid, knowledgeBaseId);
+      const documentSnapshot = await documentReference.get();
+      const documentData = documentSnapshot.data() || {};
+
+      if (
+        !ownedBase ||
+        ownedBase.data.status !== 'active' ||
+        !documentSnapshot.exists ||
+        documentData.userId !== uid ||
+        documentData.knowledgeBaseId !== knowledgeBaseId ||
+        documentData.status !== 'indexed'
+      ) {
+        return res.status(404).json({
+          error: {
+            code: 'knowledge_document_not_found',
+            message: 'Documento indexado não encontrado.',
+            correlationId: req.correlationId
+          }
+        });
+      }
+
+      const contentHash = sha256(parsed.data.contentText);
+      if (contentHash === String(documentData.contentHash || '')) {
+        return res.status(200).json({
+          document: {
+            id: documentSnapshot.id,
+            filename: String(documentData.filename || parsed.data.filename),
+            status: 'indexed',
+            chunkCount: Number(documentData.chunkCount || 0),
+            contentHash,
+            version: String(documentData.version || 'v1')
+          },
+          duplicate: true
+        });
+      }
+
+      stagedRevisionId = contentHash.slice(0, 24);
+      const revisionNumber =
+        Math.max(Number(documentData.revisionNumber || 1), 1) + 1;
+      const version =
+        parsed.data.version || `v${revisionNumber}`;
+      const previousChunkCount = Number(
+        documentData.chunkCount || 0
+      );
+      const chunkCount = await RAGService.indexDocument(
+        uid,
+        knowledgeBaseId,
+        documentId,
+        parsed.data.filename,
+        parsed.data.contentText,
+        {
+          revisionId: stagedRevisionId,
+          version,
+          sourceUrl: parsed.data.sourceUrl,
+          effectiveAt: parsed.data.effectiveAt,
+          expiresAt: parsed.data.expiresAt
+        }
+      );
+
+      if (chunkCount === 0) {
+        throw new Error('O documento não produziu partes indexáveis.');
+      }
+
+      await adminDb.runTransaction(async (transaction) => {
+        transaction.update(documentReference, {
+          filename: parsed.data.filename,
+          mimeType: parsed.data.mimeType,
+          sizeBytes,
+          contentHash,
+          activeRevisionId: stagedRevisionId,
+          revisionNumber,
+          version,
+          sourceUrl: parsed.data.sourceUrl || null,
+          effectiveAt: parsed.data.effectiveAt || null,
+          expiresAt: parsed.data.expiresAt || null,
+          chunkCount,
+          reindexedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+        transaction.update(ownedBase.reference, {
+          chunksCount: FieldValue.increment(
+            chunkCount - previousChunkCount
+          ),
+          lastIndexedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      });
+
+      await RAGService.deleteObsoleteDocumentChunks(
+        uid,
+        documentId,
+        stagedRevisionId
+      ).catch((cleanupError) => {
+        console.warn(
+          'A nova revisão foi ativada, mas partes antigas aguardam limpeza:',
+          cleanupError
+        );
+      });
+
+      return res.json({
+        document: {
+          id: documentId,
+          filename: parsed.data.filename,
+          mimeType: parsed.data.mimeType,
+          sizeBytes,
+          status: 'indexed',
+          chunkCount,
+          contentHash,
+          version,
+          revisionNumber,
+          updatedAt: new Date().toISOString()
+        },
+        duplicate: false
+      });
+    } catch (error) {
+      if (stagedRevisionId) {
+        await RAGService.deleteDocumentRevisionChunks(
+          uid,
+          documentId,
+          stagedRevisionId
+        ).catch(() => undefined);
+      }
+
+      console.error('Falha ao reindexar documento:', error);
+      return res.status(500).json({
+        error: {
+          code: 'document_reindex_failed',
+          message: 'Erro ao reindexar documento na base de conhecimento.',
           correlationId: req.correlationId
         }
       });

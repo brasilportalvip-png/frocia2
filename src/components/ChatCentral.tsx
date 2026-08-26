@@ -9,6 +9,7 @@ import {
   Code2,
   Copy,
   Eye,
+  ExternalLink,
   FileCode2,
   Globe,
   Image as ImageIcon,
@@ -805,6 +806,77 @@ export const ChatCentral: React.FC<
                           {message.text}
                         </div>
                       </div>
+
+                      {isAi &&
+                        message.citations &&
+                        message.citations.length > 0 && (
+                          <section
+                            aria-label="Fontes da resposta"
+                            className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3"
+                          >
+                            <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-amber-200/75">
+                              <Globe className="h-3.5 w-3.5" />
+                              Fontes verificáveis
+                            </div>
+
+                            <div className="space-y-2">
+                              {message.citations.map(
+                                (citation, citationIndex) => {
+                                  const isPublicWebSource =
+                                    citation.sourceType !==
+                                      'knowledge_base' &&
+                                    citation.uri.startsWith(
+                                      'https://'
+                                    );
+                                  const label =
+                                    citation.index ||
+                                    citationIndex + 1;
+                                  const content = (
+                                    <>
+                                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-300/10 text-[9px] font-black text-amber-200">
+                                        {label}
+                                      </span>
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-[11px] font-bold text-white/80">
+                                          {citation.title}
+                                        </span>
+                                        {citation.domain && (
+                                          <span className="mt-0.5 block truncate text-[9px] text-white/35">
+                                            {citation.domain}
+                                          </span>
+                                        )}
+                                      </span>
+                                      {isPublicWebSource && (
+                                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                                      )}
+                                    </>
+                                  );
+
+                                  return isPublicWebSource ? (
+                                    <a
+                                      key={`${citation.uri}-${label}`}
+                                      href={citation.uri}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.025] px-2.5 py-2 transition hover:border-amber-300/20 hover:bg-amber-300/[0.05]"
+                                      title={citation.snippet}
+                                    >
+                                      {content}
+                                    </a>
+                                  ) : (
+                                    <div
+                                      key={`${citation.uri}-${label}`}
+                                      className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.025] px-2.5 py-2"
+                                      title={citation.snippet}
+                                    >
+                                      {content}
+                                    </div>
+                                  );
+                                }
+                              )}
+                            </div>
+                          </section>
+                        )}
 
                       {isAi && (
                         <div className="mt-2 flex items-center gap-1.5 text-white/40 text-xs">

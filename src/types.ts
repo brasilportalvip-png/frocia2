@@ -30,9 +30,12 @@ export interface ChatMessage {
   timestamp: number;
   isHtmlUpdate?: boolean;
   citations?: Array<{
+    index?: number;
     title: string;
     uri: string;
     snippet?: string;
+    sourceType?: 'web' | 'knowledge_base';
+    domain?: string;
   }>;
 }
 
