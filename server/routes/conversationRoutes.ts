@@ -3,8 +3,20 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
+import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
 
 export const conversationRouter = Router();
+
+function belongsToAuthenticatedContext(
+  data: Record<string, any> | undefined,
+  req: AuthenticatedRequest
+): boolean {
+  if (!data || !req.user) return false;
+  return (
+    data.userId === req.user.uid &&
+    (data.tenantId || `user:${data.userId}`) === req.user.tenantId
+  );
+}
 
 function checkDatabaseAvailability(req: AuthenticatedRequest, res: any): boolean {
   if (!adminDb) {
@@ -33,11 +45,14 @@ conversationRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) 
       .limit(50)
       .get();
 
-    const conversations = snap.docs.map((doc) => {
+    const conversations = snap.docs
+      .filter((doc) => belongsToAuthenticatedContext(doc.data(), req))
+      .map((doc) => {
       const d = doc.data();
       return {
         id: doc.id,
         userId: d.userId,
+        tenantId: d.tenantId || `user:${d.userId}`,
         projectId: d.projectId || null,
         title: d.title || 'Nova Conversa',
         mode: d.mode || 'smart',
@@ -45,7 +60,7 @@ conversationRouter.get('/', requireAuth, async (req: AuthenticatedRequest, res) 
         createdAt: d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate().toISOString() : new Date(d.createdAt).toISOString()) : new Date().toISOString(),
         updatedAt: d.updatedAt ? (d.updatedAt.toDate ? d.updatedAt.toDate().toISOString() : new Date(d.updatedAt).toISOString()) : new Date().toISOString(),
       };
-    });
+      });
 
     return res.json({ conversations });
   } catch (err: any) {
@@ -66,11 +81,21 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
     const uid = req.user!.uid;
     const { title = 'Nova Conversa', mode = 'smart', projectId = null } = req.body;
 
+    if (projectId) {
+      await MemoryService.assertScopeAccess(
+        uid,
+        req.user!.tenantId,
+        'project',
+        projectId
+      );
+    }
+
     const ref = adminDb!.collection('conversations').doc();
     const now = FieldValue.serverTimestamp();
 
     await ref.set({
       userId: uid,
+      tenantId: req.user!.tenantId,
       projectId,
       title: typeof title === 'string' ? title.trim().slice(0, 100) : 'Nova Conversa',
       mode,
@@ -84,6 +109,7 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
       conversation: {
         id: ref.id,
         userId: uid,
+        tenantId: req.user!.tenantId,
         title: typeof title === 'string' ? title.trim().slice(0, 100) : 'Nova Conversa',
         mode,
         projectId,
@@ -92,6 +118,15 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
       },
     });
   } catch (err: any) {
+    if (err instanceof MemoryScopeAccessError) {
+      return res.status(403).json({
+        error: {
+          code: 'conversation_project_forbidden',
+          message: err.message,
+          correlationId: req.correlationId,
+        },
+      });
+    }
     return res.status(500).json({
       error: {
         code: 'conversation_create_failed',
@@ -110,7 +145,7 @@ conversationRouter.get('/:id', requireAuth, async (req: AuthenticatedRequest, re
     const { id } = req.params;
 
     const snap = await adminDb!.collection('conversations').doc(id).get();
-    if (!snap.exists || snap.data()?.userId !== uid) {
+    if (!snap.exists || !belongsToAuthenticatedContext(snap.data(), req)) {
       return res.status(404).json({
         error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
       });
@@ -145,7 +180,7 @@ conversationRouter.patch('/:id', requireAuth, async (req: AuthenticatedRequest, 
     const ref = adminDb!.collection('conversations').doc(id);
     const snap = await ref.get();
 
-    if (!snap.exists || snap.data()?.userId !== uid) {
+    if (!snap.exists || !belongsToAuthenticatedContext(snap.data(), req)) {
       return res.status(404).json({ error: { code: 'not_found', message: 'Conversa não encontrada.', correlationId: req.correlationId } });
     }
 
@@ -170,7 +205,7 @@ conversationRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest,
     const ref = adminDb!.collection('conversations').doc(id);
     const snap = await ref.get();
 
-    if (!snap.exists || snap.data()?.userId !== uid) {
+    if (!snap.exists || !belongsToAuthenticatedContext(snap.data(), req)) {
       return res.status(404).json({ error: { code: 'not_found', message: 'Conversa não encontrada.', correlationId: req.correlationId } });
     }
 
@@ -223,7 +258,7 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
 
     // First check conversation existence and ownership
     const convSnap = await adminDb!.collection('conversations').doc(id).get();
-    if (!convSnap.exists || convSnap.data()?.userId !== uid) {
+    if (!convSnap.exists || !belongsToAuthenticatedContext(convSnap.data(), req)) {
       return res.status(404).json({
         error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
       });
@@ -278,7 +313,7 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
 
     // Validate conversation existence and ownership
     const convSnap = await adminDb!.collection('conversations').doc(conversationId).get();
-    if (!convSnap.exists || convSnap.data()?.userId !== uid) {
+    if (!convSnap.exists || !belongsToAuthenticatedContext(convSnap.data(), req)) {
       return res.status(404).json({
         error: { code: 'conversation_not_found', message: 'Conversa não encontrada ou sem acesso.', correlationId: req.correlationId },
       });
@@ -290,6 +325,7 @@ conversationRouter.post('/:id/messages', requireAuth, async (req: AuthenticatedR
     await ref.set({
       conversationId,
       userId: uid,
+      tenantId: req.user!.tenantId,
       role,
       content,
       attachments,

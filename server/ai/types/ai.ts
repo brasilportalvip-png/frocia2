@@ -130,6 +130,7 @@ export interface ToolDeclaration {
 
 export interface ExecutionParams {
   userId: string;
+  tenantId?: string;
   userDisplayName?: string;
   conversationId?: string | null;
   projectId?: string | null;
@@ -187,6 +188,8 @@ export interface ExecutionRecord {
     | 'unsupported';
   sourceCount?: number;
   sourceDomains?: string[];
+  contextTruncated?: boolean;
+  omittedHistoryCount?: number;
 }
 
 export interface Conversation {
@@ -228,16 +231,29 @@ export interface Message {
 export interface UserMemory {
   id: string;
   userId: string;
-  scope: 'user' | 'project' | 'conversation';
+  tenantId: string;
+  scope: 'user' | 'organization' | 'project' | 'conversation';
   scopeId: string | null;
   category: string;
   content: string;
   source: string;
   confidence: number;
+  purpose:
+    | 'personalization'
+    | 'project_continuity'
+    | 'conversation_context'
+    | 'user_note';
+  sensitivity: 'standard' | 'personal';
+  retentionDays: number;
+  consentVersion: string;
+  consentedAt: string;
+  sourceMessageIds: string[];
   validFrom: string;
   validUntil: string | null;
   status: 'active' | 'superseded' | 'deleted';
   userApproved: boolean;
+  retrievalReason?: string;
+  relevanceScore?: number;
   createdAt: string;
   updatedAt: string;
 }

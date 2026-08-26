@@ -3,7 +3,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
-import { ContextBuilder } from '../ai/contextBuilder.js';
+import { ContextBuilder, ContextLimitExceededError } from '../ai/contextBuilder.js';
 import {
   AIRequestOrchestrator,
   UnknownAIToolError
@@ -32,6 +32,8 @@ import {
   FeatureFlagDisabledError,
   FeatureFlagService
 } from '../services/featureFlagService.js';
+import { ConversationContextService } from '../ai/conversationContextService.js';
+import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
 
 export const aiRouter = Router();
 
@@ -333,6 +335,36 @@ aiRouter.post(
     const sanitizedPrompt =
       SafetyService.sanitizeInput(prompt);
 
+    try {
+      if (projectId) {
+        await MemoryService.assertScopeAccess(
+          uid,
+          req.user!.tenantId,
+          'project',
+          projectId
+        );
+      }
+      if (conversationId) {
+        await MemoryService.assertScopeAccess(
+          uid,
+          req.user!.tenantId,
+          'conversation',
+          conversationId
+        );
+      }
+    } catch (error) {
+      if (error instanceof MemoryScopeAccessError) {
+        return res.status(403).json({
+          error: {
+            code: 'ai_scope_forbidden',
+            message: error.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
+      throw error;
+    }
+
     let plan;
 
     try {
@@ -553,16 +585,27 @@ aiRouter.post(
     });
 
     try {
+      const conversationContext =
+        await ConversationContextService.load({
+          userId: uid,
+          tenantId: req.user!.tenantId,
+          conversationId,
+        });
       const assembled =
         await ContextBuilder.assemble({
           userId: uid,
+          tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
           mode,
           prompt: sanitizedPrompt,
           conversationId,
           projectId,
           knowledgeBaseIds,
-          requestPolicy: plan.systemPolicy
+          requestPolicy: plan.systemPolicy,
+          recentMessages:
+            conversationContext.recentMessages,
+          conversationSummary:
+            conversationContext
         });
 
       streamCitations =
@@ -703,6 +746,10 @@ aiRouter.post(
           sourceCount: evidence.sourceCount,
           sourceDomains:
             evidence.sourceDomains,
+          contextTruncated:
+            assembled.contextTruncated,
+          omittedHistoryCount:
+            assembled.omittedHistoryCount,
           latencyMs:
             Date.now() - startTime,
           completedAt:
@@ -743,6 +790,8 @@ aiRouter.post(
 
       const wasCancelled =
         abortSignal.aborted || isClosed;
+      const contextLimitExceeded =
+        streamError instanceof ContextLimitExceededError;
 
       ExecutionAbortRegistry.clear(
         executionId
@@ -789,7 +838,9 @@ aiRouter.post(
           {
             code: wasCancelled
               ? 'execution_cancelled'
-              : 'stream_failed',
+              : contextLimitExceeded
+                ? 'context_limit_exceeded'
+                : 'stream_failed',
             message: wasCancelled
               ? 'Execução cancelada pelo usuário.'
               : message
@@ -834,6 +885,7 @@ aiRouter.post(
         await AIExecutionService.execute(
           {
             userId: req.user!.uid,
+            tenantId: req.user!.tenantId,
             userDisplayName: req.user!.name,
             ...parsedRequest,
             abortSignal:
@@ -872,6 +924,26 @@ aiRouter.post(
             correlationId:
               req.correlationId
           }
+        });
+      }
+
+      if (error instanceof ContextLimitExceededError) {
+        return res.status(413).json({
+          error: {
+            code: 'context_limit_exceeded',
+            message: error.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
+
+      if (error instanceof MemoryScopeAccessError) {
+        return res.status(403).json({
+          error: {
+            code: 'ai_scope_forbidden',
+            message: error.message,
+            correlationId: req.correlationId,
+          },
         });
       }
 

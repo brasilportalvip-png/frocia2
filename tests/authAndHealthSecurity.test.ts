@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   normalizeAuthenticatedName,
+  normalizeTenantId,
   requireAuth
 } from '../server/middlewares/requireAuth.js';
 import { STARTER_TEMPLATES } from '../src/data/templates.js';
@@ -19,6 +20,13 @@ describe('P0 Security & Contract Verification Tests', () => {
       'FlavioSouza'
     );
     expect(normalizeAuthenticatedName(' ')).toBeUndefined();
+  });
+
+  it('aceita somente identificador empresarial estrito vindo do token assinado', () => {
+    expect(normalizeTenantId('empresa:brasil_01')).toBe('empresa:brasil_01');
+    expect(normalizeTenantId('../outra-empresa')).toBeUndefined();
+    expect(normalizeTenantId('empresa com espaço')).toBeUndefined();
+    expect(normalizeTenantId('')).toBeUndefined();
   });
 
   it('should reject requests with missing authorization header', async () => {

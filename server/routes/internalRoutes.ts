@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { env } from '../config/env.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
+import { DurableExecutionService } from '../ai/durableExecutionService.js';
 
 export const internalRouter = Router();
 
@@ -153,6 +154,53 @@ internalRouter.post('/payments/reconcile', requireCronSecret, async (req: Authen
       error: {
         code: 'reconciliation_cron_failed',
         message: 'Erro interno ao processar reconciliacao.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+/**
+ * Reclaims expired leases conservatively and dispatches the durable outbox.
+ * Mutations with an uncertain provider outcome are never replayed here.
+ */
+internalRouter.post('/executions/reconcile', requireCronSecret, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (!adminDb) {
+      return res.json({
+        reconciled: { externalBlockers: 0, compensationPending: 0 },
+        outbox: { delivered: 0, failed: 0 },
+        reason: 'firebase_not_configured',
+      });
+    }
+
+    const service = new DurableExecutionService();
+    const reconciled = await service.reconcileStuck();
+    const outbox = await service.dispatchOutbox(async (event) => {
+      const ref = adminDb.collection('durable_domain_events').doc(event.outboxId);
+      try {
+        await ref.create({
+          ...event,
+          deliveredBy: 'internal_outbox_worker',
+          persistedAt: new Date(),
+        });
+      } catch (error: any) {
+        if (error?.code !== 6 && error?.code !== 'already-exists') throw error;
+      }
+    });
+
+    return res.json({
+      status: 'ok',
+      reconciled,
+      outbox,
+      correlationId: req.correlationId,
+    });
+  } catch (error) {
+    console.error('Erro na reconciliação de execuções duráveis:', error);
+    return res.status(500).json({
+      error: {
+        code: 'durable_execution_reconciliation_failed',
+        message: 'Erro interno ao reconciliar execuções duráveis.',
         correlationId: req.correlationId,
       },
     });

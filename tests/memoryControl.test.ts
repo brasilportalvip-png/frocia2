@@ -140,4 +140,56 @@ describe('Controlled AI memory', () => {
     });
     expect(firestore.query.limit).toHaveBeenCalledWith(200);
   });
+
+  it('never mixes memories across tenants and permits only the authenticated organization', async () => {
+    firestore.state.docs = [
+      memoryDoc('own-tenant', {
+        tenantId: 'tenant-a',
+        content: 'Preferência da empresa A',
+      }),
+      memoryDoc('wrong-tenant-same-user', {
+        tenantId: 'tenant-b',
+        content: 'Não pode vazar',
+      }),
+      memoryDoc('organization-a', {
+        userId: 'another-member',
+        tenantId: 'tenant-a',
+        scope: 'organization',
+        content: 'Arquitetura compartilhada da empresa A',
+      }),
+      memoryDoc('organization-b', {
+        userId: 'another-member',
+        tenantId: 'tenant-b',
+        scope: 'organization',
+      }),
+    ];
+
+    const memories = await MemoryService.getActiveMemories(
+      'user-1',
+      null,
+      null,
+      'arquitetura e preferência',
+      'tenant-a'
+    );
+
+    expect(memories.map((memory) => memory.id).sort()).toEqual([
+      'organization-a',
+      'own-tenant',
+    ]);
+    expect(memories.every((memory) => memory.tenantId === 'tenant-a')).toBe(true);
+  });
+
+  it('expires legacy memories with no explicit validUntil instead of keeping them forever', async () => {
+    firestore.state.docs = [
+      memoryDoc('legacy-old', {
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+        validUntil: null,
+      }),
+    ];
+
+    await expect(
+      MemoryService.getActiveMemories('user-1', null, null, 'legado')
+    ).resolves.toEqual([]);
+  });
 });

@@ -28,11 +28,19 @@ expect(rules).toContain(
   'resource.data.userId == request.auth.uid'
 );
 expect(rules).not.toContain('resource == null');
+expect(rules).toContain("'tenantId', 'companyId', 'organizationId'");
 
 // Strict backend-only financial mutations
     expect(rules).toContain('match /payments/{paymentId}');
     expect(rules).toContain('match /credit_transactions/{txId}');
     expect(rules).toContain('match /credit_reservations/{resId}');
+
+    // Memory content and its audit trail are API/backend only.
+    expect(rules).toContain('match /user_memories/{memId}');
+    expect(rules).toContain('match /memory_audit_events/{eventId}');
+    expect(rules).toContain('match /durable_executions/{executionId}');
+    expect(rules).toContain('match /durable_execution_events/{eventId}');
+    expect(rules).toContain('match /durable_execution_outbox/{outboxId}');
 
     // Default deny rule
     expect(rules).toContain('match /{document=**}');
@@ -60,4 +68,3 @@ expect(rules).not.toContain('resource == null');
     expect(rules).toContain('allow read, write: if false;');
   });
 });
-

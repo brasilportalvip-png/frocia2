@@ -18,6 +18,8 @@ import { FeatureFlagService } from '../services/featureFlagService.js';
 import { ModelRegistry } from './modelRegistry.js';
 import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
+import { ConversationContextService } from './conversationContextService.js';
+import { MemoryService } from './memoryService.js';
 
 export class AIExecutionService {
   /**
@@ -56,6 +58,7 @@ export class AIExecutionService {
 
     const {
       userId,
+      tenantId = `user:${userId}`,
       userDisplayName,
       conversationId,
       projectId,
@@ -76,6 +79,18 @@ export class AIExecutionService {
     }
 
     const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
+
+    if (projectId) {
+      await MemoryService.assertScopeAccess(userId, tenantId, 'project', projectId);
+    }
+    if (conversationId) {
+      await MemoryService.assertScopeAccess(
+        userId,
+        tenantId,
+        'conversation',
+        conversationId
+      );
+    }
 
     // Validate conversation existence & ownership if conversationId is provided
     if (adminDb && conversationId) {
@@ -119,6 +134,8 @@ export class AIExecutionService {
     let startTime = Date.now();
     const citations: MessageCitation[] = [];
     let ragChunksUsed: KnowledgeChunk[] = [];
+    let contextTruncated = false;
+    let omittedHistoryCount = 0;
     const enableSearchGrounding =
       plan.classification.requiresSearch ||
       route.reasonCode === 'mode_research_grounded';
@@ -198,8 +215,14 @@ if (params.abortSignal?.aborted) {
 
 
       // 5. Assemble Context
+      const conversationContext = await ConversationContextService.load({
+        userId,
+        tenantId,
+        conversationId,
+      });
       const assembled = await ContextBuilder.assemble({
         userId,
+        tenantId,
         userDisplayName,
         mode,
         prompt: sanitizedPrompt,
@@ -208,9 +231,13 @@ if (params.abortSignal?.aborted) {
         knowledgeBaseIds,
         systemInstructionOverride: systemInstruction,
         requestPolicy: plan.systemPolicy,
+        recentMessages: conversationContext.recentMessages,
+        conversationSummary: conversationContext,
       });
 
       ragChunksUsed = assembled.ragChunksUsed;
+      contextTruncated = assembled.contextTruncated;
+      omittedHistoryCount = assembled.omittedHistoryCount;
 
       // Add RAG Citations
       for (const chunk of assembled.ragChunksUsed) {
@@ -398,6 +425,7 @@ const consumedCredits = CostService.calculateCreditCost(
         batch.set(userMsgRef, {
           conversationId,
           userId,
+          tenantId,
           role: 'user',
           content: prompt,
           attachments: attachments || [],
@@ -409,6 +437,7 @@ const consumedCredits = CostService.calculateCreditCost(
         batch.set(aiMsgRef, {
           conversationId,
           userId,
+          tenantId,
           role: 'assistant',
           content: aiResponseText,
           citations: citations || [],
@@ -441,6 +470,8 @@ const consumedCredits = CostService.calculateCreditCost(
       ragEvidenceStatus: evidence.ragStatus,
       sourceCount: evidence.sourceCount,
       sourceDomains: evidence.sourceDomains,
+      contextTruncated,
+      omittedHistoryCount,
       completedAt: new Date().toISOString(),
     });
 
