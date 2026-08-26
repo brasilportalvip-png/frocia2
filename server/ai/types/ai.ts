@@ -9,6 +9,42 @@ export type AIMode =
   | 'video'
   | 'document';
 
+export type SpecialistDomain =
+  | 'general'
+  | 'research'
+  | 'marketing'
+  | 'sales'
+  | 'code'
+  | 'site-builder'
+  | 'ux-accessibility'
+  | 'data-documents'
+  | 'security'
+  | 'finance'
+  | 'legal'
+  | 'health'
+  | 'social-media';
+
+export type RequestComplexity =
+  | 'simple'
+  | 'standard'
+  | 'complex';
+
+export type RequestSensitivity =
+  | 'normal'
+  | 'personal-data'
+  | 'high-stakes';
+
+export interface RequestClassification {
+  domain: SpecialistDomain;
+  complexity: RequestComplexity;
+  sensitivity: RequestSensitivity;
+  requiresSearch: boolean;
+  requiresTools: boolean;
+  requiresCode: boolean;
+  requiresIndependentVerification: boolean;
+  reasons: string[];
+}
+
 export interface ModelCapabilities {
   text: boolean;
   vision: boolean;
@@ -46,6 +82,9 @@ export interface RouterInput {
   requiresTools?: boolean;
   requiresSearch?: boolean;
   requiresCode?: boolean;
+  domain?: SpecialistDomain;
+  complexity?: RequestComplexity;
+  sensitivity?: RequestSensitivity;
   preferredModel?: string;
 }
 
@@ -57,14 +96,36 @@ export interface RouterResult {
   requiredCapabilities: Partial<ModelCapabilities>;
 }
 
+export type ToolAuthScope =
+  | 'user'
+  | 'project'
+  | 'admin'
+  | 'external_oauth';
+
 export interface ToolDeclaration {
   name: string;
   description: string;
-  parameters: Record<string, any>;
+  parameters: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  authScopes: ToolAuthScope[];
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   requiredRole?: 'user' | 'admin';
-  requiresConfirmation?: boolean;
-  timeoutMs?: number;
+  mutatesState: boolean;
+  requiresConfirmation: boolean;
+  idempotencyRequired: boolean;
+  timeoutMs: number;
+  maxRetries: number;
+  retryBackoffMs: number;
+  costLimitCredits: number;
+  rateLimit: {
+    windowMs: number;
+    maxRequests: number;
+  };
+  redactFields: string[];
+  verificationStrategy:
+    | 'deterministic'
+    | 'provider_receipt'
+    | 'human_review';
 }
 
 export interface ExecutionParams {
@@ -109,6 +170,11 @@ export interface ExecutionRecord {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  requestDomain?: SpecialistDomain;
+  requestComplexity?: RequestComplexity;
+  requestSensitivity?: RequestSensitivity;
+  requiresSearch?: boolean;
+  toolsRequested?: string[];
 }
 
 export interface Conversation {

@@ -17,6 +17,8 @@
     "test:unit": "vitest run tests/walletService.test.ts tests/webhookSignature.test.ts",
     "test:integration": "vitest run tests/walletAndCheckout.test.ts tests/phase2_wallet_integration.test.ts",
     "test:ai": "vitest run tests/phase3_ai_engine.test.ts",
+    "test:foundation": "vitest run tests/aiRequestOrchestrator.test.ts",
+    "test:tools": "vitest run tests/toolExecutionService.test.ts",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "tsx scripts/validate-requirement-tracker.ts"
   },
