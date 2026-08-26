@@ -1,15 +1,19 @@
-# Relatório de Publicação e Deployment
+# Relatório de deployment
 
-**Aplicação:** Froc.IA  
-**URL de Desenvolvimento:** `https://ais-dev-dqbfkj5575y5ti7actibbn-688993135092.us-east1.run.app`  
-**URL Compartilhada de Prévia:** `https://ais-pre-dqbfkj5575y5ti7actibbn-688993135092.us-east1.run.app`  
-**Ambiente de Produção:** Google Cloud Run (Container Nginx Reverse Proxy + Node.js Serverless)  
-**Data:** 05 de Agosto de 2026  
+## Estado observado em 26/08/2026
 
-## Status dos Serviços Implantados
+- Repositório: `brasilportalvip-png/frocia2`.
+- PR nº 1: mesclado pelo proprietário.
+- Commit de correção do runtime: `450fb98`.
+- Commit de merge na `main`: `d1f0c66`.
+- Hospedagem observada: Vercel.
+- Checks do PR: 3/3 aprovados.
+- Preview: implantado e acessível.
+- `/api/live` do preview: `status: live`.
+- `/api/ready` do preview: `status: ready`; autenticação, Firestore, Gemini e Mercado Pago retornaram `true`.
 
-1. **Frontend App React (Porta 3000 Nginx Proxy):** **OPERACIONAL (200 OK)**
-2. **Servidor Node.js Express API Backend:** **OPERACIONAL (200 OK)**
-3. **Roteador Gemini 3.6 Flash / 3.1 Pro:** **OPERACIONAL**
-4. **Módulo de Inspecção ZIP e RAG:** **OPERACIONAL**
-5. **Painel do Usuário e Painel de Governança:** **OPERACIONAL**
+## Limite da evidência
+
+As verificações do preview foram executadas pelo proprietário e registradas na conversa de implantação. O smoke test posterior ao merge na URL de produção ainda deve ser capturado e anexado como evidência reproduzível.
+
+Este documento não declara que os 563 requisitos do Prompt Mestre estão concluídos. O estado oficial de cada requisito permanece no tracker versionado.

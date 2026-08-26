@@ -14,6 +14,9 @@ export class AIRouter {
       requiresTools = false,
       requiresSearch = false,
       requiresCode = false,
+      contextSizeEstimate = 0,
+      complexity = 'standard',
+      sensitivity = 'normal',
       preferredModel,
     } = input;
 
@@ -75,6 +78,27 @@ export class AIRouter {
           fallbackModels = [env.GEMINI_FAST_MODEL];
           reasonCode = 'mode_fallback';
       }
+    }
+
+    if (
+      !preferredModel &&
+      (complexity === 'complex' ||
+        sensitivity === 'high-stakes' ||
+        contextSizeEstimate > 8_000) &&
+      mode !== 'image' &&
+      mode !== 'video'
+    ) {
+      selectedModel = env.GEMINI_REASONING_MODEL;
+      fallbackModels = [
+        env.GEMINI_DEFAULT_MODEL,
+        env.GEMINI_FAST_MODEL,
+      ];
+      reasonCode =
+        sensitivity === 'high-stakes'
+          ? 'high_stakes_reasoning'
+          : contextSizeEstimate > 8_000
+            ? 'long_context_reasoning'
+            : 'complex_request_reasoning';
     }
 
     // Check health of primary selection; fallback if unhealthy

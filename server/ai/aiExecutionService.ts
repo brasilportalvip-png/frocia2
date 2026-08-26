@@ -1,6 +1,6 @@
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { SafetyService } from './safetyService.js';
-import { AIRouter } from './aiRouter.js';
+import { AIRequestOrchestrator } from './requestOrchestrator.js';
 import { ContextBuilder } from './contextBuilder.js';
 import { GeminiProvider } from './providers/geminiProvider.js';
 import { ExecutionTraceService } from './executionTraceService.js';
@@ -74,13 +74,19 @@ export class AIExecutionService {
       }
     }
 
-    // 2. Route Model
-    const route = AIRouter.route({
+    // 2. Classify, authorize tools and route the request
+    const plan = AIRequestOrchestrator.plan({
       mode,
       prompt: sanitizedPrompt,
-      hasImages: attachments.length > 0,
-      preferredModel: modelOverride,
+      hasImages: attachments.some(
+        (attachment) => attachment.type === 'image'
+      ),
+      hasFiles: attachments.length > 0,
+      requestedTools: params.tools,
+      knowledgeBaseIds,
+      preferredModel: modelOverride
     });
+    const route = plan.route;
 
     const idempotencyKey = providedKey || `aiexec-${userId}-${Date.now()}`;
 
@@ -127,6 +133,17 @@ export class AIExecutionService {
         createdAt: new Date().toISOString(),
         startedAt: new Date().toISOString(),
         completedAt: null,
+        requestDomain:
+          plan.classification.domain,
+        requestComplexity:
+          plan.classification.complexity,
+        requestSensitivity:
+          plan.classification.sensitivity,
+        requiresSearch:
+          plan.classification.requiresSearch,
+        toolsRequested: plan.tools.map(
+          (tool) => tool.name
+        ),
       });
 
 
@@ -175,6 +192,7 @@ if (params.abortSignal?.aborted) {
         projectId,
         knowledgeBaseIds,
         systemInstructionOverride: systemInstruction,
+        requestPolicy: plan.systemPolicy,
       });
 
       // Add RAG Citations
@@ -183,7 +201,9 @@ if (params.abortSignal?.aborted) {
       }
 
       startTime = Date.now();
-      const enableSearchGrounding = mode === 'research' || route.reasonCode === 'mode_research_grounded';
+      const enableSearchGrounding =
+        plan.classification.requiresSearch ||
+        route.reasonCode === 'mode_research_grounded';
 
       // 6. Execute with Primary Model and Fallback
 try {
@@ -293,8 +313,8 @@ const consumedCredits = CostService.calculateCreditCost(
   modelToUse,
   inputTokens,
   outputTokens,
-  false,
-  mode === 'research',
+  plan.tools.length > 0,
+  plan.classification.requiresSearch,
   mode
 );
 

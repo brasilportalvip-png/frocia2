@@ -74,6 +74,7 @@ export interface ContextBuilderParams {
   projectId?: string | null;
   knowledgeBaseIds?: string[];
   systemInstructionOverride?: string;
+  requestPolicy?: string;
   recentMessages?: Array<{
     role: string;
     content: string;
@@ -202,6 +203,7 @@ export class ContextBuilder {
       projectId,
       knowledgeBaseIds,
       systemInstructionOverride,
+      requestPolicy,
       recentMessages = [],
       maxContextTokens = 16000
     } = params;
@@ -323,6 +325,9 @@ export class ContextBuilder {
 
     const fullSystemInstruction =
       `${TRUST_AND_PERSONALITY_POLICY}\n\n` +
+      (requestPolicy
+        ? `[POLÍTICA DA SOLICITAÇÃO CLASSIFICADA]\n${requestPolicy}\n\n`
+        : '') +
       identitySection +
       `\n\n` +
       `[INSTRUÇÃO ESPECÍFICA DO MODO]\n` +

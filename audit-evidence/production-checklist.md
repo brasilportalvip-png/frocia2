@@ -1,16 +1,52 @@
-# Checklist de Produção Froc.IA
+# Checklist de produção Froc.IA
 
-## Checklist de Prontidão Operacional
+Data da última auditoria local: 26/08/2026.
 
-- [x] **01. Inexistência de Mocks ou Chaves Fictícias no Core**: Todos os componentes consomem estado vivo e endpoints `/api/*`.
-- [x] **02. Compilação e Linter Limpos**: `npm run lint` executa sem erros com exit 0 (`tsc --noEmit`); `compile_applet` compila 100% OK.
-- [x] **03. Isolamento e Segurança (Sandbox)**: CSP endurecida em produção (sem `unsafe-eval`), iframe de prévia opera isolado.
-- [x] **04. Atribuição do Gemini SDK**: Cliente oficial `@google/genai` configurado no backend em `server.ts`.
-- [x] **05. Gestão de Erros Transacionais**: Fallback e repasse transparente de erros com devolução e liberação atômica de créditos.
-- [x] **06. Responsividade Visual**: Layout adaptável testado em resoluções Desktop, Tablet e Mobile.
-- [x] **07. Feature Flags e Emergency Kill-Switch**: Painel administrativo capacitado para pausar serviços instantaneamente.
-- [x] **08. Registro de Auditoria Administrativa**: Concessões e alterações de saldo registram log único imutável.
-- [x] **09. Segredos de Produção Fortes**: `INTERNAL_CRON_SECRET` e webhook secrets são obrigatórios, sem fallbacks previsíveis em produção.
-- [x] **10. Sincronização de Dependências**: `package.json` e `package-lock.json` alinhados (`froc-ia@1.0.0`).
-- [x] **11. Pipeline de CI/CD**: Workflow GitHub Actions configurado em `.github/workflows/ci.yml`.
-- [x] **12. Code Splitting & Lazy Loading**: Modais e páginas secundárias importados via `React.lazy` e `Suspense`.
+## Gates comprovados no baseline `d1f0c66`
+
+- [x] Instalação limpa com lockfile usando cache isolado.
+- [x] Tipagem com exit 0.
+- [x] 148 testes aprovados em 21 arquivos.
+- [x] Build de frontend e servidor com exit 0.
+- [x] Auditoria de dependências sem vulnerabilidade alta ou crítica em produção.
+- [x] Tracker estruturalmente válido com 563 IDs únicos.
+- [x] Preview do PR respondeu `live` e `ready` segundo evidência fornecida pelo proprietário.
+
+## Gates locais do primeiro bloco `c97865e`
+
+- [x] 9 testes específicos de classificação/orquestração aprovados.
+- [x] 157 testes totais aprovados em 22 arquivos.
+- [x] Typecheck aprovado.
+- [x] Build de produção aprovado.
+- [x] `git diff --check` aprovado.
+- [x] Tracker válido com 563 IDs únicos.
+- [ ] Revisão independente do bloco.
+- [ ] Preview e smoke test do bloco na Vercel.
+
+## Gates locais do segundo bloco `5de3d06`
+
+- [x] 16 testes específicos do runtime de ferramentas aprovados.
+- [x] 173 testes totais aprovados em 23 arquivos.
+- [x] Typecheck aprovado.
+- [x] Build de produção aprovado.
+- [x] Validação de entrada/saída, escopos, confirmação, custo e rate limit coberta por testes.
+- [x] Timeout, retry seguro, idempotência, lease, redaction e receipts cobertos por testes.
+- [ ] Concorrência do adaptador Firestore validada no Emulator.
+- [ ] Handlers externos reais migrados para o runtime.
+- [ ] Preview e smoke test do segundo bloco na Vercel.
+
+## Gates ainda não comprovados integralmente
+
+- [ ] Smoke test registrado na URL de produção após o merge.
+- [ ] Logs de produção sem erro crítico durante uma janela observável.
+- [ ] Migrations e banco validados em staging e produção.
+- [ ] E2E dos fluxos críticos no navegador.
+- [ ] Acessibilidade, responsividade e regressão visual automatizadas.
+- [ ] Carga e concorrência nas rotas críticas.
+- [ ] Backups configurados e restauração ensaiada.
+- [ ] Rollback testado operacionalmente.
+- [ ] Monitoramento, alertas e runbooks ativos.
+- [ ] Auditoria independente com identidade separada.
+- [ ] Todos os requisitos obrigatórios do tracker fechados.
+
+Enquanto qualquer gate obrigatório permanecer aberto, não usar `READY_FOR_PRODUCTION` para a plataforma completa.

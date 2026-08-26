@@ -17,4 +17,64 @@ export class RedactionService {
 
     return sanitized;
   }
+
+  static redactValue(
+    input: unknown,
+    redactFields: string[] = []
+  ): unknown {
+    const protectedFields = new Set(
+      [
+        'password',
+        'secret',
+        'token',
+        'authorization',
+        'apikey',
+        'api_key',
+        'credential',
+        ...redactFields,
+      ].map((field) => field.toLowerCase())
+    );
+
+    const visit = (
+      value: unknown,
+      seen: WeakSet<object>
+    ): unknown => {
+      if (typeof value === 'string') {
+        return this.redactSensitiveData(value);
+      }
+
+      if (
+        value === null ||
+        typeof value !== 'object'
+      ) {
+        return value === undefined ? null : value;
+      }
+
+      if (seen.has(value)) {
+        return '[REDACTED_CIRCULAR]';
+      }
+
+      seen.add(value);
+
+      if (Array.isArray(value)) {
+        return value.map((item) =>
+          visit(item, seen)
+        );
+      }
+
+      const output: Record<string, unknown> = {};
+
+      for (const [key, item] of Object.entries(value)) {
+        output[key] = protectedFields.has(
+          key.toLowerCase()
+        )
+          ? '[REDACTED_SECRET]'
+          : visit(item, seen);
+      }
+
+      return output;
+    };
+
+    return visit(input, new WeakSet<object>());
+  }
 }

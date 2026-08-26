@@ -4,7 +4,10 @@ import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { ContextBuilder } from '../ai/contextBuilder.js';
-import { AIRouter } from '../ai/aiRouter.js';
+import {
+  AIRequestOrchestrator,
+  UnknownAIToolError
+} from '../ai/requestOrchestrator.js';
 import {
   CreditWalletService,
   InsufficientCreditsError
@@ -143,6 +146,36 @@ function parseExecutionRequest(
       ? body.idempotencyKey.trim()
       : undefined;
 
+  const rawTools = body.tools;
+  const tools = Array.isArray(rawTools)
+    ? Array.from(
+        new Set(
+          rawTools.filter(
+            (tool): tool is string =>
+              typeof tool === 'string' &&
+              /^[a-z][a-z0-9_]{1,80}$/.test(tool)
+          )
+        )
+      ).slice(0, 10)
+    : [];
+
+  if (
+    Array.isArray(rawTools) &&
+    tools.length !== rawTools.length
+  ) {
+    throw new InvalidAIRequestError([
+      'A lista de ferramentas é inválida.'
+    ]);
+  }
+
+  const modelOverride =
+    typeof body.modelOverride === 'string' &&
+    /^[A-Za-z0-9._:-]{1,160}$/.test(
+      body.modelOverride.trim()
+    )
+      ? body.modelOverride.trim()
+      : undefined;
+
   return {
     prompt,
     mode,
@@ -158,7 +191,9 @@ function parseExecutionRequest(
     responseFormat:
       body.responseFormat === 'json'
         ? 'json'
-        : 'text'
+        : 'text',
+    tools,
+    modelOverride
   };
 }
 
@@ -272,6 +307,8 @@ aiRouter.post(
       projectId = null,
       knowledgeBaseIds = [],
       attachments = [],
+      tools = [],
+      modelOverride,
       idempotencyKey: providedKey
     } = parsedRequest;
 
@@ -294,22 +331,39 @@ aiRouter.post(
     const sanitizedPrompt =
       SafetyService.sanitizeInput(prompt);
 
-    const requiresSearch =
-      mode === 'research';
+    let plan;
 
-    const route = AIRouter.route({
-      mode,
-      prompt: sanitizedPrompt,
-      hasImages: attachments.some(
-        (attachment) =>
-          attachment.type === 'image'
-      ),
-      hasFiles: attachments.length > 0,
-      requiresSearch
-    });
+    try {
+      plan = AIRequestOrchestrator.plan({
+        mode,
+        prompt: sanitizedPrompt,
+        hasImages: attachments.some(
+          (attachment) =>
+            attachment.type === 'image'
+        ),
+        hasFiles: attachments.length > 0,
+        requestedTools: tools,
+        knowledgeBaseIds,
+        preferredModel: modelOverride
+      });
+    } catch (error) {
+      if (error instanceof UnknownAIToolError) {
+        return res.status(400).json({
+          error: {
+            code: 'unknown_ai_tool',
+            message: error.message,
+            correlationId: req.correlationId
+          }
+        });
+      }
+
+      throw error;
+    }
+
+    const route = plan.route;
 
     const enableSearchGrounding =
-      requiresSearch ||
+      plan.classification.requiresSearch ||
       route.reasonCode ===
         'mode_research_grounded';
 
@@ -391,7 +445,18 @@ aiRouter.post(
               new Date().toISOString(),
             startedAt:
               new Date().toISOString(),
-            completedAt: null
+            completedAt: null,
+            requestDomain:
+              plan.classification.domain,
+            requestComplexity:
+              plan.classification.complexity,
+            requestSensitivity:
+              plan.classification.sensitivity,
+            requiresSearch:
+              plan.classification.requiresSearch,
+            toolsRequested: plan.tools.map(
+              (tool) => tool.name
+            )
           }
         );
     } catch {
@@ -490,7 +555,8 @@ aiRouter.post(
           prompt: sanitizedPrompt,
           conversationId,
           projectId,
-          knowledgeBaseIds
+          knowledgeBaseIds,
+          requestPolicy: plan.systemPolicy
         });
 
       const stream =
@@ -551,8 +617,9 @@ aiRouter.post(
           route.selectedModel,
           inputTokens,
           outputTokens,
-          false,
-          enableSearchGrounding
+          plan.tools.length > 0,
+          enableSearchGrounding,
+          mode
         );
 
       await CreditWalletService.confirmConsumption(
@@ -754,6 +821,16 @@ aiRouter.post(
             feature: error.flag,
             correlationId:
               req.correlationId
+          }
+        });
+      }
+
+      if (error instanceof UnknownAIToolError) {
+        return res.status(400).json({
+          error: {
+            code: 'unknown_ai_tool',
+            message: error.message,
+            correlationId: req.correlationId
           }
         });
       }

@@ -1,14 +1,23 @@
-# Registro de Erros Conhecidos e Riscos Mapeados
+# Erros conhecidos e riscos mapeados
 
-## 1. Pendências Externas (Bloqueadas por Configuração do Usuário)
+Fonte de estado: `prompt-master-tracker.jsonl`.
 
-- **Mercado Pago Webhook Secret:** O recebimento em tempo real de notificações IPN de pagamento em produção exige o preenchimento de `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET` nas variáveis de ambiente no menu de configurações da plataforma.
-- **Integração com GitHub OAuth Client ID:** Requer a inserção do `GITHUB_CLIENT_ID` e `GITHUB_CLIENT_SECRET` para chamadas reais de Push para repositórios do usuário fora da sandbox.
+## Bloqueadores atuais
 
-## 2. Limitações de Execução em Sandbox (iFrame)
+- Auditoria independente ainda não concluída; nenhum requisito está `VERIFIED`.
+- Smoke test da produção após o merge ainda não foi registrado no repositório.
+- Testes E2E completos, acessibilidade, regressão visual, carga e recuperação de falhas permanecem abertos.
+- Backups, alertas, tracing e runbooks não possuem evidência operacional completa.
+- Integrações que dependem de contas externas exigem credenciais, escopos e homologação nos respectivos provedores.
+- O runtime seguro de ferramentas está implementado, mas os handlers existentes de publicação, pagamento e outras mutações ainda precisam ser migrados para ele.
+- O ledger distribuído de idempotência/rate limit compila com Firestore, porém ainda não possui teste de concorrência no Firestore Emulator.
 
-- **Comandos de Terminal Interativo Longos:** No modo iframe do AI Studio, o atalho de execução direta de `cd` deve ser substituído por caminhos relativos ao diretório raiz da aplicação, já assegurado pelos scripts padrão em `package.json`.
+## Dependências
 
-## 3. Estado Atual para Liberação
+`npm audit --omit=dev --audit-level=high` encerra com exit 0, sem vulnerabilidade alta ou crítica, mas ainda informa 6 vulnerabilidades moderadas transitivas relacionadas a `uuid` na árvore do Firebase Admin.
 
-- **Resultado do Diagnóstico:** **PRONTO PARA TESTES E HOMOLOGAÇÃO COMPLETA**
+Não execute `npm audit fix --force` sem analisar a alteração incompatível sugerida para o Firebase Admin.
+
+## Estado de liberação
+
+O commit atual pode seguir para preview e validação do bloco implementado. A plataforma completa não deve ser declarada pronta enquanto houver gates obrigatórios abertos.
