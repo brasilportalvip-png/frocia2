@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Brain,
   Check,
@@ -115,6 +116,23 @@ export const MemoryManagerModal: React.FC<
   useEffect(() => {
     if (isOpen) void loadMemories();
   }, [isOpen, loadMemories]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -257,14 +275,14 @@ export const MemoryManagerModal: React.FC<
     }
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4 text-white backdrop-blur-xl"
+      className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/90 p-2 text-white backdrop-blur-xl sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="memory-manager-title"
     >
-      <div className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-amber-400/20 bg-[#070707] shadow-[0_0_70px_rgba(245,158,11,0.10)]">
+      <div className="my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-amber-400/20 bg-[#070707] shadow-[0_0_70px_rgba(245,158,11,0.10)] sm:my-0 sm:max-h-[92dvh]">
         <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-black/70 px-5 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 text-amber-300">
@@ -289,8 +307,8 @@ export const MemoryManagerModal: React.FC<
           </button>
         </header>
 
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[320px_1fr]">
-          <section className="border-b border-white/10 p-5 lg:border-b-0 lg:border-r">
+        <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[320px_1fr] lg:overflow-hidden">
+          <section className="border-b border-white/10 p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
             <div className="mb-4 flex items-center gap-2 text-xs text-emerald-300">
               <ShieldCheck className="h-4 w-4" />
               <span>Somente memórias aprovadas são usadas pela IA.</span>
@@ -405,7 +423,7 @@ export const MemoryManagerModal: React.FC<
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col p-5">
+          <section className="flex min-h-[18rem] flex-col p-4 sm:p-5 lg:min-h-0">
             <div className="mb-4 flex items-center justify-between gap-3">
               <p className="text-xs text-white/50">
                 {memories.length} memória{memories.length === 1 ? '' : 's'}
@@ -538,6 +556,7 @@ export const MemoryManagerModal: React.FC<
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
