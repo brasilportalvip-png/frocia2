@@ -2,6 +2,15 @@ import { Response, NextFunction } from 'express';
 import { adminAuth, adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
 
+export function normalizeTenantId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+
+  const normalized = value.trim();
+  return /^[A-Za-z0-9:_-]{1,120}$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
 export function normalizeAuthenticatedName(value: unknown): string | undefined {
   if (typeof value !== 'string') {
     return undefined;
@@ -56,6 +65,10 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     const email = decodedToken.email || '';
     let role: 'admin' | 'user' = 'user';
     let profileName: string | undefined;
+    const tokenTenantId =
+      normalizeTenantId(decodedToken.tenantId) ||
+      normalizeTenantId(decodedToken.organizationId) ||
+      normalizeTenantId(decodedToken.companyId);
 
     if (decodedToken.role === 'admin' || decodedToken.admin === true) {
       role = 'admin';
@@ -89,6 +102,9 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     req.user = {
       uid,
       email,
+      // Company scope is accepted only from a signed Firebase custom claim.
+      // A profile document controlled by the user must never grant tenancy.
+      tenantId: tokenTenantId || `user:${uid}`,
       name: profileName || tokenName || emailFallback || 'Usuário',
       picture: decodedToken.picture || '',
       emailVerified: decodedToken.email_verified === true,

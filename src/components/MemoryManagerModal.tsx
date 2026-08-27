@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Brain,
   Check,
@@ -15,15 +16,22 @@ import { apiClient } from '../services/apiClient';
 
 interface ManagedMemory {
   id: string;
-  scope: 'user' | 'project' | 'conversation';
+  tenantId: string;
+  scope: 'user' | 'organization' | 'project' | 'conversation';
   scopeId: string | null;
   category: string;
   content: string;
   source: string;
+  purpose: 'personalization' | 'project_continuity' | 'conversation_context' | 'user_note';
+  sensitivity: 'standard' | 'personal';
+  retentionDays: number;
+  consentVersion: string;
+  consentedAt: string;
   userApproved: boolean;
   validUntil: string | null;
   status: 'active' | 'superseded' | 'deleted';
   updatedAt: string;
+  retrievalReason?: string;
 }
 
 interface MemoryManagerModalProps {
@@ -50,6 +58,10 @@ export const MemoryManagerModal: React.FC<
   const [memories, setMemories] = useState<ManagedMemory[]>([]);
   const [category, setCategory] = useState('preferência');
   const [content, setContent] = useState('');
+  const [scope, setScope] = useState<'user' | 'organization'>('user');
+  const [purpose, setPurpose] = useState<ManagedMemory['purpose']>('personalization');
+  const [retentionDays, setRetentionDays] = useState(365);
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -64,7 +76,36 @@ export const MemoryManagerModal: React.FC<
       const response = await apiClient<{ memories: ManagedMemory[] }>(
         '/api/memories?manage=true'
       );
-      setMemories(response.memories);
+      let audit: {
+        events: Array<{
+          memoryId: string;
+          action: string;
+          reason: string;
+        }>;
+      } = { events: [] };
+      try {
+        audit = await apiClient<{
+          events: Array<{
+            memoryId: string;
+            action: string;
+            reason: string;
+          }>;
+        }>('/api/memories/audit');
+      } catch {
+        // O painel continua utilizável se o índice de auditoria estiver sendo criado.
+      }
+      const latestReason = new Map<string, string>();
+      audit.events.forEach((event) => {
+        if (event.action === 'retrieved' && !latestReason.has(event.memoryId)) {
+          latestReason.set(event.memoryId, event.reason);
+        }
+      });
+      setMemories(
+        response.memories.map((memory) => ({
+          ...memory,
+          retrievalReason: latestReason.get(memory.id),
+        }))
+      );
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -76,12 +117,33 @@ export const MemoryManagerModal: React.FC<
     if (isOpen) void loadMemories();
   }, [isOpen, loadMemories]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const resetEditor = () => {
     setEditingId(null);
     setCategory('preferência');
     setContent('');
+    setScope('user');
+    setPurpose('personalization');
+    setRetentionDays(365);
+    setConsentConfirmed(false);
   };
 
   const saveMemory = async () => {
@@ -90,6 +152,10 @@ export const MemoryManagerModal: React.FC<
 
     if (!normalizedContent) {
       setError('Escreva a informação que a Froc.IA deve lembrar.');
+      return;
+    }
+    if (!editingId && !consentConfirmed) {
+      setError('Confirme o consentimento antes de adicionar a memória.');
       return;
     }
 
@@ -103,16 +169,21 @@ export const MemoryManagerModal: React.FC<
           body: JSON.stringify({
             category: normalizedCategory,
             content: normalizedContent,
+            purpose,
+            retentionDays,
           }),
         });
       } else {
         await apiClient('/api/memories', {
           method: 'POST',
           body: JSON.stringify({
-            scope: 'user',
+            scope,
             category: normalizedCategory,
             content: normalizedContent,
-            userApproved: true,
+            purpose,
+            retentionDays,
+            sensitivity: 'standard',
+            consentConfirmed: true,
           }),
         });
       }
@@ -170,15 +241,13 @@ export const MemoryManagerModal: React.FC<
     }
   };
 
-  const exportMemories = () => {
-    const payload = JSON.stringify(
-      {
-        exportedAt: new Date().toISOString(),
-        memories,
-      },
-      null,
-      2
-    );
+  const exportMemories = async () => {
+    setError('');
+    const response = await apiClient<{
+      exportedAt: string;
+      memories: ManagedMemory[];
+    }>('/api/memories/export');
+    const payload = JSON.stringify(response, null, 2);
     const url = URL.createObjectURL(
       new Blob([payload], { type: 'application/json' })
     );
@@ -191,14 +260,29 @@ export const MemoryManagerModal: React.FC<
     URL.revokeObjectURL(url);
   };
 
-  return (
+  const deleteAllMemories = async () => {
+    if (!window.confirm('Excluir permanentemente todas as suas memórias?')) return;
+    setIsLoading(true);
+    setError('');
+    try {
+      await apiClient('/api/memories?confirm=DELETE_ALL', { method: 'DELETE' });
+      setMemories([]);
+      resetEditor();
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4 text-white backdrop-blur-xl"
+      className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/90 p-2 text-white backdrop-blur-xl sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="memory-manager-title"
     >
-      <div className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-amber-400/20 bg-[#070707] shadow-[0_0_70px_rgba(245,158,11,0.10)]">
+      <div className="my-2 flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-amber-400/20 bg-[#070707] shadow-[0_0_70px_rgba(245,158,11,0.10)] sm:my-0 sm:max-h-[92dvh]">
         <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-black/70 px-5 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 text-amber-300">
@@ -223,12 +307,55 @@ export const MemoryManagerModal: React.FC<
           </button>
         </header>
 
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[320px_1fr]">
-          <section className="border-b border-white/10 p-5 lg:border-b-0 lg:border-r">
+        <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[320px_1fr] lg:overflow-hidden">
+          <section className="border-b border-white/10 p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
             <div className="mb-4 flex items-center gap-2 text-xs text-emerald-300">
               <ShieldCheck className="h-4 w-4" />
               <span>Somente memórias aprovadas são usadas pela IA.</span>
             </div>
+
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-white/45">
+                Escopo
+                <select
+                  value={scope}
+                  onChange={(event) => setScope(event.target.value as 'user' | 'organization')}
+                  disabled={Boolean(editingId)}
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-[#111] px-3 py-2.5 text-sm normal-case outline-none"
+                >
+                  <option value="user">Usuário</option>
+                  <option value="organization">Empresa</option>
+                </select>
+              </label>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-white/45">
+                Retenção
+                <select
+                  value={retentionDays}
+                  onChange={(event) => setRetentionDays(Number(event.target.value))}
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-[#111] px-3 py-2.5 text-sm normal-case outline-none"
+                >
+                  <option value={30}>30 dias</option>
+                  <option value={90}>90 dias</option>
+                  <option value={180}>180 dias</option>
+                  <option value={365}>1 ano</option>
+                  <option value={730}>2 anos</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="mb-3 block text-[11px] font-bold uppercase tracking-wider text-white/45">
+              Finalidade
+              <select
+                value={purpose}
+                onChange={(event) => setPurpose(event.target.value as ManagedMemory['purpose'])}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-[#111] px-3 py-2.5 text-sm normal-case outline-none"
+              >
+                <option value="personalization">Personalização</option>
+                <option value="project_continuity">Continuidade de projeto</option>
+                <option value="conversation_context">Contexto de conversa</option>
+                <option value="user_note">Anotação do usuário</option>
+              </select>
+            </label>
 
             <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-white/45">
               Categoria
@@ -255,6 +382,18 @@ export const MemoryManagerModal: React.FC<
             <div className="mt-1 text-right text-[10px] text-white/30">
               {content.length}/2000
             </div>
+
+            {!editingId && (
+              <label className="mt-3 flex items-start gap-2 text-xs text-white/60">
+                <input
+                  type="checkbox"
+                  checked={consentConfirmed}
+                  onChange={(event) => setConsentConfirmed(event.target.checked)}
+                  className="mt-0.5"
+                />
+                Autorizo o uso desta informação somente para a finalidade e pelo prazo selecionados.
+              </label>
+            )}
 
             <div className="mt-3 flex gap-2">
               <button
@@ -284,7 +423,7 @@ export const MemoryManagerModal: React.FC<
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col p-5">
+          <section className="flex min-h-[18rem] flex-col p-4 sm:p-5 lg:min-h-0">
             <div className="mb-4 flex items-center justify-between gap-3">
               <p className="text-xs text-white/50">
                 {memories.length} memória{memories.length === 1 ? '' : 's'}
@@ -301,12 +440,20 @@ export const MemoryManagerModal: React.FC<
                 </button>
                 <button
                   type="button"
-                  onClick={exportMemories}
+                  onClick={() => void exportMemories().catch((exportError) => setError(errorMessage(exportError)))}
                   disabled={memories.length === 0}
                   className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-40"
                 >
                   <Download className="h-4 w-4" />
                   Exportar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void deleteAllMemories()}
+                  disabled={memories.length === 0 || isLoading}
+                  className="rounded-xl border border-rose-400/20 px-3 py-2 text-xs text-rose-300 hover:bg-rose-400/10 disabled:opacity-40"
+                >
+                  Excluir todas
                 </button>
               </div>
             </div>
@@ -341,6 +488,12 @@ export const MemoryManagerModal: React.FC<
                           <span className="text-[10px] uppercase text-white/30">
                             {memory.scope}
                           </span>
+                          <span className="text-[10px] text-cyan-300/70">
+                            {memory.purpose} · {memory.retentionDays} dias
+                          </span>
+                          {memory.sensitivity === 'personal' && (
+                            <span className="text-[10px] text-violet-300">criptografada</span>
+                          )}
                           <button
                             type="button"
                             onClick={() => void toggleApproval(memory)}
@@ -358,8 +511,11 @@ export const MemoryManagerModal: React.FC<
                           {memory.content}
                         </p>
                         <p className="mt-2 text-[10px] text-white/30">
-                          Atualizada em {formatDate(memory.updatedAt)}
+                          Atualizada em {formatDate(memory.updatedAt)} · expira {memory.validUntil ? formatDate(memory.validUntil) : 'conforme política'}
                         </p>
+                        {memory.retrievalReason && (
+                          <p className="mt-1 text-[10px] text-emerald-300/60">{memory.retrievalReason}</p>
+                        )}
                       </div>
                       <div className="flex shrink-0 gap-1">
                         <button
@@ -368,6 +524,9 @@ export const MemoryManagerModal: React.FC<
                             setEditingId(memory.id);
                             setCategory(memory.category);
                             setContent(memory.content);
+                            setPurpose(memory.purpose);
+                            setRetentionDays(memory.retentionDays);
+                            setScope(memory.scope === 'organization' ? 'organization' : 'user');
                             setError('');
                           }}
                           className="rounded-lg p-2 text-cyan-300 hover:bg-cyan-400/10"
@@ -397,6 +556,7 @@ export const MemoryManagerModal: React.FC<
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

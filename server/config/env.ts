@@ -45,6 +45,10 @@ export const EnvSchema = z.object({
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
 
+  // Optional application-level encryption for personal memories. When it is
+  // absent, personal data is rejected instead of being persisted in cleartext.
+  MEMORY_ENCRYPTION_KEY: z.string().optional(),
+
   // Mercado Pago Config
   MERCADO_PAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADO_PAGO_PUBLIC_KEY: z.string().optional(),
@@ -126,6 +130,7 @@ if (parseResult.success) {
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
+    MEMORY_ENCRYPTION_KEY: process.env.MEMORY_ENCRYPTION_KEY,
     MERCADO_PAGO_ACCESS_TOKEN: process.env.MERCADO_PAGO_ACCESS_TOKEN,
     MERCADO_PAGO_PUBLIC_KEY: process.env.MERCADO_PAGO_PUBLIC_KEY,
     MERCADO_PAGO_WEBHOOK_SECRET: process.env.MERCADO_PAGO_WEBHOOK_SECRET,
