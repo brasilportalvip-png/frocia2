@@ -13,7 +13,8 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
-  XCircle
+  XCircle,
+  Share2
 } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
 
@@ -28,6 +29,20 @@ interface HealthResponse {
   };
   evidenceLevel: Record<string, string>;
   limitations: string[];
+}
+
+interface SocialCapabilityResponse {
+  checkedAt: string;
+  capabilities: Array<{
+    platform: string;
+    configured: boolean;
+    accessMode:
+      | 'public_api'
+      | 'authenticated_api'
+      | 'unavailable';
+    scope: string;
+    limitation: string | null;
+  }>;
 }
 
 type StatusTone =
@@ -126,6 +141,8 @@ export const IntegrationsPage: React.FC = () => {
     useState<string | null>(null);
   const [lastChecked, setLastChecked] =
     useState<string>('');
+  const [socialCapabilities, setSocialCapabilities] =
+    useState<SocialCapabilityResponse | null>(null);
 
   const checkIntegrations =
     useCallback(async () => {
@@ -133,17 +150,21 @@ export const IntegrationsPage: React.FC = () => {
       setError(null);
 
       try {
-        const response =
-          await apiClient<HealthResponse>(
-            '/api/ready'
-          );
+        const [response, social] = await Promise.all([
+          apiClient<HealthResponse>('/api/ready'),
+          apiClient<SocialCapabilityResponse>(
+            '/api/social-search/capabilities'
+          ).catch(() => null),
+        ]);
 
         setHealth(response);
+        setSocialCapabilities(social);
         setLastChecked(
           new Date().toLocaleString('pt-BR')
         );
       } catch (requestError) {
         setHealth(null);
+        setSocialCapabilities(null);
         setError(
           requestError instanceof Error
             ? requestError.message
@@ -160,6 +181,10 @@ export const IntegrationsPage: React.FC = () => {
 
   const backendOnline =
     health?.status === 'ready';
+  const configuredSocial =
+    socialCapabilities?.capabilities.filter(
+      (capability) => capability.configured
+    ) || [];
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 text-white p-6 md:p-8 custom-scrollbar">
@@ -318,6 +343,29 @@ export const IntegrationsPage: React.FC = () => {
             tone="warning"
             icon={Github}
             details="O repositório do próprio Froc.IA está conectado ao GitHub, mas ainda não existe OAuth para conectar contas e publicar projetos dos usuários."
+          />
+
+          <StatusCard
+            title="Pesquisa em redes sociais"
+            description="APIs oficiais e permalinks verificáveis"
+            status={
+              configuredSocial.length > 0
+                ? `${configuredSocial.length} configurada(s)`
+                : 'Credenciais pendentes'
+            }
+            tone={
+              configuredSocial.length > 0
+                ? 'warning'
+                : 'offline'
+            }
+            icon={Share2}
+            details={
+              configuredSocial.length > 0
+                ? `Conectores detectados: ${configuredSocial
+                    .map((capability) => capability.platform)
+                    .join(', ')}. A tela confirma configuração; cada consulta registra o resultado real da API.`
+                : 'YouTube, X, Reddit, Instagram/Facebook e TikTok exigem credenciais ou aprovação próprias. Sem isso, a Froc.IA usa somente pesquisa pública na web e não finge acesso autenticado.'
+            }
           />
         </div>
 

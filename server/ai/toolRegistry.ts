@@ -147,6 +147,67 @@ export class ToolRegistry {
         verificationStrategy: 'provider_receipt',
       },
     ],
+    [
+      'social_search',
+      {
+        name: 'social_search',
+        description:
+          'Pesquisa conteúdo acessível por APIs oficiais de redes sociais, com plataforma, conta, data e permalink.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: {
+              type: 'STRING',
+              description: 'Consulta de busca social',
+            },
+            platforms: {
+              type: 'ARRAY',
+              items: { type: 'STRING' },
+              description:
+                'YouTube, X, Reddit, Instagram, Facebook, TikTok ou LinkedIn',
+            },
+            account: {
+              type: 'STRING',
+              description:
+                'Conta, canal ou comunidade opcional',
+            },
+            limit: {
+              type: 'NUMBER',
+              description:
+                'Resultados por plataforma, entre 1 e 10',
+            },
+          },
+          required: ['query'],
+        },
+        outputSchema: {
+          type: 'OBJECT',
+          properties: {
+            results: { type: 'ARRAY' },
+            items: { type: 'ARRAY' },
+            limitations: { type: 'ARRAY' },
+          },
+        },
+        authScopes: ['user', 'external_oauth'],
+        riskLevel: 'medium',
+        mutatesState: false,
+        requiresConfirmation: false,
+        idempotencyRequired: false,
+        timeoutMs: 15_000,
+        maxRetries: 1,
+        retryBackoffMs: 500,
+        costLimitCredits: 10,
+        rateLimit: {
+          windowMs: 60_000,
+          maxRequests: 10,
+        },
+        redactFields: [
+          'accessToken',
+          'bearerToken',
+          'clientSecret',
+        ],
+        verificationStrategy: 'provider_receipt',
+      },
+    ],
   ]);
 
   static getTool(name: string): ToolDeclaration | undefined {

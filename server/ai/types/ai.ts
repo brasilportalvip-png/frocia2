@@ -43,6 +43,7 @@ export interface RequestClassification {
   requiresCode: boolean;
   requiresIndependentVerification: boolean;
   reasons: string[];
+  socialPlatforms?: string[];
 }
 
 export interface ModelCapabilities {
@@ -188,6 +189,12 @@ export interface ExecutionRecord {
     | 'unsupported';
   sourceCount?: number;
   sourceDomains?: string[];
+  socialPlatforms?: string[];
+  socialSearchStatus?:
+    | 'not_requested'
+    | 'supported'
+    | 'limited'
+    | 'unsupported';
   contextTruncated?: boolean;
   omittedHistoryCount?: number;
 }
@@ -209,10 +216,14 @@ export interface MessageCitation {
   title: string;
   uri: string;
   snippet?: string;
-  sourceType: 'web' | 'knowledge_base';
+  sourceType: 'web' | 'social' | 'knowledge_base';
   docId?: string;
   domain?: string;
   retrievedAt?: string;
+  platform?: string;
+  account?: string | null;
+  externalId?: string;
+  accessMode?: 'public_api' | 'authenticated_api';
 }
 
 export interface Message {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import {
   InvalidAIAttachmentError,
@@ -24,6 +24,11 @@ function makeTextAttachment(content: string) {
 }
 
 describe('Attachment and Import Security Regression', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   describe('AI attachment integrity', () => {
     it('accepts content with matching size and SHA-256', () => {
       const attachment = makeTextAttachment('export const value = 42;');
@@ -97,6 +102,108 @@ describe('Attachment and Import Security Regression', () => {
         })
       ).rejects.toMatchObject({
         code: 'invalid_github_host'
+      });
+    });
+
+    it('revalidates every redirect and blocks a redirect to loopback', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(null, {
+          status: 302,
+          headers: { Location: 'http://127.0.0.1/metadata' }
+        })
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(
+        ExternalImportService.import({
+          type: 'url',
+          url: 'https://93.184.216.34/public-page'
+        })
+      ).rejects.toMatchObject({ code: 'private_destination' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'manual' });
+    });
+
+    it('stops streaming as soon as the response exceeds the byte limit', async () => {
+      const oversizedChunk = new Uint8Array(900_001).fill(65);
+      const cancel = vi.fn();
+      const body = {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValueOnce({
+            done: false,
+            value: oversizedChunk
+          }),
+          cancel
+        })
+      };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'Content-Type': 'text/plain' }),
+          body
+        })
+      );
+
+      await expect(
+        ExternalImportService.import({
+          type: 'url',
+          url: 'https://93.184.216.34/large-document'
+        })
+      ).rejects.toMatchObject({
+        code: 'response_too_large',
+        status: 413
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+    });
+
+    it('sanitizes executable HTML and returns only inert text', async () => {
+      const html = `<!doctype html><html><head><title>Fonte segura</title></head>
+        <body><h1>Notícia pública</h1><script>roubarToken()</script>
+        <iframe src="https://evil.example"></iframe><p>Conteúdo verificável.</p></body></html>`;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(html, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          })
+        )
+      );
+
+      const imported = await ExternalImportService.import({
+        type: 'url',
+        url: 'https://93.184.216.34/article'
+      });
+
+      expect(imported.title).toBe('Fonte segura');
+      expect(imported.content).toContain('Notícia pública');
+      expect(imported.content).toContain('Conteúdo verificável.');
+      expect(imported.content).not.toContain('roubarToken');
+      expect(imported.content).not.toContain('iframe');
+      expect(imported.mimeType).toBe('text/plain');
+    });
+
+    it('rejects binary content even when the endpoint responds successfully', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(new Uint8Array([0, 1, 2, 3]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/octet-stream' }
+          })
+        )
+      );
+
+      await expect(
+        ExternalImportService.import({
+          type: 'url',
+          url: 'https://93.184.216.34/binary'
+        })
+      ).rejects.toMatchObject({
+        code: 'unsupported_content',
+        status: 415
       });
     });
   });

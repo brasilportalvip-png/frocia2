@@ -45,7 +45,8 @@ function uniqueDomains(
       citations
         .filter(
           (citation) =>
-            citation.sourceType === 'web'
+            citation.sourceType === 'web' ||
+            citation.sourceType === 'social'
         )
         .map((citation) => citation.domain || '')
         .filter(Boolean)
@@ -58,7 +59,9 @@ export class ResearchEvidenceService {
     input: FinalizeEvidenceInput
   ): EvidenceAssessment {
     const webCitations = input.citations.filter(
-      (citation) => citation.sourceType === 'web'
+      (citation) =>
+        citation.sourceType === 'web' ||
+        citation.sourceType === 'social'
     );
     const sourceDomains = uniqueDomains(webCitations);
 

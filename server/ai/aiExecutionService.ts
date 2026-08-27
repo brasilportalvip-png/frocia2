@@ -21,6 +21,11 @@ import { ResearchEvidenceService } from './researchEvidenceService.js';
 import { ConversationContextService } from './conversationContextService.js';
 import { MemoryService } from './memoryService.js';
 import { recordOperationalEventBestEffort } from '../observability/operationalTelemetryRuntime.js';
+import {
+  SocialSearchReport,
+  SocialSearchService,
+} from './socialSearchService.js';
+import { SocialSearchPolicyService } from './socialSearchPolicyService.js';
 
 export class AIExecutionService {
   /**
@@ -39,8 +44,10 @@ export class AIExecutionService {
     evidence: {
       researchStatus: string;
       ragStatus: string;
+      socialSearchStatus: string;
       sourceCount: number;
       sourceDomains: string[];
+      socialPlatforms: string[];
     };
   }> {
     await FeatureFlagService.assertEnabled('ai_chat');
@@ -135,6 +142,7 @@ export class AIExecutionService {
     let startTime = Date.now();
     const citations: MessageCitation[] = [];
     let ragChunksUsed: KnowledgeChunk[] = [];
+    let socialSearchReport: SocialSearchReport | null = null;
     let contextTruncated = false;
     let omittedHistoryCount = 0;
     const enableSearchGrounding =
@@ -245,6 +253,38 @@ if (params.abortSignal?.aborted) {
         citations.push(CitationService.buildRAGCitationPill(chunk));
       }
 
+      if (
+        SocialSearchService.shouldSearch(
+          sanitizedPrompt,
+          mode
+        )
+      ) {
+        await SocialSearchPolicyService.assertAllowed({
+          userId,
+          tenantId,
+        });
+        socialSearchReport =
+          await SocialSearchService.search({
+            query: sanitizedPrompt,
+            platforms:
+              SocialSearchService.extractRequestedPlatforms(
+                sanitizedPrompt
+              ),
+            limit: 5,
+          });
+        citations.push(
+          ...CitationService.buildSocialCitations(
+            socialSearchReport.items
+          )
+        );
+      }
+
+      const modelUserMessage = socialSearchReport
+        ? `${assembled.userMessage}${SocialSearchService.toGroundingContext(
+            socialSearchReport
+          )}`
+        : assembled.userMessage;
+
       startTime = Date.now();
       // 6. Execute with Primary Model and Fallback
 try {
@@ -254,7 +294,7 @@ try {
   const res = await GeminiProvider.generate({
           model: modelToUse,
           systemInstruction: assembled.systemInstruction,
-          userMessage: assembled.userMessage,
+          userMessage: modelUserMessage,
           attachments,
           responseFormat,
           enableSearchGrounding,
@@ -291,7 +331,7 @@ const fallbackModelConfig =
           const fbRes = await GeminiProvider.generate({
             model: modelToUse,
             systemInstruction: assembled.systemInstruction,
-            userMessage: assembled.userMessage,
+            userMessage: modelUserMessage,
             attachments,
             responseFormat,
             enableSearchGrounding,
@@ -363,6 +403,9 @@ maxRetries: fallbackModelConfig.maxRetries,
 const mergedCitations = CitationService.mergeCitations(
   citations.filter(
     (citation) => citation.sourceType === 'web'
+  ),
+  citations.filter(
+    (citation) => citation.sourceType === 'social'
   ),
   citations.filter(
     (citation) =>
@@ -486,6 +529,12 @@ const consumedCredits = CostService.calculateCreditCost(
       ragEvidenceStatus: evidence.ragStatus,
       sourceCount: evidence.sourceCount,
       sourceDomains: evidence.sourceDomains,
+      socialPlatforms:
+        socialSearchReport?.requestedPlatforms || [],
+      socialSearchStatus:
+        SocialSearchService.evidenceStatus(
+          socialSearchReport
+        ),
       contextTruncated,
       omittedHistoryCount,
       completedAt: new Date().toISOString(),
@@ -520,8 +569,14 @@ const consumedCredits = CostService.calculateCreditCost(
       evidence: {
         researchStatus: evidence.researchStatus,
         ragStatus: evidence.ragStatus,
+        socialSearchStatus:
+          SocialSearchService.evidenceStatus(
+            socialSearchReport
+          ),
         sourceCount: evidence.sourceCount,
         sourceDomains: evidence.sourceDomains,
+        socialPlatforms:
+          socialSearchReport?.requestedPlatforms || [],
       },
     };
   }

@@ -23,6 +23,7 @@
     "test:memory-durable": "vitest run tests/memoryControl.test.ts tests/memoryPrivacyAndContext.test.ts tests/durableExecutionService.test.ts",
     "test:site-factory": "vitest run tests/siteFactoryPipeline.test.ts tests/operationalObservability.test.ts",
     "test:security-release": "vitest run tests/securityAndReleaseGovernance.test.ts tests/attachmentImportSecurity.test.ts tests/authAndHealthSecurity.test.ts",
+    "test:social-search": "vitest run tests/socialSearchOfficialApis.test.ts tests/researchAndRagEvidence.test.ts",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "node --import tsx scripts/validate-requirement-tracker.ts",
     "validate:production-integrity": "node --import tsx scripts/validate-production-integrity.ts"

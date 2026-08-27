@@ -34,6 +34,11 @@ import {
 } from '../services/featureFlagService.js';
 import { ConversationContextService } from '../ai/conversationContextService.js';
 import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
+import {
+  SocialSearchReport,
+  SocialSearchService,
+} from '../ai/socialSearchService.js';
+import { SocialSearchPolicyService } from '../ai/socialSearchPolicyService.js';
 
 export const aiRouter = Router();
 
@@ -567,6 +572,7 @@ aiRouter.post(
 
     let fullOutput = '';
     let streamCitations: MessageCitation[] = [];
+    let socialSearchReport: SocialSearchReport | null = null;
     const startTime = Date.now();
     let isClosed = false;
     const bufferForEvidence =
@@ -613,13 +619,57 @@ aiRouter.post(
           CitationService.buildRAGCitationPill(chunk)
         );
 
+      if (
+        SocialSearchService.shouldSearch(
+          sanitizedPrompt,
+          mode
+        )
+      ) {
+        await SocialSearchPolicyService.assertAllowed({
+          userId: uid,
+          tenantId: req.user!.tenantId,
+        });
+        socialSearchReport =
+          await SocialSearchService.search({
+            query: sanitizedPrompt,
+            platforms:
+              SocialSearchService.extractRequestedPlatforms(
+                sanitizedPrompt
+              ),
+            limit: 5,
+          });
+        streamCitations.push(
+          ...CitationService.buildSocialCitations(
+            socialSearchReport.items
+          )
+        );
+        sendEvent('social_search', {
+          searchedAt: socialSearchReport.searchedAt,
+          results: socialSearchReport.results.map(
+            (result) => ({
+              platform: result.platform,
+              status: result.status,
+              accessMode: result.accessMode,
+              itemCount: result.items.length,
+              limitation: result.limitation,
+            })
+          ),
+        });
+      }
+
+      const modelUserMessage = socialSearchReport
+        ? `${assembled.userMessage}${SocialSearchService.toGroundingContext(
+            socialSearchReport
+          )}`
+        : assembled.userMessage;
+
       const stream =
         GeminiProvider.generateStream({
           model: route.selectedModel,
           systemInstruction:
             assembled.systemInstruction,
           userMessage:
-            assembled.userMessage,
+            modelUserMessage,
           attachments,
           enableSearchGrounding,
           abortSignal,
@@ -665,6 +715,10 @@ aiRouter.post(
           streamCitations.filter(
             (citation) =>
               citation.sourceType === 'web'
+          ),
+          streamCitations.filter(
+            (citation) =>
+              citation.sourceType === 'social'
           ),
           streamCitations.filter(
             (citation) =>
@@ -746,6 +800,12 @@ aiRouter.post(
           sourceCount: evidence.sourceCount,
           sourceDomains:
             evidence.sourceDomains,
+          socialPlatforms:
+            socialSearchReport?.requestedPlatforms || [],
+          socialSearchStatus:
+            SocialSearchService.evidenceStatus(
+              socialSearchReport
+            ),
           contextTruncated:
             assembled.contextTruncated,
           omittedHistoryCount:
@@ -772,7 +832,13 @@ aiRouter.post(
           ragStatus: evidence.ragStatus,
           sourceCount: evidence.sourceCount,
           sourceDomains:
-            evidence.sourceDomains
+            evidence.sourceDomains,
+          socialPlatforms:
+            socialSearchReport?.requestedPlatforms || [],
+          socialSearchStatus:
+            SocialSearchService.evidenceStatus(
+              socialSearchReport
+            )
         }
       });
 

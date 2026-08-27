@@ -781,8 +781,10 @@ const handleGeneralChat = async (
         title: string;
         uri: string;
         snippet?: string;
-        sourceType?: 'web' | 'knowledge_base';
+        sourceType?: 'web' | 'social' | 'knowledge_base';
         domain?: string;
+        platform?: string;
+        account?: string | null;
       }>;
       fallbackUsed: boolean;
     }>('/api/ai/executions', {
