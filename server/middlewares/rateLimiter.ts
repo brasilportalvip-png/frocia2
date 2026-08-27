@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Response, NextFunction } from 'express';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
+import { recordSecurityEventBestEffort } from '../security/securityEventService.js';
 
 interface RateLimitRecord {
   count: number;
@@ -182,6 +183,17 @@ export function createRateLimiter(
           'Retry-After',
           retryAfterSeconds
         );
+
+        void recordSecurityEventBestEffort({
+          category: 'rate_limit',
+          severity: 'medium',
+          correlationId: req.correlationId || 'missing-correlation-id',
+          sourceIp: req.ip,
+          userId: req.user?.uid,
+          tenantId: req.user?.tenantId,
+          route: req.path,
+          details: { keyPrefix, windowMs, max },
+        });
 
         return res.status(429).json({
           error: {

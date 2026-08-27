@@ -25,6 +25,7 @@ export const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
   APP_URL: urlSchema.optional(),
+  TRUSTED_ORIGINS: z.string().optional(),
 
   // Gemini AI
   GEMINI_API_KEY: z.string().optional(),
@@ -118,6 +119,7 @@ if (parseResult.success) {
     NODE_ENV: (process.env.NODE_ENV as any) || 'development',
     PORT: Number(process.env.PORT) || 3000,
     APP_URL: process.env.APP_URL,
+    TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GEMINI_DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.6-flash',
     GEMINI_FAST_MODEL: process.env.GEMINI_FAST_MODEL || 'gemini-3.1-flash-lite',

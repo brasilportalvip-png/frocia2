@@ -4,12 +4,12 @@ import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyA8O_D-hrsqGkKbRwYzanxjBRHcQbwgvXg',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'frocia-e07a5.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'frocia-e07a5',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'frocia-e07a5.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '127221403489',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:127221403489:web:008708c3ab1187422abf20',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 export const isFirebaseClientConfigured = (): boolean => {

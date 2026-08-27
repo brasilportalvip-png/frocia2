@@ -7,6 +7,10 @@ import { ModelRegistry } from '../ai/modelRegistry.js';
 import { EvaluationService } from '../ai/evaluationService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { AIMode } from '../ai/types/ai.js';
+import {
+  CONTINUOUS_EVALUATION_VERSION,
+  listContinuousEvaluations,
+} from '../ai/continuousEvaluationCatalog.js';
 
 export const adminAiRouter = Router();
 
@@ -197,6 +201,20 @@ adminAiRouter.get(
         }
       });
     }
+  }
+);
+
+// GET /api/admin/ai/evaluations
+adminAiRouter.get(
+  '/evaluations/catalog',
+  requireAuth,
+  requireAdmin,
+  (req: AuthenticatedRequest, res) => {
+    return res.json({
+      version: CONTINUOUS_EVALUATION_VERSION,
+      evaluations: listContinuousEvaluations(),
+      correlationId: req.correlationId,
+    });
   }
 );
 

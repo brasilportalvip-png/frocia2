@@ -19,10 +19,15 @@ import { apiClient } from '../services/apiClient';
 
 interface HealthResponse {
   status: string;
-  service: string;
-  correlationId: string;
-  firebaseConfigured: boolean;
-  mercadoPagoConfigured: boolean;
+  timestamp: string;
+  checks: {
+    firebaseAdminConfigured: boolean;
+    firestoreReachable: boolean;
+    geminiConfigured: boolean;
+    mercadoPagoConfigured: boolean;
+  };
+  evidenceLevel: Record<string, string>;
+  limitations: string[];
 }
 
 type StatusTone =
@@ -130,7 +135,7 @@ export const IntegrationsPage: React.FC = () => {
       try {
         const response =
           await apiClient<HealthResponse>(
-            '/api/health'
+            '/api/ready'
           );
 
         setHealth(response);
@@ -154,7 +159,7 @@ export const IntegrationsPage: React.FC = () => {
   }, [checkIntegrations]);
 
   const backendOnline =
-    health?.status === 'ok';
+    health?.status === 'ready';
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 text-white p-6 md:p-8 custom-scrollbar">
@@ -229,7 +234,7 @@ export const IntegrationsPage: React.FC = () => {
             icon={Server}
             details={
               backendOnline
-                ? `Serviço respondeu corretamente. Identificador da verificação: ${health?.correlationId}`
+                ? `Serviço respondeu corretamente em ${new Date(health?.timestamp || '').toLocaleString('pt-BR')}.`
                 : 'O backend não respondeu corretamente à verificação de saúde.'
             }
           />
@@ -259,20 +264,20 @@ export const IntegrationsPage: React.FC = () => {
             title="Firebase"
             description="Authentication e Firestore"
             status={
-              health?.firebaseConfigured
-                ? 'Configurado'
-                : 'Não configurado'
+              health?.checks.firestoreReachable
+                ? 'Firestore acessível'
+                : 'Não confirmado'
             }
             tone={
-              health?.firebaseConfigured
+              health?.checks.firebaseAdminConfigured && health?.checks.firestoreReachable
                 ? 'operational'
                 : 'offline'
             }
             icon={Flame}
             details={
-              health?.firebaseConfigured
-                ? 'O Firebase Admin está configurado no backend. Authentication e criação de perfil no Firestore foram homologados.'
-                : 'As credenciais do Firebase Admin não foram confirmadas pelo backend.'
+              health?.checks.firebaseAdminConfigured && health?.checks.firestoreReachable
+                ? 'O Firebase Admin está configurado e uma leitura real no Firestore foi concluída.'
+                : 'A configuração do Firebase ou a leitura do Firestore não foi confirmada.'
             }
           />
 
@@ -280,19 +285,19 @@ export const IntegrationsPage: React.FC = () => {
             title="Mercado Pago"
             description="Cobranças Pix e webhook"
             status={
-              health?.mercadoPagoConfigured
+              health?.checks.mercadoPagoConfigured
                 ? 'Configurado'
                 : 'Não configurado'
             }
             tone={
-              health?.mercadoPagoConfigured
-                ? 'operational'
+              health?.checks.mercadoPagoConfigured
+                ? 'warning'
                 : 'offline'
             }
             icon={CreditCard}
             details={
-              health?.mercadoPagoConfigured
-                ? 'A criação de cobrança Pix e a validação de webhook foram homologadas. A aprovação com crédito automático ainda requer teste final.'
+              health?.checks.mercadoPagoConfigured
+                ? 'As credenciais necessárias estão presentes. Este teste não cria cobrança nem comprova uma transação real.'
                 : 'O token do Mercado Pago não foi confirmado pelo backend.'
             }
           />
@@ -300,10 +305,10 @@ export const IntegrationsPage: React.FC = () => {
           <StatusCard
             title="Gemini"
             description="Geração e refinamento com IA"
-            status="Homologação pendente"
-            tone="warning"
+            status={health?.checks.geminiConfigured ? 'Configurado' : 'Não configurado'}
+            tone={health?.checks.geminiConfigured ? 'warning' : 'offline'}
             icon={BrainCircuit}
-            details="Os modelos estão implementados e os testes automatizados passam, mas a geração completa em produção ainda precisa ser validada com créditos de teste."
+            details="A presença da chave é verificada sem executar uma geração onerosa. Homologação exige recibo de uma chamada real separada."
           />
 
           <StatusCard

@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { adminAuth, adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
+import { recordSecurityEventBestEffort } from '../security/securityEventService.js';
 
 export function normalizeTenantId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -32,6 +33,14 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    void recordSecurityEventBestEffort({
+      category: 'authentication_failure',
+      severity: 'low',
+      correlationId: req.correlationId || 'missing-correlation-id',
+      sourceIp: req.ip,
+      route: req.path,
+      details: { reason: 'authorization_header_missing' },
+    });
     return res.status(401).json({ error: 'Token de autenticação não fornecido ou formato inválido.' });
   }
 
@@ -46,20 +55,8 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
   }
 
   try {
-    let decodedToken;
-    try {
-      const checkRevoked = isFirebaseAdminConfigured();
-      decodedToken = await adminAuth.verifyIdToken(token, checkRevoked);
-    } catch (checkErr: any) {
-      if (checkErr?.code === 'auth/id-token-revoked' || checkErr?.code === 'auth/user-disabled') {
-        throw checkErr;
-      }
-      try {
-        decodedToken = await adminAuth.verifyIdToken(token, false);
-      } catch (verifyErr: any) {
-        throw verifyErr;
-      }
-    }
+    const checkRevoked = isFirebaseAdminConfigured();
+    const decodedToken = await adminAuth.verifyIdToken(token, checkRevoked);
 
     const uid = decodedToken.uid;
     const email = decodedToken.email || '';
@@ -89,8 +86,12 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
             normalizeAuthenticatedName(userData?.displayName) ||
             normalizeAuthenticatedName(userData?.name);
         }
-      } catch {
-        // Non-blocking
+      } catch (profileError) {
+        console.warn('authenticated_profile_lookup_failed', {
+          correlationId: req.correlationId,
+          userId: uid,
+          error: profileError instanceof Error ? profileError.message : String(profileError),
+        });
       }
     }
 
@@ -113,6 +114,14 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
 
     next();
   } catch (error: any) {
+    void recordSecurityEventBestEffort({
+      category: 'authentication_failure',
+      severity: error?.code === 'auth/id-token-revoked' ? 'high' : 'medium',
+      correlationId: req.correlationId || 'missing-correlation-id',
+      sourceIp: req.ip,
+      route: req.path,
+      details: { reason: error?.code || error?.name || 'token_verification_failed' },
+    });
     return res.status(401).json({ error: 'Token de autenticação inválido ou expirado.' });
   }
 }

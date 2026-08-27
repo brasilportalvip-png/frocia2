@@ -44,11 +44,21 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
     status: isReady ? 'ready' : 'not_ready',
     timestamp,
     checks: {
-      auth: authConfigured,
-      firestore: firestoreReachable,
-      gemini: geminiConfigured,
-      mercadoPago: MercadoPagoService.isConfigured(),
+      firebaseAdminConfigured: authConfigured,
+      firestoreReachable,
+      geminiConfigured,
+      mercadoPagoConfigured: MercadoPagoService.isConfigured(),
     },
+    evidenceLevel: {
+      firebaseAdmin: 'configuration',
+      firestore: 'live_read',
+      gemini: 'configuration_only',
+      mercadoPago: 'configuration_only',
+    },
+    limitations: [
+      'Este endpoint não chama Gemini nem Mercado Pago para evitar custo e efeitos externos.',
+      'Uma chave configurada não equivale a uma operação homologada no provedor.',
+    ],
   });
 });
 

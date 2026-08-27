@@ -58,6 +58,9 @@ import { deployRouter } from './server/routes/deployRoutes.js';
 import { siteFactoryRouter } from './server/routes/siteFactoryRoutes.js';
 import { observabilityRouter } from './server/routes/observabilityRoutes.js';
 import { operationalTelemetryMiddleware } from './server/middlewares/operationalTelemetry.js';
+import { requestIntegrityMiddleware } from './server/middlewares/requestIntegrity.js';
+import { releaseGovernanceRouter } from './server/routes/releaseGovernanceRoutes.js';
+import { securityIncidentRouter } from './server/routes/securityIncidentRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -137,7 +140,7 @@ export async function createApp() {
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
           formAction: ["'self'"],
-          frameAncestors: ["'self'", 'https:', 'http:'],
+          frameAncestors: ["'self'"],
         },
       },
       crossOriginEmbedderPolicy: false,
@@ -146,6 +149,7 @@ export async function createApp() {
   // Portable backups can reach 12 MB. Keep the larger parser restricted to
   // the two authenticated disaster-recovery endpoints; all other JSON stays
   // capped at 2 MB.
+  app.use(correlationIdMiddleware);
   app.use(
     [
       '/api/admin/disaster-recovery/validate',
@@ -154,7 +158,7 @@ export async function createApp() {
     express.json({ limit: '14mb' })
   );
   app.use(express.json({ limit: '2mb' }));
-  app.use(correlationIdMiddleware);
+  app.use(requestIntegrityMiddleware);
   app.use(operationalTelemetryMiddleware);
 
   // Mount Sub-routers
@@ -173,6 +177,8 @@ export async function createApp() {
   app.use('/api/admin/self-evolution', selfEvolutionRouter);
   app.use('/api/admin/feature-flags', featureFlagRouter);
   app.use('/api/admin/disaster-recovery', portableRecoveryRouter);
+  app.use('/api/admin/releases', releaseGovernanceRouter);
+  app.use('/api/admin/security/incidents', securityIncidentRouter);
   app.use('/api/imports', externalImportRouter);
   app.use(
     '/api/ai',
