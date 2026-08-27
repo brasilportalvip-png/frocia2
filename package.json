@@ -21,6 +21,7 @@
     "test:tools": "vitest run tests/toolExecutionService.test.ts",
     "test:research-rag": "vitest run tests/researchAndRagEvidence.test.ts",
     "test:memory-durable": "vitest run tests/memoryControl.test.ts tests/memoryPrivacyAndContext.test.ts tests/durableExecutionService.test.ts",
+    "test:site-factory": "vitest run tests/siteFactoryPipeline.test.ts tests/operationalObservability.test.ts",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "tsx scripts/validate-requirement-tracker.ts"
   },

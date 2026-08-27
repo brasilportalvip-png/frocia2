@@ -48,6 +48,9 @@ jobs:
       - name: Run Tool Runtime Tests
         run: npm run test:tools
 
+      - name: Run Site Factory and Observability Tests
+        run: npm run test:site-factory
+
       - name: Run Full Test Suite
         run: npm test
 

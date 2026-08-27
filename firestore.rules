@@ -191,6 +191,27 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Site factory specifications, immutable versions, change requests and
+    // quality gates are exposed only through the authenticated backend API.
+    match /site_factory_projects/{document=**} {
+      allow read, write: if false;
+    }
+    match /site_quality_plans/{planId} {
+      allow read, write: if false;
+    }
+
+    // Operational telemetry, alerts and distributed resilience state contain
+    // internal dimensions and are restricted to the trusted backend.
+    match /operational_telemetry_events/{eventId} {
+      allow read, write: if false;
+    }
+    match /operational_alerts/{alertId} {
+      allow read, write: if false;
+    }
+    match /operational_resilience_state/{stateId} {
+      allow read, write: if false;
+    }
+
     // Media Generations & Jobs
     match /media_generations/{genId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());

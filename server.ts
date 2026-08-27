@@ -55,6 +55,9 @@ import { capabilityRouter } from './server/routes/capabilityRoutes.js';
 import { selfEvolutionRouter } from './server/routes/selfEvolutionRoutes.js';
 import { mediaRouter } from './server/routes/mediaRoutes.js';
 import { deployRouter } from './server/routes/deployRoutes.js';
+import { siteFactoryRouter } from './server/routes/siteFactoryRoutes.js';
+import { observabilityRouter } from './server/routes/observabilityRoutes.js';
+import { operationalTelemetryMiddleware } from './server/middlewares/operationalTelemetry.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -152,6 +155,7 @@ export async function createApp() {
   );
   app.use(express.json({ limit: '2mb' }));
   app.use(correlationIdMiddleware);
+  app.use(operationalTelemetryMiddleware);
 
   // Mount Sub-routers
   app.use('/api', healthRouter);
@@ -162,8 +166,10 @@ export async function createApp() {
   app.use('/api/memories', memoryRouter);
   app.use('/api', knowledgeRouter);
   app.use('/api', siteBuilderRouter);
+  app.use('/api/site-factory', siteFactoryRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
+  app.use('/api/admin/observability', observabilityRouter);
   app.use('/api/admin/self-evolution', selfEvolutionRouter);
   app.use('/api/admin/feature-flags', featureFlagRouter);
   app.use('/api/admin/disaster-recovery', portableRecoveryRouter);
