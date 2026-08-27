@@ -3,6 +3,7 @@ import {
   RequestClassification,
   SpecialistDomain,
 } from './types/ai.js';
+import { SocialSearchService } from './socialSearchService.js';
 
 interface ClassificationInput {
   mode: AIMode;
@@ -116,9 +117,19 @@ export class AIRequestClassifier {
     ].includes(domain);
     const personalData =
       PERSONAL_DATA_PATTERN.test(prompt);
+    const socialPlatforms =
+      SocialSearchService.extractRequestedPlatforms(
+        prompt
+      );
+    const requiresSocialSearch =
+      SocialSearchService.shouldSearch(
+        prompt,
+        input.mode
+      );
     const requiresSearch =
       input.mode === 'research' ||
       highStakes ||
+      requiresSocialSearch ||
       CURRENT_INFORMATION_PATTERN.test(prompt);
     const requiresCode =
       input.mode === 'code' ||
@@ -157,6 +168,12 @@ export class AIRequestClassifier {
       reasons.push('current_sources_required');
     }
 
+    if (requiresSocialSearch) {
+      reasons.push(
+        'official_social_api_search_required'
+      );
+    }
+
     if (highStakes) {
       reasons.push('high_stakes_guardrails_required');
     }
@@ -185,6 +202,7 @@ export class AIRequestClassifier {
         domain === 'security' ||
         domain === 'site-builder',
       reasons,
+      socialPlatforms,
     };
   }
 }

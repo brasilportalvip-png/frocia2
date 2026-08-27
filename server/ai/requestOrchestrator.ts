@@ -7,6 +7,7 @@ import {
   RouterResult,
   ToolDeclaration,
 } from './types/ai.js';
+import { SocialSearchService } from './socialSearchService.js';
 
 export class UnknownAIToolError extends Error {
   constructor(readonly toolName: string) {
@@ -98,6 +99,15 @@ export class AIRequestOrchestrator {
 
     if (classification.requiresSearch) {
       automaticTools.push('web_search');
+    }
+
+    if (
+      SocialSearchService.shouldSearch(
+        input.prompt,
+        input.mode
+      )
+    ) {
+      automaticTools.push('social_search');
     }
 
     if (input.knowledgeBaseIds?.length) {

@@ -3,6 +3,7 @@ import {
   KnowledgeChunk,
   MessageCitation,
 } from './types/ai.js';
+import { SocialSearchItem } from './socialSearchService.js';
 
 const MAX_TITLE_LENGTH = 240;
 const MAX_SNIPPET_LENGTH = 500;
@@ -151,6 +152,45 @@ function numberCitations(
 }
 
 export class CitationService {
+  static buildSocialCitations(
+    items: SocialSearchItem[]
+  ): MessageCitation[] {
+    const citations = items.flatMap(
+      (item): MessageCitation[] => {
+        const url = normalizePublicHttpsUrl(
+          item.permalink
+        );
+        if (!url) return [];
+
+        return [
+          {
+            title: cleanText(
+              item.title,
+              MAX_TITLE_LENGTH
+            ),
+            uri: url.href,
+            snippet: cleanText(
+              item.text,
+              MAX_SNIPPET_LENGTH
+            ),
+            sourceType: 'social',
+            domain: sourceDomain(url),
+            retrievedAt: item.retrievedAt,
+            platform: item.platform,
+            account: item.accountHandle,
+            externalId: item.externalId,
+            accessMode:
+              item.platform === 'youtube'
+                ? 'public_api'
+                : 'authenticated_api',
+          },
+        ];
+      }
+    );
+
+    return numberCitations(citations);
+  }
+
   static buildRAGCitationPill(
     chunk: KnowledgeChunk,
     filename?: string
@@ -229,11 +269,13 @@ export class CitationService {
 
     for (const citation of groups.flat()) {
       const normalizedWebUrl =
-        citation.sourceType === 'web'
+        citation.sourceType === 'web' ||
+        citation.sourceType === 'social'
           ? normalizePublicHttpsUrl(citation.uri)?.href
           : null;
       const key =
-        citation.sourceType === 'web'
+        citation.sourceType === 'web' ||
+        citation.sourceType === 'social'
           ? normalizedWebUrl
           : `${citation.sourceType}:${citation.docId || citation.uri}`;
 

@@ -61,6 +61,7 @@ import { operationalTelemetryMiddleware } from './server/middlewares/operational
 import { requestIntegrityMiddleware } from './server/middlewares/requestIntegrity.js';
 import { releaseGovernanceRouter } from './server/routes/releaseGovernanceRoutes.js';
 import { securityIncidentRouter } from './server/routes/securityIncidentRoutes.js';
+import { socialSearchRouter } from './server/routes/socialSearchRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -180,6 +181,7 @@ export async function createApp() {
   app.use('/api/admin/releases', releaseGovernanceRouter);
   app.use('/api/admin/security/incidents', securityIncidentRouter);
   app.use('/api/imports', externalImportRouter);
+  app.use('/api/social-search', socialSearchRouter);
   app.use(
     '/api/ai',
     requireFeatureFlag('ai_chat'),

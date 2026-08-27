@@ -1,6 +1,7 @@
 import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { MercadoPagoService } from './mercadoPagoService.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
+import { SocialSearchService } from '../ai/socialSearchService.js';
 
 export type CapabilityStatus =
   | 'available'
@@ -80,6 +81,13 @@ export class CapabilityRegistryService {
       ) &&
       Boolean(process.env.VERCEL_TOKEN);
 
+    const socialCapabilities =
+      SocialSearchService.capabilities();
+    const configuredSocialPlatforms =
+      socialCapabilities.filter(
+        (capability) => capability.configured
+      );
+
     const imageModel =
       process.env.GEMINI_IMAGE_MODEL ||
       'gemini-3.1-flash-image';
@@ -124,6 +132,40 @@ export class CapabilityRegistryService {
         lastVerifiedAt: null,
         evidence:
           'Configuração detectada; execução real do provedor exige recibo separado',
+      },
+      {
+        id: 'official_social_search',
+        name: 'Pesquisa Oficial em Redes Sociais',
+        category: 'automation',
+        status:
+          configuredSocialPlatforms.length > 0
+            ? 'configured'
+            : 'disabled',
+        provider:
+          'YouTube, X, Reddit, Meta e TikTok',
+        model: 'APIs oficiais + evidências com permalink',
+        cost: {
+          credits: 10,
+          description:
+            'Custo máximo interno por pesquisa; quotas externas dependem de cada plataforma',
+        },
+        limits:
+          'Somente conteúdo permitido pelas APIs, escopos e planos configurados',
+        requirements:
+          socialCapabilities.flatMap(
+            (capability) =>
+              capability.configured
+                ? []
+                : capability.requirements
+          ),
+        checkedAt: now,
+        lastVerifiedAt: null,
+        evidence:
+          configuredSocialPlatforms.length > 0
+            ? `Configuração detectada para: ${configuredSocialPlatforms
+                .map((capability) => capability.platform)
+                .join(', ')}. A execução real exige recibo da API.`
+            : 'Nenhuma credencial social foi detectada; a pesquisa web pública continua separada e não é apresentada como acesso autenticado.',
       },
       {
         id: 'code_and_site_builder',
