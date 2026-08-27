@@ -27,6 +27,9 @@ jobs:
       - name: Validate Prompt Master Tracker
         run: npm run validate:tracker
 
+      - name: Validate Production Integrity
+        run: npm run validate:production-integrity
+
       - name: TypeScript Linting
         run: npm run lint
 
@@ -50,6 +53,9 @@ jobs:
 
       - name: Run Site Factory and Observability Tests
         run: npm run test:site-factory
+
+      - name: Run Security and Release Governance Tests
+        run: npm run test:security-release
 
       - name: Run Full Test Suite
         run: npm test

@@ -207,7 +207,9 @@ const fetchConversations = async () => {
     try {
       localStorage.removeItem('frocia_active_conversation_id');
       localStorage.removeItem('frocia_saved_sites_v1');
-    } catch {}
+    } catch (storageError) {
+      console.warn('Não foi possível remover chaves locais antigas:', storageError);
+    }
 
     // Strictly zero in-memory state before loading new account data
     setChatMessages([]);
@@ -228,7 +230,9 @@ const fetchConversations = async () => {
             setActiveSite(parsed[0]);
           }
         }
-      } catch {}
+      } catch (storageError) {
+        console.warn('Não foi possível carregar sites locais do visitante:', storageError);
+      }
       return;
     }
 
@@ -244,7 +248,9 @@ const fetchConversations = async () => {
           setCurrentConversationId(null);
           try {
             localStorage.removeItem(activeConvKey);
-          } catch (e) {}
+          } catch (storageError) {
+            console.warn('Não foi possível limpar a conversa ativa local:', storageError);
+          }
           setChatMessages([]);
         }
       });
@@ -285,7 +291,9 @@ const fetchConversations = async () => {
         try {
           const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
           localStorage.setItem(activeConvKey, res.conversation.id);
-        } catch (e) {}
+        } catch (storageError) {
+          console.warn('Não foi possível salvar a conversa ativa local:', storageError);
+        }
         setConversations((prev) => [res.conversation, ...prev]);
         setChatMessages([]);
         setActiveSite(null);
@@ -302,14 +310,18 @@ const fetchConversations = async () => {
     const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
     try {
       localStorage.setItem(activeConvKey, convId);
-    } catch (e) {}
+    } catch (storageError) {
+      console.warn('Não foi possível salvar a conversa selecionada localmente:', storageError);
+    }
 
     const success = await loadMessagesForConversation(convId);
     if (!success) {
       setCurrentConversationId(null);
       try {
         localStorage.removeItem(activeConvKey);
-      } catch (e) {}
+      } catch (storageError) {
+        console.warn('Não foi possível limpar a conversa inválida localmente:', storageError);
+      }
       setChatMessages([]);
     }
   };
@@ -324,7 +336,9 @@ const fetchConversations = async () => {
         setCurrentConversationId(null);
         try {
           localStorage.removeItem(activeConvKey);
-        } catch (e) {}
+        } catch (storageError) {
+          console.warn('Não foi possível remover a conversa ativa local:', storageError);
+        }
         setChatMessages([]);
       }
     } catch (err: any) {

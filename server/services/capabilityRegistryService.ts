@@ -4,6 +4,7 @@ import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyE
 
 export type CapabilityStatus =
   | 'available'
+  | 'configured'
   | 'beta'
   | 'degraded'
   | 'disabled'
@@ -27,7 +28,8 @@ export interface CapabilityItem {
   };
   limits: string;
   requirements: string[];
-  lastVerifiedAt: string;
+  checkedAt: string;
+  lastVerifiedAt: string | null;
   evidence: string;
 }
 
@@ -101,7 +103,7 @@ export class CapabilityRegistryService {
         category: 'ai',
         status:
           geminiOk && firebaseOk
-            ? 'available'
+            ? 'configured'
             : 'degraded',
         provider: 'Google Gemini',
         model:
@@ -118,9 +120,10 @@ export class CapabilityRegistryService {
           'GEMINI_API_KEY',
           'Firebase Admin Auth',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
-          'Motor de conversa, carteira e testes automatizados validados',
+          'Configuração detectada; execução real do provedor exige recibo separado',
       },
       {
         id: 'code_and_site_builder',
@@ -128,7 +131,7 @@ export class CapabilityRegistryService {
         category: 'code',
         status:
           geminiOk && firebaseOk
-            ? 'available'
+            ? 'configured'
             : 'degraded',
         provider: 'Froc.IA Engine + Vite',
         model:
@@ -146,9 +149,10 @@ export class CapabilityRegistryService {
           'GEMINI_API_KEY',
           'Firebase Admin Auth',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
-          'Typecheck, testes e build de produção validados',
+          'Implementação possui testes locais; publicação de um site exige os gates próprios',
       },
       {
         id: 'pix_payment',
@@ -156,7 +160,7 @@ export class CapabilityRegistryService {
         category: 'payment',
         status:
           mercadoPagoOk
-            ? 'available'
+            ? 'configured'
             : 'degraded',
         provider: 'Mercado Pago',
         model: 'Pix API + Webhook HMAC-SHA256',
@@ -172,10 +176,11 @@ export class CapabilityRegistryService {
           'MERCADO_PAGO_WEBHOOK_SECRET',
           'MERCADO_PAGO_WEBHOOK_URL',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           mercadoPagoOk
-            ? 'Checkout Pix e crédito por webhook homologados em produção'
+            ? 'Credenciais detectadas; transação real não foi executada por esta consulta'
             : 'Configuração do Mercado Pago incompleta',
       },
       {
@@ -184,7 +189,7 @@ export class CapabilityRegistryService {
         category: 'payment',
         status:
           cardPaymentAvailable
-            ? 'available'
+            ? 'configured'
             : 'beta',
         provider: 'Mercado Pago',
         model: 'Token Checkout',
@@ -199,10 +204,11 @@ export class CapabilityRegistryService {
           'MERCADO_PAGO_ACCESS_TOKEN',
           'CARD_PAYMENT_AVAILABLE=true',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           cardPaymentAvailable
-            ? 'Pagamento por cartão liberado explicitamente'
+            ? 'Recurso configurado; homologação real continua sem recibo nesta consulta'
             : 'Integração presente, aguardando homologação real',
       },
       {
@@ -211,7 +217,7 @@ export class CapabilityRegistryService {
         category: 'ai',
         status:
           imageGenerationAvailable
-            ? 'available'
+            ? 'configured'
             : 'disabled',
         provider: 'Google Gemini — Nano Banana 2',
         model: imageModel,
@@ -227,10 +233,11 @@ export class CapabilityRegistryService {
           'IMAGE_GENERATION_AVAILABLE=true',
           'IMAGE_GENERATION_ENABLED=true',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           imageGenerationAvailable
-            ? 'Chave exclusiva e ativação explícita confirmadas'
+            ? 'Chave e flags configuradas; geração real ainda exige recibo do provedor'
             : 'Desativado até homologação real e ativação explícita',
       },
       {
@@ -239,7 +246,7 @@ export class CapabilityRegistryService {
         category: 'ai',
         status:
           videoGenerationAvailable
-            ? 'available'
+            ? 'configured'
             : 'disabled',
         provider: 'Google Veo 3.1',
         model:
@@ -258,10 +265,11 @@ export class CapabilityRegistryService {
           'VIDEO_GENERATION_AVAILABLE=true',
           'VIDEO_GENERATION_ENABLED=true',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           videoGenerationAvailable
-            ? 'Chave exclusiva e ativação explícita confirmadas'
+            ? 'Chave e flags configuradas; geração real ainda exige recibo do provedor'
             : 'Desativado até homologação real e ativação explícita',
       },
       {
@@ -270,7 +278,7 @@ export class CapabilityRegistryService {
         category: 'deploy',
         status:
           githubDeployAvailable
-            ? 'available'
+            ? 'configured'
             : 'disabled',
         provider: 'GitHub + Vercel',
         model: 'Git e APIs de publicação',
@@ -285,10 +293,11 @@ export class CapabilityRegistryService {
           'GITHUB_TOKEN ou GITHUB_APP_TOKEN',
           'VERCEL_TOKEN',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           githubDeployAvailable
-            ? 'Credenciais necessárias presentes'
+            ? 'Credenciais presentes; cada publicação precisa de commit e deployment verificados'
             : 'Credenciais necessárias não confirmadas pelo servidor',
       },
       {
@@ -313,7 +322,8 @@ export class CapabilityRegistryService {
           'SELF_EVOLUTION_WORKER_URL',
           'SELF_EVOLUTION_WORKER_TOKEN',
         ],
-        lastVerifiedAt: now,
+        checkedAt: now,
+        lastVerifiedAt: null,
         evidence:
           selfEvolutionOk
             ? 'Recurso ativado em modo supervisionado'
