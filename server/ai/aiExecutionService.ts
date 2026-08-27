@@ -20,6 +20,7 @@ import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
 import { ConversationContextService } from './conversationContextService.js';
 import { MemoryService } from './memoryService.js';
+import { recordOperationalEventBestEffort } from '../observability/operationalTelemetryRuntime.js';
 
 export class AIExecutionService {
   /**
@@ -341,6 +342,21 @@ maxRetries: fallbackModelConfig.maxRetries,
         });
       }
 
+      await recordOperationalEventBestEffort({
+        category: 'ai',
+        operation: `ai.${mode}`,
+        resource: 'ai-execution',
+        status: 'error',
+        correlationId,
+        traceId: executionId,
+        tenantId,
+        userId,
+        projectId: projectId || null,
+        durationMs: Math.max(0, Date.now() - startTime),
+        errorCode: execErr?.code || execErr?.name || 'ai_execution_failed',
+        model: modelToUse,
+      });
+
       throw execErr;
    }
 
@@ -473,6 +489,25 @@ const consumedCredits = CostService.calculateCreditCost(
       contextTruncated,
       omittedHistoryCount,
       completedAt: new Date().toISOString(),
+    });
+
+    await recordOperationalEventBestEffort({
+      category: 'ai',
+      operation: `ai.${mode}`,
+      resource: 'ai-execution',
+      status: 'success',
+      correlationId,
+      traceId: executionId,
+      tenantId,
+      userId,
+      projectId: projectId || null,
+      durationMs: latencyMs,
+      inputTokens,
+      outputTokens,
+      cachedTokens: null,
+      costCredits: consumedCredits,
+      attempts: fallbackUsed ? 2 : 1,
+      model: modelToUse,
     });
 
     return {

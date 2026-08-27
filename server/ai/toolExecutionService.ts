@@ -10,6 +10,7 @@ import {
   ToolExecutionReceipt,
   ToolExecutionStateStore,
 } from './toolExecutionStore.js';
+import { recordOperationalEventBestEffort } from '../observability/operationalTelemetryRuntime.js';
 
 export type ToolExecutionErrorCode =
   | 'unknown_tool'
@@ -50,6 +51,7 @@ export class RetryableToolError extends Error {
 
 export interface ToolExecutionActor {
   userId: string;
+  tenantId?: string;
   projectId?: string;
   grantedScopes: ToolAuthScope[];
 }
@@ -82,6 +84,7 @@ export interface ToolExecutionRequest {
   idempotencyKey?: string;
   estimatedCostCredits: number;
   abortSignal?: AbortSignal;
+  correlationId?: string;
 }
 
 export interface ToolContractCatalog {
@@ -402,6 +405,22 @@ export class ToolExecutionService {
         ) as Record<string, unknown>
       );
 
+      await recordOperationalEventBestEffort({
+        category: 'tool',
+        operation: `tool.${contract.name}`,
+        resource: contract.name,
+        status: 'success',
+        correlationId: request.correlationId || executionId,
+        traceId: executionId,
+        tenantId: request.actor.tenantId || `user:${request.actor.userId}`,
+        userId: request.actor.userId,
+        projectId: request.actor.projectId || null,
+        durationMs: receipt.durationMs,
+        costCredits: receipt.costCredits,
+        attempts: receipt.attempts,
+        toolName: contract.name,
+      });
+
       return receipt;
     } catch (error) {
       if (idempotencyScope) {
@@ -442,6 +461,24 @@ export class ToolExecutionService {
         toolName: contract.name,
         userId: request.actor.userId,
         code: normalized.code,
+      });
+
+      await recordOperationalEventBestEffort({
+        category: 'tool',
+        operation: `tool.${contract.name}`,
+        resource: contract.name,
+        status:
+          normalized.code === 'external_blocker'
+            ? 'blocked'
+            : 'error',
+        correlationId: request.correlationId || executionId,
+        traceId: executionId,
+        tenantId: request.actor.tenantId || `user:${request.actor.userId}`,
+        userId: request.actor.userId,
+        projectId: request.actor.projectId || null,
+        durationMs: Math.max(0, this.now() - startedAtMs),
+        errorCode: normalized.code,
+        toolName: contract.name,
       });
 
       throw normalized;

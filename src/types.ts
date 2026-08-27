@@ -82,10 +82,10 @@ export interface AIModelConfig {
   provider: 'Google Gemini' | 'Imagen 3' | 'Veo Video' | 'Fallback Local';
   category: 'Raciocínio' | 'Rápido' | 'Código' | 'Imagem' | 'Vídeo' | 'Reserva';
   costPerOp: number;
-  speedMs: number;
+  speedMs: number | null;
   contextWindow: string;
   status: 'operacional' | 'degradado' | 'manutencao';
-  errorRate: string;
+  errorRate: string | null;
   isFallbackActive?: boolean;
 }
 

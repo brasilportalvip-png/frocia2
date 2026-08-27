@@ -19,6 +19,7 @@ import { EvaluationsModal } from './EvaluationsModal';
 import { ExecutionTracesModal } from './ExecutionTracesModal';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { DisasterRecoveryModal } from './DisasterRecoveryModal';
+import { OperationalObservabilityModal } from './OperationalObservabilityModal';
 import { SelfEvolutionDashboard } from './self-evolution/SelfEvolutionDashboard';
 import { apiClient } from '../services/apiClient';
 
@@ -52,6 +53,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
   const [isTracesOpen, setIsTracesOpen] = useState(false);
   const [isFeatureFlagsOpen, setIsFeatureFlagsOpen] = useState(false);
   const [isDisasterRecoveryOpen, setIsDisasterRecoveryOpen] = useState(false);
+  const [isObservabilityOpen, setIsObservabilityOpen] = useState(false);
 
   useEffect(() => {
     async function loadMetrics() {
@@ -74,10 +76,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
       provider: 'Google Gemini',
       category: 'Raciocínio',
       costPerOp: 1,
-      speedMs: 0,
+      speedMs: null,
       contextWindow: '1,000,000 tokens',
       status: 'operacional',
-      errorRate: '0%'
+      errorRate: null
     },
     {
       id: 'm-pro',
@@ -85,10 +87,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
       provider: 'Google Gemini',
       category: 'Código',
       costPerOp: 3,
-      speedMs: 0,
+      speedMs: null,
       contextWindow: '2,000,000 tokens',
       status: 'operacional',
-      errorRate: '0%'
+      errorRate: null
     },
     {
       id: 'm-imagen',
@@ -220,6 +222,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
               <span>Traces</span>
             </button>
             <button
+              onClick={() => setIsObservabilityOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 font-bold flex items-center gap-1.5"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Observabilidade</span>
+            </button>
+            <button
               onClick={() => setIsFeatureFlagsOpen(true)}
               className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1.5"
             >
@@ -251,7 +260,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                     <span>Usuários Cadastrados</span>
                     <Users className="w-4 h-4 text-purple-400" />
                   </div>
-                  <div className="text-3xl font-black text-white">{realMetrics?.usersCount ?? 0}</div>
+                  <div className="text-3xl font-black text-white">{realMetrics?.usersCount ?? 'Sem dados'}</div>
                   <div className="text-[10px] text-purple-300 font-bold">Documentos no Firestore</div>
                 </div>
 
@@ -260,8 +269,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                     <span>Receita Aprovada (Pix)</span>
                     <DollarSign className="w-4 h-4 text-emerald-400" />
                   </div>
-                  <div className="text-3xl font-black text-white">R$ {(realMetrics?.totalRevenueBrl ?? 0).toFixed(2)}</div>
-                  <div className="text-[10px] text-emerald-400 font-bold">{realMetrics?.approvedPaymentsCount ?? 0} pagamentos aprovados</div>
+                  <div className="text-3xl font-black text-white">{realMetrics?.totalRevenueBrl === undefined ? 'Sem dados' : `R$ ${realMetrics.totalRevenueBrl.toFixed(2)}`}</div>
+                  <div className="text-[10px] text-emerald-400 font-bold">{realMetrics?.approvedPaymentsCount === undefined ? 'Sem dados de pagamentos' : `${realMetrics.approvedPaymentsCount} pagamentos aprovados`}</div>
                 </div>
 
                 <div className="p-6 rounded-[28px] glass-panel border border-white/10 space-y-2">
@@ -269,7 +278,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                     <span>Créditos Vendidos</span>
                     <Sparkles className="w-4 h-4 text-pink-400" />
                   </div>
-                  <div className="text-3xl font-black text-white">{realMetrics?.totalCreditsSold ?? 0}</div>
+                  <div className="text-3xl font-black text-white">{realMetrics?.totalCreditsSold ?? 'Sem dados'}</div>
                   <div className="text-[10px] text-pink-300 font-bold">Soma de compras ativas</div>
                 </div>
 
@@ -278,7 +287,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                     <span>Webhooks Processados</span>
                     <Activity className="w-4 h-4 text-cyan-400" />
                   </div>
-                  <div className="text-3xl font-black text-white">{realMetrics?.totalWebhookEvents ?? 0}</div>
+                  <div className="text-3xl font-black text-white">{realMetrics?.totalWebhookEvents ?? 'Sem dados'}</div>
                   <div className="text-[10px] text-cyan-300 font-bold">Eventos Mercado Pago</div>
                 </div>
               </div>
@@ -310,11 +319,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                     </div>
                     <div className="flex justify-between">
                       <span>Latência Média:</span>
-                      <span className="font-bold text-white">{m.speedMs} ms</span>
+                      <span className="font-bold text-white">{m.speedMs === null ? 'Sem dados' : `${m.speedMs} ms`}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Taxa de Erro:</span>
-                      <span className="font-bold text-emerald-400">{m.errorRate}</span>
+                      <span className="font-bold text-emerald-400">{m.errorRate ?? 'Sem dados'}</span>
                     </div>
                   </div>
                 </div>
@@ -422,6 +431,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
         <ExecutionTracesModal
           isOpen={isTracesOpen}
           onClose={() => setIsTracesOpen(false)}
+        />
+        <OperationalObservabilityModal
+          isOpen={isObservabilityOpen}
+          onClose={() => setIsObservabilityOpen(false)}
         />
         <FeatureFlagsPanel
           isOpen={isFeatureFlagsOpen}

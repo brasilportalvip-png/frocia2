@@ -6,6 +6,8 @@ import { AuthenticatedRequest } from '../types.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
 import { validateAIAttachments } from '../validators/aiAttachmentValidators.js';
 import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featureFlagService.js';
+import { getSiteSpecificationService } from '../siteFactory/siteFactoryRuntime.js';
+import { selectOfficialArchitecture } from '../siteFactory/siteArchitectureCatalog.js';
 
 export const siteBuilderRouter = Router();
 
@@ -82,7 +84,9 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
     features = [],
     language = 'pt-BR',
     modelName = 'gemini-3.6-flash',
-    attachments: rawAttachments = []
+    attachments: rawAttachments = [],
+    projectId,
+    specificationVersion,
   } = req.body;
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -103,6 +107,87 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
         correlationId,
       },
     });
+  }
+
+  let factoryContext:
+    | {
+        specificationId: string;
+        specificationVersion: number;
+        specificationHash: string;
+        architectureId: string;
+        promptContext: string;
+      }
+    | null = null;
+
+  if (projectId !== undefined || specificationVersion !== undefined) {
+    if (
+      typeof projectId !== 'string' ||
+      !/^[A-Za-z0-9:_-]{1,160}$/.test(projectId) ||
+      !Number.isInteger(specificationVersion) ||
+      specificationVersion < 1
+    ) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_site_specification_reference',
+          message: 'Projeto e versão da especificação precisam ser informados juntos.',
+          correlationId,
+        },
+      });
+    }
+
+    try {
+      const current = await getSiteSpecificationService().getCurrent({
+        projectId,
+        tenantId: req.user!.tenantId,
+        ownerUserId: uid,
+      });
+      if (current.version !== specificationVersion) {
+        return res.status(409).json({
+          error: {
+            code: 'stale_site_specification',
+            message: 'A versão informada não é a especificação atual.',
+            correlationId,
+          },
+        });
+      }
+      if (current.status !== 'approved') {
+        return res.status(409).json({
+          error: {
+            code: 'site_specification_not_approved',
+            message: 'A especificação precisa ser aprovada antes da geração.',
+            correlationId,
+          },
+        });
+      }
+      const architecture = selectOfficialArchitecture(
+        current.specification.productType,
+        current.architectureId
+      );
+      factoryContext = {
+        specificationId: current.specificationId,
+        specificationVersion: current.version,
+        specificationHash: current.contentHash,
+        architectureId: architecture.id,
+        promptContext: JSON.stringify({
+          specification: current.specification,
+          architecture: {
+            id: architecture.id,
+            frontend: architecture.frontend,
+            backend: architecture.backend,
+            data: architecture.data,
+            constraints: architecture.constraints,
+          },
+        }),
+      };
+    } catch (error: any) {
+      return res.status(error?.httpStatus || 409).json({
+        error: {
+          code: error?.code || 'site_specification_unavailable',
+          message: error?.message || 'Não foi possível carregar a especificação.',
+          correlationId,
+        },
+      });
+    }
   }
 
   let validatedAttachments;
@@ -173,6 +258,10 @@ Tom de Voz: ${tone}
 Idioma: ${language}
 Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`;
 
+    if (factoryContext) {
+      userPrompt += `\n\nESPECIFICAÇÃO APROVADA E ARQUITETURA OFICIAL (fonte de verdade; não invente campos, números, clientes, depoimentos ou integrações):\n${factoryContext.promptContext}`;
+    }
+
     if (validatedAttachments.length > 0) {
       userPrompt += `\n\nForam incluídos ${validatedAttachments.length} anexo(s) como contexto. Analise o conteúdo dos anexos para criar o site conforme instruído.`;
     }
@@ -240,6 +329,14 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       html: finalData.html,
       suggestedRefinements: finalData.suggestedRefinements,
       consumedCredits: GENERATE_SITE_CREDIT_COST,
+      ...(factoryContext
+        ? {
+            specificationId: factoryContext.specificationId,
+            specificationVersion: factoryContext.specificationVersion,
+            specificationHash: factoryContext.specificationHash,
+            architectureId: factoryContext.architectureId,
+          }
+        : {}),
       correlationId,
     });
   } catch (aiErr: any) {
