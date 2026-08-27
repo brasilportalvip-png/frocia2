@@ -80,9 +80,9 @@ Arquivo `tests/operationalObservability.test.ts`:
 | `npm run build` | aprovado; 1.735 módulos Vite e bundle `dist/server.js` |
 | `git diff --check` | aprovado |
 | `npm audit --omit=dev --audit-level=high` | sem vulnerabilidade alta/crítica; 6 moderadas transitivas em `uuid` via `firebase-admin` |
-| `node --import tsx scripts/validate-requirement-tracker.ts` | aprovado: 563 requisitos e 563 IDs únicos |
+| `npm run validate:tracker` | aprovado: 563 requisitos e 563 IDs únicos |
 
-Neste ambiente, o atalho `npm run validate:tracker` encontrou uma restrição incidental de IPC do executável `tsx` (`listen EPERM` em `/tmp`). O mesmo validador foi executado sem IPC por `node --import tsx` e aprovou o arquivo. O CI continua usando o script normal em Ubuntu.
+O script do tracker usa `node --import tsx`, evitando dependência de um socket IPC do executável `tsx` e mantendo o mesmo validador TypeScript no Windows e no CI Ubuntu.
 
 ## Limites e riscos residuais
 
