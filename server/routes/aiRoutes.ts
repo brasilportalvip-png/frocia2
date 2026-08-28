@@ -46,7 +46,6 @@ import {
   ResearchJobNotFoundError,
   ResearchJobService,
 } from '../ai/researchJobService.js';
-import { OpenAIResearchProviderError } from '../ai/providers/openAIResearchProvider.js';
 
 export const aiRouter = Router();
 
@@ -1118,8 +1117,8 @@ aiRouter.post(
 
 /**
  * POST /api/ai/research-jobs
- * Starts a long-running OpenAI Responses research job. If the optional
- * provider is unavailable, the existing Gemini research path is used.
+ * Starts a resumable Gemini research job. Each authenticated poll executes
+ * one bounded step and persists its evidence before continuing.
  */
 aiRouter.post(
   '/research-jobs',
@@ -1164,35 +1163,29 @@ aiRouter.post(
         `research-${req.user!.uid}-${Date.now()}`;
 
       if (ResearchJobService.isConfigured()) {
-        try {
-          const job = await ResearchJobService.start(
-            {
-              userId: req.user!.uid,
-              tenantId: req.user!.tenantId,
-              userDisplayName: req.user!.name,
-              prompt: parsed.prompt,
-              conversationId: parsed.conversationId,
-              projectId: parsed.projectId,
-              idempotencyKey,
-              sensitivity: plan.classification.sensitivity,
-              socialSearch: SocialSearchService.shouldSearch(
-                parsed.prompt,
-                'research'
-              ),
-              siteAuditUrl: plan.classification.siteAuditUrl,
-            },
-            req.correlationId
-          );
-          return res.status(202).json({
-            strategy: 'background',
-            job,
-          });
-        } catch (error) {
-          if (!(error instanceof OpenAIResearchProviderError)) throw error;
-          console.warn(
-            `Pesquisa OpenAI indisponível (${error.code}); usando Gemini.`
-          );
-        }
+        const job = await ResearchJobService.start(
+          {
+            userId: req.user!.uid,
+            tenantId: req.user!.tenantId,
+            userDisplayName: req.user!.name,
+            prompt: parsed.prompt,
+            conversationId: parsed.conversationId,
+            projectId: parsed.projectId,
+            idempotencyKey,
+            sensitivity: plan.classification.sensitivity,
+            socialSearch: SocialSearchService.shouldSearch(
+              parsed.prompt,
+              'research'
+            ),
+            siteAuditUrl: plan.classification.siteAuditUrl,
+          },
+          req.correlationId
+        );
+        return res.status(202).json({
+          strategy: 'background',
+          provider: 'gemini',
+          job,
+        });
       }
 
       const result = await AIExecutionService.execute(
@@ -1209,9 +1202,7 @@ aiRouter.post(
       return res.json({
         strategy: 'completed',
         provider: 'gemini',
-        fallbackReason: ResearchJobService.isConfigured()
-          ? 'openai_temporarily_unavailable'
-          : 'openai_not_configured',
+        fallbackReason: 'durable_coordinator_unavailable',
         result,
       });
     } catch (error) {

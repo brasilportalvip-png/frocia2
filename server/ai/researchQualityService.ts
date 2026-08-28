@@ -1,5 +1,12 @@
 import { MessageCitation } from './types/ai.js';
-import { OpenAIResearchAction } from './providers/openAIResearchProvider.js';
+
+export interface ResearchAction {
+  type: 'search' | 'open_page' | 'find_in_page' | 'other';
+  query?: string;
+  url?: string;
+  pattern?: string;
+  sourceCount: number;
+}
 
 export interface ResearchQualityAssessment {
   status: 'strong' | 'partial' | 'insufficient';
@@ -51,7 +58,7 @@ export class ResearchQualityService {
   static evaluate(input: {
     text: string;
     citations: MessageCitation[];
-    actions: OpenAIResearchAction[];
+    actions: ResearchAction[];
     minimumDomains?: number;
   }): ResearchQualityAssessment {
     const webCitations = input.citations.filter(

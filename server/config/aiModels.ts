@@ -2,33 +2,6 @@ import { env } from './env.js';
 import { AIModelDefinition } from '../ai/types/ai.js';
 
 export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
-  [env.OPENAI_RESEARCH_MODEL]: {
-    id: env.OPENAI_RESEARCH_MODEL,
-    provider: 'openai',
-    enabled:
-      env.OPENAI_RESEARCH_ENABLED === 'true' &&
-      Boolean(env.OPENAI_API_KEY),
-    capabilities: {
-      text: true,
-      vision: false,
-      audio: false,
-      video: false,
-      code: true,
-      tools: true,
-      structuredOutput: false,
-      longContext: true,
-      embeddings: false,
-    },
-    priority: 1,
-    timeoutMs: 30_000,
-    maxRetries: 1,
-    costProfile: 'OpenAI Agentic Research',
-    pricing: {
-      inputTokensPerCredit: 1_000,
-      outputTokensPerCredit: 250,
-      baseCreditCost: 8,
-    },
-  },
   [env.GEMINI_DEFAULT_MODEL]: {
     id: env.GEMINI_DEFAULT_MODEL,
     provider: 'google',

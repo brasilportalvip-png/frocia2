@@ -61,7 +61,7 @@ export interface ModelCapabilities {
 
 export interface AIModelDefinition {
   id: string;
-  provider: 'google' | 'openai';
+  provider: 'google';
   enabled: boolean;
   capabilities: ModelCapabilities;
   priority: number;

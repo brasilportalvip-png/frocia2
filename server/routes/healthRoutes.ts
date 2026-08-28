@@ -22,11 +22,6 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
   const geminiConfigured = Boolean(
     process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
   );
-  const openAIResearchConfigured = Boolean(
-    process.env.OPENAI_RESEARCH_ENABLED === 'true' &&
-      process.env.OPENAI_API_KEY &&
-      process.env.OPENAI_API_KEY.trim().length > 10
-  );
 
   let firestoreReachable = false;
   if (authConfigured && adminDb) {
@@ -53,19 +48,19 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       firestoreReachable,
       geminiConfigured,
       mercadoPagoConfigured: MercadoPagoService.isConfigured(),
-      openAIResearchConfigured,
+      agenticResearchConfigured: geminiConfigured && authConfigured,
     },
     evidenceLevel: {
       firebaseAdmin: 'configuration',
       firestore: 'live_read',
       gemini: 'configuration_only',
       mercadoPago: 'configuration_only',
-      openAIResearch: 'configuration_only',
+      agenticResearch: 'gemini_configuration_and_firestore_live_read',
     },
     limitations: [
       'Este endpoint não chama Gemini nem Mercado Pago para evitar custo e efeitos externos.',
       'Uma chave configurada não equivale a uma operação homologada no provedor.',
-      'A pesquisa OpenAI é opcional: se não estiver configurada, o modo Pesquisa usa o caminho Gemini existente.',
+      'A pesquisa profunda usa o Gemini configurado no projeto; nenhuma chave OpenAI é necessária.',
     ],
   });
 });

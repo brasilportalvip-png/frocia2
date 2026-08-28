@@ -53,11 +53,7 @@ export class CapabilityRegistryService {
     );
 
     const firebaseOk = isFirebaseAdminConfigured();
-    const openAIResearchOk = Boolean(
-      process.env.OPENAI_RESEARCH_ENABLED === 'true' &&
-        process.env.OPENAI_API_KEY &&
-        process.env.OPENAI_API_KEY.trim().length > 10
-    );
+    const agenticResearchOk = geminiOk && firebaseOk;
 
     const mercadoPagoOk =
       MercadoPagoService.isConfigured();
@@ -142,26 +138,25 @@ export class CapabilityRegistryService {
         id: 'agentic_deep_research',
         name: 'Pesquisa Profunda Agêntica',
         category: 'ai',
-        status: openAIResearchOk ? 'configured' : 'degraded',
-        provider: 'OpenAI Responses API + Froc.IA',
-        model: process.env.OPENAI_RESEARCH_MODEL || 'gpt-5.5',
+        status: agenticResearchOk ? 'configured' : 'degraded',
+        provider: 'Google Gemini Search Grounding + Froc.IA',
+        model: process.env.GEMINI_REASONING_MODEL || 'Gemini Pro',
         cost: {
           credits: 18,
           description:
             'Reserva máxima interna por job; consumo externo depende das buscas e tokens',
         },
         limits:
-          'Até 25 minutos na tela, limite configurável de chamadas web e sem contornar login, paywall, CAPTCHA ou conteúdo privado',
+          'Até quatro subconsultas fundamentadas por job, retomada durável e sem contornar login, paywall, CAPTCHA ou conteúdo privado',
         requirements: [
-          'OPENAI_RESEARCH_ENABLED=true',
-          'OPENAI_API_KEY',
+          'GEMINI_API_KEY',
           'Firebase Admin Auth',
         ],
         checkedAt: now,
         lastVerifiedAt: null,
-        evidence: openAIResearchOk
-          ? 'Configuração detectada; cada job registra buscas, páginas abertas, citações e avaliação de cobertura.'
-          : 'O fallback Gemini permanece disponível; pesquisa agêntica exige configuração OpenAI separada.',
+        evidence: agenticResearchOk
+          ? 'Configuração detectada; o coordenador Gemini persiste plano, subconsultas, fontes, citações e avaliação de cobertura.'
+          : 'A pesquisa agêntica exige apenas a configuração Gemini e o Firebase já usados pela plataforma.',
       },
       {
         id: 'official_social_search',
