@@ -41,6 +41,7 @@ expect(rules).toContain("'tenantId', 'companyId', 'organizationId'");
     expect(rules).toContain('match /durable_executions/{executionId}');
     expect(rules).toContain('match /durable_execution_events/{eventId}');
     expect(rules).toContain('match /durable_execution_outbox/{outboxId}');
+    expect(rules).toContain('match /research_jobs/{jobId}');
 
     // Default deny rule
     expect(rules).toContain('match /{document=**}');

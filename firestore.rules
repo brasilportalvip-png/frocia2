@@ -101,6 +101,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Prompts criptografados, ações de pesquisa e resultados de jobs longos
+    // são projetados ao proprietário somente pela API autenticada.
+    match /research_jobs/{jobId} {
+      allow read, write: if false;
+    }
+
     // Durable execution state, immutable transition events and transactional
     // outbox are exclusively controlled by trusted backend workers.
     match /durable_executions/{executionId} {

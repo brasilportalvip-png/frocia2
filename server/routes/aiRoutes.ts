@@ -42,6 +42,11 @@ import {
 import { SocialSearchPolicyService } from '../ai/socialSearchPolicyService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from '../ai/siteAuditPolicyService.js';
+import {
+  ResearchJobNotFoundError,
+  ResearchJobService,
+} from '../ai/researchJobService.js';
+import { OpenAIResearchProviderError } from '../ai/providers/openAIResearchProvider.js';
 
 export const aiRouter = Router();
 
@@ -1107,6 +1112,197 @@ aiRouter.post(
               req.correlationId
           }
         });
+    }
+  }
+);
+
+/**
+ * POST /api/ai/research-jobs
+ * Starts a long-running OpenAI Responses research job. If the optional
+ * provider is unavailable, the existing Gemini research path is used.
+ */
+aiRouter.post(
+  '/research-jobs',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsed = parseExecutionRequest({
+        ...(req.body || {}),
+        mode: 'research',
+      });
+      await assertModeEnabled('research');
+
+      if (parsed.projectId) {
+        await MemoryService.assertScopeAccess(
+          req.user!.uid,
+          req.user!.tenantId,
+          'project',
+          parsed.projectId
+        );
+      }
+      if (parsed.conversationId) {
+        await MemoryService.assertScopeAccess(
+          req.user!.uid,
+          req.user!.tenantId,
+          'conversation',
+          parsed.conversationId
+        );
+      }
+
+      const plan = AIRequestOrchestrator.plan({
+        mode: 'research',
+        prompt: parsed.prompt,
+        hasImages: parsed.attachments?.some(
+          (attachment) => attachment.type === 'image'
+        ),
+        hasFiles: Boolean(parsed.attachments?.length),
+        requestedTools: parsed.tools,
+        knowledgeBaseIds: parsed.knowledgeBaseIds,
+      });
+      const idempotencyKey =
+        parsed.idempotencyKey ||
+        `research-${req.user!.uid}-${Date.now()}`;
+
+      if (ResearchJobService.isConfigured()) {
+        try {
+          const job = await ResearchJobService.start(
+            {
+              userId: req.user!.uid,
+              tenantId: req.user!.tenantId,
+              userDisplayName: req.user!.name,
+              prompt: parsed.prompt,
+              conversationId: parsed.conversationId,
+              projectId: parsed.projectId,
+              idempotencyKey,
+              sensitivity: plan.classification.sensitivity,
+              socialSearch: SocialSearchService.shouldSearch(
+                parsed.prompt,
+                'research'
+              ),
+              siteAuditUrl: plan.classification.siteAuditUrl,
+            },
+            req.correlationId
+          );
+          return res.status(202).json({
+            strategy: 'background',
+            job,
+          });
+        } catch (error) {
+          if (!(error instanceof OpenAIResearchProviderError)) throw error;
+          console.warn(
+            `Pesquisa OpenAI indisponível (${error.code}); usando Gemini.`
+          );
+        }
+      }
+
+      const result = await AIExecutionService.execute(
+        {
+          userId: req.user!.uid,
+          tenantId: req.user!.tenantId,
+          userDisplayName: req.user!.name,
+          ...parsed,
+          mode: 'research',
+          idempotencyKey: `${idempotencyKey}-gemini`,
+        },
+        req.correlationId
+      );
+      return res.json({
+        strategy: 'completed',
+        provider: 'gemini',
+        fallbackReason: ResearchJobService.isConfigured()
+          ? 'openai_temporarily_unavailable'
+          : 'openai_not_configured',
+        result,
+      });
+    } catch (error) {
+      if (error instanceof InvalidAIRequestError) {
+        return res.status(400).json({
+          error: {
+            code: 'invalid_research_request',
+            message: error.details[0],
+            details: error.details,
+            correlationId: req.correlationId,
+          },
+        });
+      }
+      if (error instanceof MemoryScopeAccessError) {
+        return res.status(403).json({
+          error: {
+            code: 'research_scope_forbidden',
+            message: error.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
+      const insufficient = error instanceof InsufficientCreditsError;
+      return res.status(insufficient ? 402 : 500).json({
+        error: {
+          code: insufficient
+            ? 'insufficient_credits'
+            : 'research_start_failed',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível iniciar a pesquisa.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+  }
+);
+
+aiRouter.get(
+  '/research-jobs/:jobId',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const job = await ResearchJobService.refresh(
+        req.params.jobId,
+        req.user!.uid
+      );
+      return res.json({ job });
+    } catch (error) {
+      const notFound = error instanceof ResearchJobNotFoundError;
+      return res.status(notFound ? 404 : 502).json({
+        error: {
+          code: notFound
+            ? 'research_job_not_found'
+            : 'research_job_refresh_failed',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível atualizar a pesquisa.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+  }
+);
+
+aiRouter.post(
+  '/research-jobs/:jobId/cancel',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const job = await ResearchJobService.cancel(
+        req.params.jobId,
+        req.user!.uid
+      );
+      return res.json({ job });
+    } catch (error) {
+      const notFound = error instanceof ResearchJobNotFoundError;
+      return res.status(notFound ? 404 : 502).json({
+        error: {
+          code: notFound
+            ? 'research_job_not_found'
+            : 'research_job_cancel_failed',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível cancelar a pesquisa.',
+          correlationId: req.correlationId,
+        },
+      });
     }
   }
 );

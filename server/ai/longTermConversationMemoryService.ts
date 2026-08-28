@@ -6,6 +6,8 @@ import {
   encryptPersonalMemory,
 } from './memoryCryptoService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
+import { env } from '../config/env.js';
+import { EmbeddingService } from './embeddingService.js';
 
 const SEGMENT_MESSAGE_LIMIT = 12;
 const MESSAGE_CHARACTER_LIMIT = 1_200;
@@ -36,6 +38,9 @@ export interface LongTermConversationSegment {
   firstMessageAt: string | null;
   lastMessageAt: string | null;
   createdAt: string;
+  embedding?: number[];
+  embeddingModel?: string;
+  embeddingVersion?: 'semantic-v1';
   relevanceScore?: number;
   retrievalReason?: string;
 }
@@ -154,6 +159,7 @@ export function rankLongTermConversationSegments(input: {
   conversationId?: string | null;
   projectId?: string | null;
   limit?: number;
+  queryEmbedding?: number[];
 }): LongTermConversationSegment[] {
   const promptTerms = normalizeTerms(input.prompt);
   const continuationIntent =
@@ -175,8 +181,19 @@ export function rankLongTermConversationSegments(input: {
         segment.conversationId === input.conversationId;
       const sameProject =
         Boolean(input.projectId) && segment.projectId === input.projectId;
+      const semanticSimilarity =
+        input.queryEmbedding && segment.embedding
+          ? Math.max(
+              0,
+              EmbeddingService.cosineSimilarity(
+                input.queryEmbedding,
+                segment.embedding
+              )
+            )
+          : 0;
       const score =
         overlap * 3 +
+        semanticSimilarity * 12 +
         (sameConversation ? 8 : 0) +
         (sameProject ? 4 : 0) +
         (continuationIntent && sameConversation ? 3 : 0) +
@@ -190,7 +207,11 @@ export function rankLongTermConversationSegments(input: {
           : sameProject
             ? `Trecho histórico do projeto atual; relevância ${score.toFixed(2)}.`
             : `Conversa anterior relacionada à solicitação; relevância ${score.toFixed(2)}.`,
-        eligible: sameConversation || sameProject || overlap > 0,
+        eligible:
+          sameConversation ||
+          sameProject ||
+          overlap > 0 ||
+          semanticSimilarity >= 0.55,
       };
     })
     .filter((segment) => segment.eligible)
@@ -222,6 +243,20 @@ function mapStoredSegment(doc: any): LongTermConversationSegment {
     firstMessageAt: toIsoString(data.firstMessageAt),
     lastMessageAt: toIsoString(data.lastMessageAt),
     createdAt: toIsoString(data.createdAt) || new Date(0).toISOString(),
+    embedding: Array.isArray(data.embedding)
+      ? data.embedding.filter(
+          (value: unknown): value is number =>
+            typeof value === 'number' && Number.isFinite(value)
+        )
+      : undefined,
+    embeddingModel:
+      typeof data.embeddingModel === 'string'
+        ? data.embeddingModel
+        : undefined,
+    embeddingVersion:
+      data.embeddingVersion === 'semantic-v1'
+        ? 'semantic-v1'
+        : undefined,
   };
 }
 
@@ -298,6 +333,15 @@ export class LongTermConversationMemoryService {
 
     let archivedMessageCount = 0;
     for (const segment of segments) {
+      let embedding: number[] | null = null;
+      try {
+        embedding = await EmbeddingService.generateEmbedding(segment.content);
+      } catch (error) {
+        console.warn(
+          `Segmento ${segment.id} arquivado sem vetor semântico.`,
+          error
+        );
+      }
       const protectedContent = encryptPersonalMemory(
         segment.content,
         input.tenantId,
@@ -319,6 +363,13 @@ export class LongTermConversationMemoryService {
           sourceMessageIds: segment.sourceMessageIds,
           messageCount: segment.messageCount,
           characterCount: segment.characterCount,
+          embedding,
+          embeddingModel: embedding
+            ? env.GEMINI_EMBEDDING_MODEL
+            : null,
+          embeddingVersion: embedding
+            ? 'semantic-v1'
+            : null,
           firstMessageAt: segment.firstMessageAt,
           lastMessageAt: segment.lastMessageAt,
           createdAt: FieldValue.serverTimestamp(),
@@ -378,7 +429,20 @@ export class LongTermConversationMemoryService {
           return [];
         }
       });
-      return rankLongTermConversationSegments({ ...input, segments });
+      let queryEmbedding: number[] | undefined;
+      try {
+        queryEmbedding = await EmbeddingService.generateEmbedding(input.prompt);
+      } catch (error) {
+        console.warn(
+          'Busca semântica indisponível; usando relevância lexical segura.',
+          error
+        );
+      }
+      return rankLongTermConversationSegments({
+        ...input,
+        segments,
+        queryEmbedding,
+      });
     } catch (error) {
       console.warn('Falha ao recuperar memória extensa de conversas.', error);
       return [];

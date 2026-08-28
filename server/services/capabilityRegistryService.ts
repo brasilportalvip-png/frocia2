@@ -53,6 +53,11 @@ export class CapabilityRegistryService {
     );
 
     const firebaseOk = isFirebaseAdminConfigured();
+    const openAIResearchOk = Boolean(
+      process.env.OPENAI_RESEARCH_ENABLED === 'true' &&
+        process.env.OPENAI_API_KEY &&
+        process.env.OPENAI_API_KEY.trim().length > 10
+    );
 
     const mercadoPagoOk =
       MercadoPagoService.isConfigured();
@@ -132,6 +137,31 @@ export class CapabilityRegistryService {
         lastVerifiedAt: null,
         evidence:
           'Configuração detectada; execução real do provedor exige recibo separado',
+      },
+      {
+        id: 'agentic_deep_research',
+        name: 'Pesquisa Profunda Agêntica',
+        category: 'ai',
+        status: openAIResearchOk ? 'configured' : 'degraded',
+        provider: 'OpenAI Responses API + Froc.IA',
+        model: process.env.OPENAI_RESEARCH_MODEL || 'gpt-5.5',
+        cost: {
+          credits: 18,
+          description:
+            'Reserva máxima interna por job; consumo externo depende das buscas e tokens',
+        },
+        limits:
+          'Até 25 minutos na tela, limite configurável de chamadas web e sem contornar login, paywall, CAPTCHA ou conteúdo privado',
+        requirements: [
+          'OPENAI_RESEARCH_ENABLED=true',
+          'OPENAI_API_KEY',
+          'Firebase Admin Auth',
+        ],
+        checkedAt: now,
+        lastVerifiedAt: null,
+        evidence: openAIResearchOk
+          ? 'Configuração detectada; cada job registra buscas, páginas abertas, citações e avaliação de cobertura.'
+          : 'O fallback Gemini permanece disponível; pesquisa agêntica exige configuração OpenAI separada.',
       },
       {
         id: 'official_social_search',
@@ -393,7 +423,7 @@ export class CapabilityRegistryService {
     ];
 
     return {
-      version: '1.2.1',
+      version: '1.3.0',
       updatedAt: now,
       capabilities,
     };

@@ -37,6 +37,23 @@ export const EnvSchema = z.object({
   GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.6-flash'),
 
+  // OpenAI agentic research is optional. When unavailable, research keeps
+  // using the existing Gemini grounding path instead of blocking the chat.
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_RESEARCH_MODEL: z.string().default('gpt-5.5'),
+  OPENAI_RESEARCH_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false'),
+  OPENAI_RESEARCH_REASONING_EFFORT: z
+    .enum(['low', 'medium', 'high', 'xhigh'])
+    .default('high'),
+  OPENAI_RESEARCH_MAX_TOOL_CALLS: z.coerce
+    .number()
+    .int()
+    .min(4)
+    .max(100)
+    .default(40),
+
   // Internal Cron & Maintenance
   INTERNAL_CRON_SECRET: z.string().optional(),
 
@@ -128,6 +145,21 @@ if (parseResult.success) {
     GEMINI_VISION_MODEL: process.env.GEMINI_VISION_MODEL || 'gemini-3.6-flash',
     GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2',
     GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash',
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_RESEARCH_MODEL:
+      process.env.OPENAI_RESEARCH_MODEL || 'gpt-5.5',
+    OPENAI_RESEARCH_ENABLED:
+      process.env.OPENAI_RESEARCH_ENABLED === 'true'
+        ? 'true'
+        : 'false',
+    OPENAI_RESEARCH_REASONING_EFFORT:
+      (process.env.OPENAI_RESEARCH_REASONING_EFFORT as
+        | 'low'
+        | 'medium'
+        | 'high'
+        | 'xhigh') || 'high',
+    OPENAI_RESEARCH_MAX_TOOL_CALLS:
+      Number(process.env.OPENAI_RESEARCH_MAX_TOOL_CALLS) || 40,
     INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET || 'froc_dev_cron_secret_unpredictable_local_key_32_bytes',
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,

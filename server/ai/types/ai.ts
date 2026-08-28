@@ -61,7 +61,7 @@ export interface ModelCapabilities {
 
 export interface AIModelDefinition {
   id: string;
-  provider: 'google';
+  provider: 'google' | 'openai';
   enabled: boolean;
   capabilities: ModelCapabilities;
   priority: number;
@@ -233,6 +233,9 @@ export interface MessageCitation {
   account?: string | null;
   externalId?: string;
   accessMode?: 'public_api' | 'authenticated_api';
+  startIndex?: number;
+  endIndex?: number;
+  supportedText?: string;
 }
 
 export interface Message {
