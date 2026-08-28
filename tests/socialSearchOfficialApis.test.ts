@@ -177,10 +177,43 @@ describe('Pesquisa oficial e verificável em redes sociais', () => {
       }),
     ]);
     expect(mock).toHaveBeenCalledWith(
-      expect.stringContaining('public.api.bsky.app/xrpc/app.bsky.feed.searchPosts'),
+      expect.stringContaining('api.bsky.app/xrpc/app.bsky.feed.searchPosts'),
       expect.any(Object)
     );
+    const init = mock.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toEqual(
+      expect.objectContaining({
+        Accept: 'application/json',
+        'User-Agent': expect.stringContaining('Froc.IA'),
+      })
+    );
     expect(SocialSearchService.evidenceStatus(report)).toBe('supported');
+  });
+
+  it('usa o AppView público alternativo quando o host principal do Bluesky recusa a chamada', async () => {
+    const mock = fetchMock(
+      response({ error: 'forbidden' }, 403),
+      response({ posts: [] })
+    );
+    const report = await SocialSearchService.search(
+      {
+        query: 'inteligência artificial',
+        platforms: ['bluesky'],
+      },
+      { fetchFn: mock as unknown as typeof fetch, env: {}, now: NOW }
+    );
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(String(mock.mock.calls[0][0])).toContain(
+      'https://api.bsky.app/'
+    );
+    expect(String(mock.mock.calls[1][0])).toContain(
+      'https://public.api.bsky.app/'
+    );
+    expect(report.results[0]).toMatchObject({
+      platform: 'bluesky',
+      status: 'ok',
+    });
   });
 
   it('aumenta a cobertura por rede quando o usuário pede pesquisa profunda', () => {
