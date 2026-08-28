@@ -5,6 +5,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
 import { MemoryPolicyViolationError } from '../ai/memoryPolicy.js';
 import { MemoryEncryptionUnavailableError } from '../ai/memoryCryptoService.js';
+import { LongTermConversationMemoryService } from '../ai/longTermConversationMemoryService.js';
 
 export const memoryRouter = Router();
 
@@ -120,6 +121,62 @@ memoryRouter.get('/audit', requireAuth, async (req: AuthenticatedRequest, res) =
       error: {
         code: 'memory_audit_fetch_failed',
         message: 'Erro ao buscar o histórico de uso das memórias.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+// GET /api/memories/long-term/stats - encrypted conversation continuity.
+memoryRouter.get('/long-term/stats', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const stats = await LongTermConversationMemoryService.stats(
+      req.user!.uid,
+      req.user!.tenantId
+    );
+    return res.json({
+      stats,
+      policy: {
+        originalMessagesPreserved: true,
+        retrieval: 'relevance_across_owned_conversations',
+        maximumSegmentsScannedPerRequest: 250,
+        maximumSegmentsInjectedPerRequest: 6,
+        privateOrCrossTenantAccess: false,
+      },
+    });
+  } catch {
+    return res.status(500).json({
+      error: {
+        code: 'long_term_memory_stats_failed',
+        message: 'Erro ao calcular a capacidade da memória extensa.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+// DELETE /api/memories/long-term?confirm=DELETE_LONG_TERM
+memoryRouter.delete('/long-term', requireAuth, async (req: AuthenticatedRequest, res) => {
+  if (req.query.confirm !== 'DELETE_LONG_TERM') {
+    return res.status(400).json({
+      error: {
+        code: 'long_term_memory_delete_confirmation_required',
+        message: 'Confirmação explícita é obrigatória.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+  try {
+    const deletedSegments = await LongTermConversationMemoryService.deleteAll(
+      req.user!.uid,
+      req.user!.tenantId
+    );
+    return res.json({ success: true, deletedSegments });
+  } catch {
+    return res.status(500).json({
+      error: {
+        code: 'long_term_memory_delete_failed',
+        message: 'Erro ao excluir a memória extensa.',
         correlationId: req.correlationId,
       },
     });

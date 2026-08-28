@@ -204,6 +204,8 @@ export interface ExecutionRecord {
   siteAuditPages?: number;
   contextTruncated?: boolean;
   omittedHistoryCount?: number;
+  longTermSegmentsUsed?: number;
+  longTermMessagesUsed?: number;
 }
 
 export interface Conversation {

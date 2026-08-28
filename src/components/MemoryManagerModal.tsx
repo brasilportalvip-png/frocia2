@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Brain,
   Check,
+  Database,
   Download,
   Loader2,
   Pencil,
@@ -39,6 +40,15 @@ interface MemoryManagerModalProps {
   onClose: () => void;
 }
 
+interface LongTermMemoryStats {
+  segmentCount: number;
+  conversationCount: number;
+  preservedMessageCount: number;
+  preservedCharacterCount: number;
+  resultCapped: boolean;
+  encrypted: true;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -67,6 +77,8 @@ export const MemoryManagerModal: React.FC<
   const [isSaving, setIsSaving] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [longTermStats, setLongTermStats] =
+    useState<LongTermMemoryStats | null>(null);
 
   const loadMemories = useCallback(async () => {
     setIsLoading(true);
@@ -76,6 +88,14 @@ export const MemoryManagerModal: React.FC<
       const response = await apiClient<{ memories: ManagedMemory[] }>(
         '/api/memories?manage=true'
       );
+      try {
+        const longTerm = await apiClient<{ stats: LongTermMemoryStats }>(
+          '/api/memories/long-term/stats'
+        );
+        setLongTermStats(longTerm.stats);
+      } catch {
+        setLongTermStats(null);
+      }
       let audit: {
         events: Array<{
           memoryId: string;
@@ -275,6 +295,33 @@ export const MemoryManagerModal: React.FC<
     }
   };
 
+  const deleteLongTermMemory = async () => {
+    if (
+      !window.confirm(
+        'Excluir os segmentos criptografados usados para retomar conversas antigas? As mensagens originais continuam no histórico até você excluir cada conversa.'
+      )
+    ) return;
+    setIsLoading(true);
+    setError('');
+    try {
+      await apiClient('/api/memories/long-term?confirm=DELETE_LONG_TERM', {
+        method: 'DELETE',
+      });
+      setLongTermStats({
+        segmentCount: 0,
+        conversationCount: 0,
+        preservedMessageCount: 0,
+        preservedCharacterCount: 0,
+        resultCapped: false,
+        encrypted: true,
+      });
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/90 p-2 text-white backdrop-blur-xl sm:items-center sm:p-4"
@@ -424,6 +471,34 @@ export const MemoryManagerModal: React.FC<
           </section>
 
           <section className="flex min-h-[18rem] flex-col p-4 sm:p-5 lg:min-h-0">
+            <div className="mb-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.06] p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <Database className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
+                  <div>
+                    <p className="text-xs font-bold text-violet-200">
+                      Memória extensa de conversas
+                    </p>
+                    <p className="mt-1 text-[10px] leading-relaxed text-white/50">
+                      {longTermStats
+                        ? `${longTermStats.preservedMessageCount.toLocaleString('pt-BR')} mensagens em ${longTermStats.conversationCount.toLocaleString('pt-BR')} conversas · ${longTermStats.segmentCount.toLocaleString('pt-BR')} segmentos criptografados${longTermStats.resultCapped ? ' ou mais' : ''}.`
+                        : 'A capacidade será calculada quando o backend estiver disponível.'}
+                    </p>
+                    <p className="mt-1 text-[10px] text-emerald-300/65">
+                      Recuperação por relevância; usuários e empresas nunca são misturados.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void deleteLongTermMemory()}
+                  disabled={!longTermStats?.segmentCount || isLoading}
+                  className="shrink-0 rounded-lg border border-rose-400/20 px-2 py-1.5 text-[10px] text-rose-300 hover:bg-rose-400/10 disabled:opacity-30"
+                >
+                  Esquecer
+                </button>
+              </div>
+            </div>
             <div className="mb-4 flex items-center justify-between gap-3">
               <p className="text-xs text-white/50">
                 {memories.length} memória{memories.length === 1 ? '' : 's'}

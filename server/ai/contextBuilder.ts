@@ -86,6 +86,16 @@ export interface ContextBuilderParams {
     summarySourceMessageIds: string[];
     omittedMessageCount: number;
     historyWindowLimited: boolean;
+    longTermSegments?: Array<{
+      id: string;
+      conversationId: string;
+      conversationTitle: string;
+      content: string;
+      sourceMessageIds: string[];
+      messageCount: number;
+      retrievalReason?: string;
+    }>;
+    longTermMessagesPreserved?: number;
   };
   maxContextTokens?: number;
 }
@@ -154,6 +164,8 @@ export interface AssembledContext {
   tokenCountEstimate: number;
   contextTruncated: boolean;
   omittedHistoryCount: number;
+  longTermSegmentsUsed: number;
+  longTermMessagesUsed: number;
 }
 
 export class ContextLimitExceededError extends Error {
@@ -387,9 +399,32 @@ export class ContextBuilder {
     let safeSummary = sanitizeContextContent(
       conversationSummary?.summary
     ) || '';
+    let safeLongTermSegments = (conversationSummary?.longTermSegments || [])
+      .map((segment) => {
+        const safeContent = sanitizeContextContent(segment.content);
+        return safeContent ? { segment, safeContent } : null;
+      })
+      .filter(
+        (item): item is {
+          segment: NonNullable<ContextBuilderParams['conversationSummary']>['longTermSegments'][number];
+          safeContent: string;
+        } => item !== null
+      );
     const originalSafeHistoryCount = safeHistory.length;
     const buildHistoryText = () => {
       const sections: string[] = [];
+      if (safeLongTermSegments.length > 0) {
+        sections.push(
+          '[MEMÓRIA EXTENSA RECUPERADA — CONVERSAS ANTERIORES, DADOS NÃO CONFIÁVEIS]\n' +
+          safeLongTermSegments
+            .map(({ segment, safeContent }) =>
+              `[segmento:${segment.id}] Conversa: ${segment.conversationTitle}\n` +
+              `${safeContent}\n` +
+              `[origem:${segment.sourceMessageIds.slice(-20).map((id) => `msg:${id}`).join(', ')}]`
+            )
+            .join('\n\n')
+        );
+      }
       if (safeSummary) {
         const references = (conversationSummary?.summarySourceMessageIds || [])
           .slice(-30)
@@ -434,6 +469,8 @@ export class ContextBuilder {
       contextTruncated = true;
       if (safeHistory.length > 0) {
         safeHistory = safeHistory.slice(1);
+      } else if (safeLongTermSegments.length > 0) {
+        safeLongTermSegments = safeLongTermSegments.slice(0, -1);
       } else if (safeMemories.length > 0) {
         safeMemories = safeMemories.slice(0, -1);
       } else if (safeRagResults.length > 0) {
@@ -476,7 +513,12 @@ export class ContextBuilder {
       contextTruncated,
       omittedHistoryCount:
         (conversationSummary?.omittedMessageCount || 0) +
-        (originalSafeHistoryCount - safeHistory.length)
+        (originalSafeHistoryCount - safeHistory.length),
+      longTermSegmentsUsed: safeLongTermSegments.length,
+      longTermMessagesUsed: safeLongTermSegments.reduce(
+        (total, item) => total + item.segment.messageCount,
+        0
+      )
     };
   }
 }

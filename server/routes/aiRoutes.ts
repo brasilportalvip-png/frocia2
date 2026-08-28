@@ -599,6 +599,8 @@ aiRouter.post(
           userId: uid,
           tenantId: req.user!.tenantId,
           conversationId,
+          projectId,
+          prompt: sanitizedPrompt,
         });
       const assembled =
         await ContextBuilder.assemble({
@@ -657,7 +659,7 @@ aiRouter.post(
               SocialSearchService.extractRequestedPlatforms(
                 sanitizedPrompt
               ),
-            limit: 5,
+            limit: SocialSearchService.requestedLimit(sanitizedPrompt),
           });
         streamCitations.push(
           ...CitationService.buildSocialCitations(
@@ -757,7 +759,9 @@ aiRouter.post(
             plan.classification.sensitivity,
           knowledgeBaseRequested:
             knowledgeBaseIds.length > 0,
-          ragChunksUsed: assembled.ragChunksUsed
+          ragChunksUsed: assembled.ragChunksUsed,
+          minimumSourceDomains:
+            SocialSearchService.requestedLimit(sanitizedPrompt) === 10 ? 2 : 1
         });
 
       fullOutput = evidence.text;
@@ -835,6 +839,10 @@ aiRouter.post(
             assembled.contextTruncated,
           omittedHistoryCount:
             assembled.omittedHistoryCount,
+          longTermSegmentsUsed:
+            assembled.longTermSegmentsUsed,
+          longTermMessagesUsed:
+            assembled.longTermMessagesUsed,
           latencyMs:
             Date.now() - startTime,
           completedAt:

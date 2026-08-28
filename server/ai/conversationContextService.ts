@@ -1,14 +1,20 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
+import {
+  LongTermConversationMemoryService,
+  LongTermConversationSegment,
+} from './longTermConversationMemoryService.js';
 
 const RECENT_MESSAGE_LIMIT = 8;
 const QUERY_LIMIT = 80;
-const SUMMARY_CHARACTER_LIMIT = 4000;
+const SUMMARY_CHARACTER_LIMIT = 8000;
 
 export interface ConversationContextMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  createdAt?: string | null;
+  archivedSegmentId?: string | null;
 }
 
 export interface ConversationContextSnapshot {
@@ -17,6 +23,8 @@ export interface ConversationContextSnapshot {
   recentMessages: ConversationContextMessage[];
   omittedMessageCount: number;
   historyWindowLimited: boolean;
+  longTermSegments: LongTermConversationSegment[];
+  longTermMessagesPreserved: number;
 }
 
 function normalizeMessageContent(value: unknown): string {
@@ -65,14 +73,39 @@ export class ConversationContextService {
     userId: string;
     tenantId: string;
     conversationId?: string | null;
+    projectId?: string | null;
+    prompt?: string;
   }): Promise<ConversationContextSnapshot> {
-    if (!adminDb || !input.conversationId) {
+    if (!adminDb) {
       return {
         summary: '',
         summarySourceMessageIds: [],
         recentMessages: [],
         omittedMessageCount: 0,
         historyWindowLimited: false,
+        longTermSegments: [],
+        longTermMessagesPreserved: 0,
+      };
+    }
+
+    if (!input.conversationId) {
+      const longTermSegments = await LongTermConversationMemoryService.retrieve({
+        userId: input.userId,
+        tenantId: input.tenantId,
+        prompt: input.prompt || '',
+        projectId: input.projectId,
+      });
+      return {
+        summary: '',
+        summarySourceMessageIds: [],
+        recentMessages: [],
+        omittedMessageCount: 0,
+        historyWindowLimited: false,
+        longTermSegments,
+        longTermMessagesPreserved: longTermSegments.reduce(
+          (total, segment) => total + segment.messageCount,
+          0
+        ),
       };
     }
 
@@ -109,6 +142,15 @@ export class ConversationContextService {
           id: doc.id,
           role: data.role === 'assistant' ? 'assistant' : 'user',
           content: normalizeMessageContent(data.content),
+          createdAt: data.createdAt
+            ? typeof data.createdAt.toDate === 'function'
+              ? data.createdAt.toDate().toISOString()
+              : new Date(data.createdAt).toISOString()
+            : null,
+          archivedSegmentId:
+            typeof data.longTermMemorySegmentId === 'string'
+              ? data.longTermMemorySegmentId
+              : null,
         } as ConversationContextMessage;
       })
       .filter((message) => message.content.length > 0);
@@ -140,12 +182,47 @@ export class ConversationContextService {
       });
     }
 
+    try {
+      await LongTermConversationMemoryService.archive({
+        userId: input.userId,
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        conversationTitle:
+          typeof conversation.title === 'string' ? conversation.title : 'Conversa',
+        projectId:
+          typeof conversation.projectId === 'string'
+            ? conversation.projectId
+            : input.projectId,
+        messages: olderMessages,
+      });
+    } catch (error) {
+      // A conversa recente continua disponível mesmo se a criptografia ou o
+      // armazenamento de memória extensa estiver temporariamente indisponível.
+      console.warn('Memória extensa não pôde arquivar este lote.', error);
+    }
+
+    const longTermSegments = await LongTermConversationMemoryService.retrieve({
+      userId: input.userId,
+      tenantId: input.tenantId,
+      prompt: input.prompt || '',
+      conversationId: input.conversationId,
+      projectId:
+        typeof conversation.projectId === 'string'
+          ? conversation.projectId
+          : input.projectId,
+    });
+
     return {
       summary: summaryResult.summary,
       summarySourceMessageIds,
       recentMessages,
       omittedMessageCount: olderMessages.length,
       historyWindowLimited: messageSnap.size >= QUERY_LIMIT,
+      longTermSegments,
+      longTermMessagesPreserved: longTermSegments.reduce(
+        (total, segment) => total + segment.messageCount,
+        0
+      ),
     };
   }
 }

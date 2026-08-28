@@ -136,6 +136,81 @@ describe('Pesquisa oficial e verificável em redes sociais', () => {
     );
   });
 
+  it('pesquisa posts públicos do Bluesky sem credencial e preserva o permalink', async () => {
+    const mock = fetchMock(
+      response({
+        posts: [
+          {
+            uri: 'at://did:plc:abc/app.bsky.feed.post/post123',
+            indexedAt: '2026-08-28T10:00:00.000Z',
+            author: {
+              did: 'did:plc:abc',
+              handle: 'frocia.bsky.social',
+            },
+            record: {
+              text: 'Pesquisa pública verificável no Bluesky.',
+              createdAt: '2026-08-28T09:59:00.000Z',
+            },
+            likeCount: 12,
+            replyCount: 3,
+            repostCount: 4,
+            quoteCount: 1,
+          },
+        ],
+      })
+    );
+    const report = await SocialSearchService.search(
+      {
+        query: 'Froc IA',
+        platforms: ['bluesky'],
+        limit: 10,
+      },
+      { fetchFn: mock as unknown as typeof fetch, env: {}, now: NOW }
+    );
+
+    expect(report.items).toEqual([
+      expect.objectContaining({
+        platform: 'bluesky',
+        accountHandle: 'frocia.bsky.social',
+        permalink: 'https://bsky.app/profile/frocia.bsky.social/post/post123',
+        metrics: { likes: 12, replies: 3, reposts: 4, quotes: 1 },
+      }),
+    ]);
+    expect(mock).toHaveBeenCalledWith(
+      expect.stringContaining('public.api.bsky.app/xrpc/app.bsky.feed.searchPosts'),
+      expect.any(Object)
+    );
+    expect(SocialSearchService.evidenceStatus(report)).toBe('supported');
+  });
+
+  it('aumenta a cobertura por rede quando o usuário pede pesquisa profunda', () => {
+    expect(SocialSearchService.requestedLimit('Pesquise este tema')).toBe(5);
+    expect(
+      SocialSearchService.requestedLimit('Faça uma pesquisa profunda e completa')
+    ).toBe(10);
+  });
+
+  it('declara pesquisa profunda parcial quando não há duas fontes independentes', () => {
+    const result = ResearchEvidenceService.finalize({
+      text: 'Conclusão preliminar.',
+      citations: [
+        {
+          title: 'Fonte única',
+          uri: 'https://example.com/fonte',
+          domain: 'example.com',
+          sourceType: 'web',
+        },
+      ],
+      requiresSearch: true,
+      sensitivity: 'normal',
+      knowledgeBaseRequested: false,
+      ragChunksUsed: [],
+      minimumSourceDomains: 2,
+    });
+    expect(result.researchStatus).toBe('limited');
+    expect(result.text).toContain('cobertura completa da internet');
+  });
+
   it('pesquisa posts recentes no X com bearer somente no header', async () => {
     const mock = fetchMock(
       response({

@@ -5,6 +5,7 @@ export const SOCIAL_PLATFORMS = [
   'instagram',
   'facebook',
   'tiktok',
+  'bluesky',
   'linkedin',
 ] as const;
 
@@ -93,6 +94,7 @@ const PLATFORM_PATTERNS: Array<{
   { platform: 'instagram', pattern: /\b(instagram|insta|reels?)\b/i },
   { platform: 'facebook', pattern: /\b(facebook|fanpage)\b/i },
   { platform: 'tiktok', pattern: /\b(tiktok)\b/i },
+  { platform: 'bluesky', pattern: /\b(bluesky|bsky(?:\.app)?)\b/i },
   { platform: 'linkedin', pattern: /\b(linkedin)\b/i },
 ];
 
@@ -101,6 +103,9 @@ const SOCIAL_SEARCH_INTENT =
 
 const GENERIC_SOCIAL_PATTERN =
   /\b(redes? sociais|m[ií]dias? sociais|social media)\b/i;
+
+const DEEP_RESEARCH_PATTERN =
+  /\b(profund[ao]?|exaustiv[ao]?|complet[ao]?|detalhad[ao]?|a fundo|tudo|todas? as fontes|ampla cobertura)\b/i;
 
 const MAX_RESPONSE_BYTES = 1_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -1000,7 +1005,92 @@ async function searchTikTok(
   }
 }
 
+async function searchBluesky(
+  input: Required<Pick<SocialSearchInput, 'query' | 'limit'>>,
+  fetchFn: typeof fetch,
+  checkedAt: string,
+  accountRequested: string | null
+): Promise<SocialPlatformSearchResult> {
+  const query = accountRequested
+    ? `${input.query} from:${accountRequested}`
+    : input.query;
+  const params = new URLSearchParams({
+    q: query.slice(0, 300),
+    limit: String(input.limit),
+    sort: 'latest',
+  });
+
+  try {
+    const payload = asRecord(
+      await fetchJson(
+        fetchFn,
+        `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?${params.toString()}`
+      )
+    );
+    const items = asArray(payload.posts)
+      .map((value): SocialSearchItem | null => {
+        const post = asRecord(value);
+        const author = asRecord(post.author);
+        const record = asRecord(post.record);
+        const uri = safeString(post.uri, 500);
+        const uriParts = uri.split('/');
+        const rkey = safeId(uriParts[uriParts.length - 1]);
+        const handle = safeString(author.handle, 180);
+        const did = safeString(author.did, 250);
+        if (!rkey || !handle) return null;
+
+        return {
+          platform: 'bluesky',
+          externalId: rkey,
+          accountId: did || null,
+          accountHandle: handle,
+          title: `@${handle} no Bluesky`,
+          text: safeString(record.text, 500),
+          permalink: `https://bsky.app/profile/${encodeURIComponent(handle)}/post/${encodeURIComponent(rkey)}`,
+          publishedAt:
+            safeString(record.createdAt, 40) ||
+            safeString(post.indexedAt, 40) ||
+            null,
+          retrievedAt: checkedAt,
+          metrics: compactMetrics({
+            likes: post.likeCount,
+            replies: post.replyCount,
+            reposts: post.repostCount,
+            quotes: post.quoteCount,
+          }),
+        };
+      })
+      .filter((item): item is SocialSearchItem => Boolean(item))
+      .slice(0, input.limit);
+
+    return {
+      platform: 'bluesky',
+      status: 'ok',
+      accessMode: 'public_api',
+      accountRequested,
+      checkedAt,
+      items,
+      limitation:
+        items.length === 0
+          ? 'A API pública oficial do Bluesky não retornou posts para esta consulta.'
+          : 'Somente posts públicos indexados pelo AppView oficial foram consultados.',
+    };
+  } catch (error) {
+    return providerFailureResult(
+      'bluesky',
+      'public_api',
+      checkedAt,
+      accountRequested,
+      error
+    );
+  }
+}
+
 export class SocialSearchService {
+  static requestedLimit(prompt: string): 5 | 10 {
+    return DEEP_RESEARCH_PATTERN.test(prompt) ? 10 : 5;
+  }
+
   static evidenceStatus(
     report: SocialSearchReport | null
   ):
@@ -1156,6 +1246,17 @@ export class SocialSearchService {
           'https://developers.tiktok.com/doc/research-api-specs-query-videos/',
       },
       {
+        platform: 'bluesky',
+        configured: true,
+        accessMode: 'public_api',
+        requirements: [],
+        scope: 'posts públicos indexados pelo AppView oficial',
+        limitation:
+          'Conteúdo apagado, privado ou não indexado não é acessível.',
+        documentationUrl:
+          'https://docs.bsky.app/docs/api/app-bsky-feed-search-posts',
+      },
+      {
         platform: 'linkedin',
         configured: false,
         accessMode: 'unavailable',
@@ -1271,6 +1372,13 @@ export class SocialSearchService {
             return searchTikTok(
               { ...common, startDate, endDate },
               env,
+              fetchFn,
+              searchedAt,
+              accountRequested
+            );
+          case 'bluesky':
+            return searchBluesky(
+              common,
               fetchFn,
               searchedAt,
               accountRequested
