@@ -167,6 +167,38 @@ function envValue(
   return safeString(env[key], 4096);
 }
 
+const YOUTUBE_API_KEY_NAMES = [
+  'YOUTUBE_DATA_API_KEY',
+  'YOUTUBE_API_KEY',
+  'GOOGLE_YOUTUBE_API_KEY',
+] as const;
+
+function firstEnvValue(
+  env: NodeJS.ProcessEnv,
+  keys: readonly string[]
+): string {
+  for (const key of keys) {
+    const value = envValue(env, key);
+    if (value) return value;
+  }
+
+  return '';
+}
+
+function extractTopicQuery(value: string): string {
+  const normalized = safeString(value, 300);
+  const explicitTopic = normalized.match(
+    /\bsobre\s+(.+?)(?=\s+(?:nas?|nos?)\s+[uú]ltim|[.!?]\s*(?:pesquis|busc|n[aã]o|para|compare|informe)|$)/i
+  )?.[1];
+  const topic = safeString(explicitTopic, 180);
+
+  if (topic.length >= 2) {
+    return topic;
+  }
+
+  return normalized;
+}
+
 function clampLimit(value: unknown): number {
   const numeric =
     typeof value === 'number' ? Math.floor(value) : 5;
@@ -377,7 +409,10 @@ async function searchYoutube(
   checkedAt: string,
   accountRequested: string | null
 ): Promise<SocialPlatformSearchResult> {
-  const key = envValue(env, 'YOUTUBE_DATA_API_KEY');
+  const key = firstEnvValue(
+    env,
+    YOUTUBE_API_KEY_NAMES
+  );
   const params = new URLSearchParams({
     part: 'snippet',
     type: 'video',
@@ -1016,6 +1051,7 @@ async function searchTikTok(
 
 async function searchBluesky(
   input: Required<Pick<SocialSearchInput, 'query' | 'limit'>>,
+  env: NodeJS.ProcessEnv,
   fetchFn: typeof fetch,
   checkedAt: string,
   accountRequested: string | null
@@ -1036,6 +1072,42 @@ async function searchBluesky(
       'https://api.bsky.app',
       'https://public.api.bsky.app',
     ];
+    const identifier = envValue(
+      env,
+      'BLUESKY_IDENTIFIER'
+    );
+    const appPassword = envValue(
+      env,
+      'BLUESKY_APP_PASSWORD'
+    );
+    let accessJwt = '';
+
+    if (identifier && appPassword) {
+      try {
+        const session = asRecord(
+          await fetchJson(
+            fetchFn,
+            'https://bsky.social/xrpc/com.atproto.server.createSession',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                identifier,
+                password: appPassword,
+              }),
+            }
+          )
+        );
+        accessJwt = safeString(
+          session.accessJwt,
+          4096
+        );
+      } catch {
+        accessJwt = '';
+      }
+    }
     let payload: JsonRecord | null = null;
     let lastError: unknown = null;
 
@@ -1044,7 +1116,20 @@ async function searchBluesky(
         payload = asRecord(
           await fetchJson(
             fetchFn,
-            `${host}${endpointPath}`
+            `${host}${endpointPath}`,
+            {
+              headers: {
+                Accept: 'application/json',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+                Origin: 'https://bsky.app',
+                Referer: 'https://bsky.app/',
+                ...(accessJwt
+                  ? {
+                      Authorization: `Bearer ${accessJwt}`,
+                    }
+                  : {}),
+              },
+            }
           )
         );
         break;
@@ -1185,10 +1270,12 @@ export class SocialSearchService {
       {
         platform: 'youtube',
         configured: Boolean(
-          envValue(env, 'YOUTUBE_DATA_API_KEY')
+          firstEnvValue(env, YOUTUBE_API_KEY_NAMES)
         ),
         accessMode: 'public_api',
-        requirements: ['YOUTUBE_DATA_API_KEY'],
+        requirements: [
+          'YOUTUBE_DATA_API_KEY (ou YOUTUBE_API_KEY/GOOGLE_YOUTUBE_API_KEY)',
+        ],
         scope: 'dados públicos da YouTube Data API v3',
         limitation:
           'Conteúdo privado ou não indexado não é acessível.',
@@ -1279,7 +1366,9 @@ export class SocialSearchService {
         platform: 'bluesky',
         configured: true,
         accessMode: 'public_api',
-        requirements: [],
+        requirements: [
+          'Nenhuma para acesso público; BLUESKY_IDENTIFIER + BLUESKY_APP_PASSWORD são opcionais para fallback autenticado',
+        ],
         scope: 'posts públicos indexados pelo AppView oficial',
         limitation:
           'Conteúdo apagado, privado ou não indexado não é acessível.',
@@ -1306,7 +1395,7 @@ export class SocialSearchService {
     input: SocialSearchInput,
     runtime: SocialSearchRuntime = {}
   ): Promise<SocialSearchReport> {
-    const query = safeString(input.query, 300);
+    const query = extractTopicQuery(input.query);
     if (query.length < 2) {
       throw new Error(
         'A consulta social deve conter entre 2 e 300 caracteres.'
@@ -1409,6 +1498,7 @@ export class SocialSearchService {
           case 'bluesky':
             return searchBluesky(
               common,
+              env,
               fetchFn,
               searchedAt,
               accountRequested

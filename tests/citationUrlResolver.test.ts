@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationUrlResolver } from '../server/ai/citationUrlResolver.js';
 
@@ -86,6 +87,23 @@ describe('Resolução segura de URLs de pesquisa', () => {
     expect(fetchFn).not.toHaveBeenCalled();
     expect(result.citations[0].uri).toBe(
       'https://bsky.app/profile/exemplo/post/abc'
+    );
+  });
+
+  it('aplica a resolução também à rota de streaming usada pela interface', () => {
+    const streamRoute = readFileSync(
+      new URL('../server/routes/aiRoutes.ts', import.meta.url),
+      'utf8'
+    );
+
+    expect(streamRoute).toContain(
+      "import { CitationUrlResolver } from '../ai/citationUrlResolver.js'"
+    );
+    expect(streamRoute).toContain(
+      'await CitationUrlResolver.resolve({'
+    );
+    expect(streamRoute).toContain(
+      'fullOutput = resolvedCitationPayload.text'
     );
   });
 });

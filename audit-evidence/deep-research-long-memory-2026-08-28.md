@@ -102,3 +102,23 @@ tracker preservado com 563 requisitos e 563 IDs únicos. O YouTube continua
 dependendo da variável externa `YOUTUBE_DATA_API_KEY` habilitada em Production
 e Preview; as demais redes autenticadas continuam dependendo dos planos,
 credenciais e aprovações descritos acima.
+
+## Correção complementar da rota usada pela interface
+
+O teste vivo seguinte mostrou que a interface usa streaming e que o resolvedor
+de URLs ainda estava conectado somente à execução síncrona. Também revelou que
+o texto completo das instruções era enviado como consulta às APIs sociais. A
+correção complementar:
+
+- aplica o resolvedor seguro de URLs também ao fluxo SSE usado pelo chat;
+- extrai o assunto solicitado antes de consultar YouTube e Bluesky;
+- aceita `YOUTUBE_DATA_API_KEY`, `YOUTUBE_API_KEY` ou
+  `GOOGLE_YOUTUBE_API_KEY`, sem registrar o valor;
+- adiciona cabeçalhos compatíveis com o AppView do Bluesky e permite fallback
+  autenticado opcional por senha de aplicativo;
+- documenta `BLUESKY_IDENTIFIER` e `BLUESKY_APP_PASSWORD` sem exigir nem
+  armazenar a senha principal da conta.
+
+Evidência local complementar: 29 testes direcionados aprovados, 315/315 testes
+da suíte completa aprovados, tipagem e build aprovados, integridade validada em
+158 arquivos e tracker preservado com 563 IDs únicos.

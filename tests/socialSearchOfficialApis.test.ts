@@ -136,6 +136,33 @@ describe('Pesquisa oficial e verificável em redes sociais', () => {
     );
   });
 
+  it('aceita nome alternativo da chave do YouTube e extrai somente o assunto da instrução', async () => {
+    const mock = fetchMock(response({ items: [] }));
+
+    await SocialSearchService.search(
+      {
+        query:
+          'Faça uma pesquisa profunda sobre inteligência artificial generativa nas últimas 24 horas. Pesquise na web e no YouTube.',
+        platforms: ['youtube'],
+      },
+      {
+        fetchFn: mock as unknown as typeof fetch,
+        env: { YOUTUBE_API_KEY: 'youtube-alternative' },
+        now: NOW,
+      }
+    );
+
+    const requestUrl = new URL(
+      String(mock.mock.calls[0][0])
+    );
+    expect(requestUrl.searchParams.get('q')).toBe(
+      'inteligência artificial generativa'
+    );
+    expect(requestUrl.searchParams.get('key')).toBe(
+      'youtube-alternative'
+    );
+  });
+
   it('pesquisa posts públicos do Bluesky sem credencial e preserva o permalink', async () => {
     const mock = fetchMock(
       response({
@@ -214,6 +241,42 @@ describe('Pesquisa oficial e verificável em redes sociais', () => {
       platform: 'bluesky',
       status: 'ok',
     });
+  });
+
+  it('usa senha de aplicativo opcional no fallback autenticado do Bluesky sem expor segredo', async () => {
+    const mock = fetchMock(
+      response({ accessJwt: 'access-jwt' }),
+      response({ posts: [] })
+    );
+
+    const report = await SocialSearchService.search(
+      {
+        query: 'inteligência artificial',
+        platforms: ['bluesky'],
+      },
+      {
+        fetchFn: mock as unknown as typeof fetch,
+        env: {
+          BLUESKY_IDENTIFIER: 'frocia.bsky.social',
+          BLUESKY_APP_PASSWORD: 'app-password-secret',
+        },
+        now: NOW,
+      }
+    );
+
+    expect(String(mock.mock.calls[0][0])).toContain(
+      'com.atproto.server.createSession'
+    );
+    const searchInit = mock.mock.calls[1][1] as RequestInit;
+    expect(searchInit.headers).toEqual(
+      expect.objectContaining({
+        Authorization: 'Bearer access-jwt',
+        Origin: 'https://bsky.app',
+      })
+    );
+    expect(JSON.stringify(report)).not.toContain(
+      'app-password-secret'
+    );
   });
 
   it('aumenta a cobertura por rede quando o usuário pede pesquisa profunda', () => {
@@ -731,6 +794,8 @@ describe('Pesquisa oficial e verificável em redes sociais', () => {
     expect(routeSource).toContain('requireAuth');
     expect(routeSource).toContain('socialSearchLimiter');
     expect(envSource).toContain('YOUTUBE_DATA_API_KEY=');
+    expect(envSource).toContain('BLUESKY_IDENTIFIER=');
+    expect(envSource).toContain('BLUESKY_APP_PASSWORD=');
     expect(envSource).toContain('X_BEARER_TOKEN=');
     expect(envSource).toContain('META_ACCESS_TOKEN=');
     expect(envSource).toContain(
