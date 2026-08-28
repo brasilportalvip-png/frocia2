@@ -168,6 +168,25 @@ export class CapabilityRegistryService {
             : 'Nenhuma credencial social foi detectada; a pesquisa web pública continua separada e não é apresentada como acesso autenticado.',
       },
       {
+        id: 'public_site_auditor',
+        name: 'Auditoria de Sites e URLs Públicas',
+        category: 'automation',
+        status: 'available',
+        provider: 'Froc.IA Safe Crawler',
+        model: 'robots.txt + sitemap + links internos + SHA-256',
+        cost: {
+          credits: 15,
+          description: 'Limite máximo interno por auditoria automática'
+        },
+        limits:
+          'Até 40 páginas na execução manual e 8 no chat; sem contornar login, CAPTCHA, paywall ou robots.txt',
+        requirements: ['Firebase Admin Auth'],
+        checkedAt: now,
+        lastVerifiedAt: null,
+        evidence:
+          'Crawler público com SSRF, limite de bytes/tempo, status complete/partial/blocked e evidências por página; conteúdo renderizado por JavaScript é declarado como limitação.'
+      },
+      {
         id: 'code_and_site_builder',
         name: 'Gerador e Refinador de Código/Sites',
         category: 'code',

@@ -4,6 +4,7 @@ import {
   MessageCitation,
 } from './types/ai.js';
 import { SocialSearchItem } from './socialSearchService.js';
+import { SiteAuditReport } from '../services/siteAuditService.js';
 
 const MAX_TITLE_LENGTH = 240;
 const MAX_SNIPPET_LENGTH = 500;
@@ -152,6 +153,25 @@ function numberCitations(
 }
 
 export class CitationService {
+  static buildSiteAuditCitations(report: SiteAuditReport): MessageCitation[] {
+    const seen = new Set<string>();
+    const citations: MessageCitation[] = [];
+    for (const page of report.pages) {
+      const url = normalizePublicHttpsUrl(page.finalUrl);
+      if (!url || seen.has(url.href)) continue;
+      seen.add(url.href);
+      citations.push({
+        title: cleanText(page.title, MAX_TITLE_LENGTH) || sourceDomain(url),
+        uri: url.href,
+        snippet: cleanText(page.excerpt, MAX_SNIPPET_LENGTH),
+        sourceType: 'web',
+        domain: sourceDomain(url),
+        retrievedAt: page.fetchedAt
+      });
+    }
+    return numberCitations(citations);
+  }
+
   static buildSocialCitations(
     items: SocialSearchItem[]
   ): MessageCitation[] {

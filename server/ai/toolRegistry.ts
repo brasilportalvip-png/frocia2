@@ -208,6 +208,44 @@ export class ToolRegistry {
         verificationStrategy: 'provider_receipt',
       },
     ],
+    [
+      'site_audit',
+      {
+        name: 'site_audit',
+        description:
+          'Audita páginas públicas de um site com robots.txt, sitemaps, links internos, hashes e achados verificáveis de acesso, SEO, acessibilidade e segurança.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            url: { type: 'STRING', description: 'URL pública inicial do site' },
+            maxPages: { type: 'NUMBER', description: 'Limite entre 1 e 40 páginas' }
+          },
+          required: ['url']
+        },
+        outputSchema: {
+          type: 'OBJECT',
+          properties: {
+            status: { type: 'STRING' },
+            summary: { type: 'OBJECT' },
+            pages: { type: 'ARRAY' },
+            failures: { type: 'ARRAY' },
+            limitations: { type: 'ARRAY' }
+          }
+        },
+        authScopes: ['user'],
+        riskLevel: 'medium',
+        mutatesState: false,
+        requiresConfirmation: false,
+        idempotencyRequired: false,
+        timeoutMs: 45_000,
+        maxRetries: 0,
+        retryBackoffMs: 0,
+        costLimitCredits: 15,
+        rateLimit: { windowMs: 5 * 60_000, maxRequests: 3 },
+        redactFields: ['authorization', 'cookie', 'password', 'token'],
+        verificationStrategy: 'deterministic'
+      }
+    ],
   ]);
 
   static getTool(name: string): ToolDeclaration | undefined {

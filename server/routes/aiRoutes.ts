@@ -39,6 +39,8 @@ import {
   SocialSearchService,
 } from '../ai/socialSearchService.js';
 import { SocialSearchPolicyService } from '../ai/socialSearchPolicyService.js';
+import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
+import { SiteAuditPolicyService } from '../ai/siteAuditPolicyService.js';
 
 export const aiRouter = Router();
 
@@ -573,6 +575,7 @@ aiRouter.post(
     let fullOutput = '';
     let streamCitations: MessageCitation[] = [];
     let socialSearchReport: SocialSearchReport | null = null;
+    let siteAuditReport: SiteAuditReport | null = null;
     const startTime = Date.now();
     let isClosed = false;
     const bufferForEvidence =
@@ -619,6 +622,24 @@ aiRouter.post(
           CitationService.buildRAGCitationPill(chunk)
         );
 
+      if (plan.classification.siteAuditUrl) {
+        await SiteAuditPolicyService.assertAllowed({
+          userId: uid,
+          tenantId: req.user!.tenantId
+        });
+        siteAuditReport = await SiteAuditService.audit(
+          { url: plan.classification.siteAuditUrl, maxPages: 8 },
+          { maxDurationMs: 18_000 }
+        );
+        streamCitations.push(...CitationService.buildSiteAuditCitations(siteAuditReport));
+        sendEvent('site_audit', {
+          auditId: siteAuditReport.auditId,
+          status: siteAuditReport.status,
+          summary: siteAuditReport.summary,
+          limitations: siteAuditReport.limitations
+        });
+      }
+
       if (
         SocialSearchService.shouldSearch(
           sanitizedPrompt,
@@ -657,11 +678,11 @@ aiRouter.post(
         });
       }
 
-      const modelUserMessage = socialSearchReport
-        ? `${assembled.userMessage}${SocialSearchService.toGroundingContext(
-            socialSearchReport
-          )}`
-        : assembled.userMessage;
+      const modelUserMessage = [
+        assembled.userMessage,
+        siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
+        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : ''
+      ].join('');
 
       const stream =
         GeminiProvider.generateStream({
@@ -806,6 +827,10 @@ aiRouter.post(
             SocialSearchService.evidenceStatus(
               socialSearchReport
             ),
+          siteAuditStatus:
+            siteAuditReport?.status || 'not_requested',
+          siteAuditPages:
+            siteAuditReport?.summary.pagesAnalyzed || 0,
           contextTruncated:
             assembled.contextTruncated,
           omittedHistoryCount:
@@ -838,7 +863,11 @@ aiRouter.post(
           socialSearchStatus:
             SocialSearchService.evidenceStatus(
               socialSearchReport
-            )
+            ),
+          siteAuditStatus:
+            siteAuditReport?.status || 'not_requested',
+          siteAuditPages:
+            siteAuditReport?.summary.pagesAnalyzed || 0
         }
       });
 

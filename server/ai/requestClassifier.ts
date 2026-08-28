@@ -4,6 +4,7 @@ import {
   SpecialistDomain,
 } from './types/ai.js';
 import { SocialSearchService } from './socialSearchService.js';
+import { SiteAuditService } from '../services/siteAuditService.js';
 
 interface ClassificationInput {
   mode: AIMode;
@@ -126,10 +127,16 @@ export class AIRequestClassifier {
         prompt,
         input.mode
       );
+    const requiresSiteAudit =
+      SiteAuditService.shouldAudit(prompt);
+    const siteAuditUrl = requiresSiteAudit
+      ? SiteAuditService.extractRequestedUrl(prompt)
+      : null;
     const requiresSearch =
       input.mode === 'research' ||
       highStakes ||
       requiresSocialSearch ||
+      requiresSiteAudit ||
       CURRENT_INFORMATION_PATTERN.test(prompt);
     const requiresCode =
       input.mode === 'code' ||
@@ -138,6 +145,7 @@ export class AIRequestClassifier {
       domain === 'site-builder';
     const requiresTools =
       requiresSearch ||
+      requiresSiteAudit ||
       Boolean(input.hasFiles) ||
       Boolean(input.requestedTools?.length);
     const contextSize =
@@ -147,6 +155,7 @@ export class AIRequestClassifier {
       input.mode === 'deep' ||
       input.mode === 'code' ||
       input.mode === 'site-builder' ||
+      requiresSiteAudit ||
       contextSize > 8_000 ||
       COMPLEXITY_PATTERN.test(prompt);
     const simple =
@@ -172,6 +181,10 @@ export class AIRequestClassifier {
       reasons.push(
         'official_social_api_search_required'
       );
+    }
+
+    if (requiresSiteAudit) {
+      reasons.push('full_site_audit_required');
     }
 
     if (highStakes) {
@@ -203,6 +216,7 @@ export class AIRequestClassifier {
         domain === 'site-builder',
       reasons,
       socialPlatforms,
+      siteAuditUrl,
     };
   }
 }

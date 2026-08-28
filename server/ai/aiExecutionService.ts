@@ -26,6 +26,8 @@ import {
   SocialSearchService,
 } from './socialSearchService.js';
 import { SocialSearchPolicyService } from './socialSearchPolicyService.js';
+import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
+import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 
 export class AIExecutionService {
   /**
@@ -45,6 +47,8 @@ export class AIExecutionService {
       researchStatus: string;
       ragStatus: string;
       socialSearchStatus: string;
+      siteAuditStatus: string;
+      siteAuditPages: number;
       sourceCount: number;
       sourceDomains: string[];
       socialPlatforms: string[];
@@ -143,6 +147,7 @@ export class AIExecutionService {
     const citations: MessageCitation[] = [];
     let ragChunksUsed: KnowledgeChunk[] = [];
     let socialSearchReport: SocialSearchReport | null = null;
+    let siteAuditReport: SiteAuditReport | null = null;
     let contextTruncated = false;
     let omittedHistoryCount = 0;
     const enableSearchGrounding =
@@ -253,6 +258,15 @@ if (params.abortSignal?.aborted) {
         citations.push(CitationService.buildRAGCitationPill(chunk));
       }
 
+      if (plan.classification.siteAuditUrl) {
+        await SiteAuditPolicyService.assertAllowed({ userId, tenantId });
+        siteAuditReport = await SiteAuditService.audit(
+          { url: plan.classification.siteAuditUrl, maxPages: 8 },
+          { maxDurationMs: 18_000 }
+        );
+        citations.push(...CitationService.buildSiteAuditCitations(siteAuditReport));
+      }
+
       if (
         SocialSearchService.shouldSearch(
           sanitizedPrompt,
@@ -279,11 +293,11 @@ if (params.abortSignal?.aborted) {
         );
       }
 
-      const modelUserMessage = socialSearchReport
-        ? `${assembled.userMessage}${SocialSearchService.toGroundingContext(
-            socialSearchReport
-          )}`
-        : assembled.userMessage;
+      const modelUserMessage = [
+        assembled.userMessage,
+        siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
+        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : ''
+      ].join('');
 
       startTime = Date.now();
       // 6. Execute with Primary Model and Fallback
@@ -535,6 +549,10 @@ const consumedCredits = CostService.calculateCreditCost(
         SocialSearchService.evidenceStatus(
           socialSearchReport
         ),
+      siteAuditStatus:
+        siteAuditReport?.status || 'not_requested',
+      siteAuditPages:
+        siteAuditReport?.summary.pagesAnalyzed || 0,
       contextTruncated,
       omittedHistoryCount,
       completedAt: new Date().toISOString(),
@@ -573,6 +591,10 @@ const consumedCredits = CostService.calculateCreditCost(
           SocialSearchService.evidenceStatus(
             socialSearchReport
           ),
+        siteAuditStatus:
+          siteAuditReport?.status || 'not_requested',
+        siteAuditPages:
+          siteAuditReport?.summary.pagesAnalyzed || 0,
         sourceCount: evidence.sourceCount,
         sourceDomains: evidence.sourceDomains,
         socialPlatforms:

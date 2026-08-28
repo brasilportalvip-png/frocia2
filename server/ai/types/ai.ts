@@ -44,6 +44,7 @@ export interface RequestClassification {
   requiresIndependentVerification: boolean;
   reasons: string[];
   socialPlatforms?: string[];
+  siteAuditUrl?: string | null;
 }
 
 export interface ModelCapabilities {
@@ -195,6 +196,12 @@ export interface ExecutionRecord {
     | 'supported'
     | 'limited'
     | 'unsupported';
+  siteAuditStatus?:
+    | 'not_requested'
+    | 'complete'
+    | 'partial'
+    | 'blocked';
+  siteAuditPages?: number;
   contextTruncated?: boolean;
   omittedHistoryCount?: number;
 }

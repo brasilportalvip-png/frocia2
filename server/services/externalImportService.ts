@@ -18,18 +18,46 @@ export interface ExternalImportResult {
   content: string;
   mimeType: 'text/plain' | 'application/json';
   structure: string[];
+  pageSignals?: ExternalPageSignals;
   fetchedAt: string;
+}
+
+export interface ExternalPageSignals {
+  httpStatus: number;
+  contentType: string;
+  isHtml: boolean;
+  language: string | null;
+  metaDescription: string | null;
+  canonicalUrl: string | null;
+  metaRobots: string[];
+  headings: { h1: string[]; h2: string[]; h3: string[] };
+  links: string[];
+  images: { total: number; missingAltAttribute: number };
+  forms: { total: number; insecureActions: number };
+  scripts: number;
+  wordCount: number;
+  likelyClientRendered: boolean;
+  securityHeaders: {
+    contentSecurityPolicy: string | null;
+    strictTransportSecurity: string | null;
+    xContentTypeOptions: string | null;
+    xFrameOptions: string | null;
+    referrerPolicy: string | null;
+    permissionsPolicy: string | null;
+  };
 }
 
 export class ExternalImportError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly remoteStatus?: number;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(code: string, message: string, status = 400, remoteStatus?: number) {
     super(message);
     this.name = 'ExternalImportError';
     this.code = code;
     this.status = status;
+    this.remoteStatus = remoteStatus;
   }
 }
 
@@ -206,7 +234,11 @@ async function readLimitedBody(response: Response): Promise<Uint8Array> {
 
 async function safeFetch(
   initialUrl: URL,
-  options: { headers?: Record<string, string>; allowedHosts?: Set<string> } = {}
+  options: {
+    headers?: Record<string, string>;
+    allowedHosts?: Set<string>;
+    timeoutMs?: number;
+  } = {}
 ): Promise<{ response: Response; bytes: Uint8Array; finalUrl: URL }> {
   let currentUrl = initialUrl;
 
@@ -228,7 +260,9 @@ async function safeFetch(
       response = await fetch(currentUrl, {
         method: 'GET',
         redirect: 'manual',
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: AbortSignal.timeout(
+          Math.max(500, Math.min(FETCH_TIMEOUT_MS, options.timeoutMs || FETCH_TIMEOUT_MS))
+        ),
         headers: {
           Accept: 'text/html,text/plain,application/json,application/xml;q=0.9,*/*;q=0.1',
           'User-Agent': 'FrocIA-Importer/1.0',
@@ -260,7 +294,8 @@ async function safeFetch(
       throw new ExternalImportError(
         'remote_error',
         `O endereço respondeu com o status HTTP ${response.status}.`,
-        response.status === 404 ? 404 : 422
+        response.status === 404 ? 404 : 422,
+        response.status
       );
     }
 
@@ -319,9 +354,132 @@ function extractTagText(html: string, expression: RegExp): string[] {
     .filter(Boolean);
 }
 
-async function importWebPage(sourceUrl: string): Promise<ExternalImportResult> {
+function extractAttribute(tag: string, attribute: string): string | null {
+  const escaped = attribute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = tag.match(
+    new RegExp(`\\s${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i')
+  );
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim() || null;
+}
+
+function safeText(value: string | null | undefined, maxLength: number): string | null {
+  const normalized = (value || '')
+    .normalize('NFKC')
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+  return normalized || null;
+}
+
+function extractMetaContent(html: string, name: string): string | null {
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const metaName = extractAttribute(tag, 'name')?.toLowerCase();
+    const property = extractAttribute(tag, 'property')?.toLowerCase();
+    if (metaName === name.toLowerCase() || property === name.toLowerCase()) {
+      return safeText(extractAttribute(tag, 'content'), 500);
+    }
+  }
+  return null;
+}
+
+function extractCanonicalUrl(html: string, baseUrl: URL): string | null {
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    const rel = (extractAttribute(tag, 'rel') || '').toLowerCase().split(/\s+/);
+    if (!rel.includes('canonical')) continue;
+    const href = extractAttribute(tag, 'href');
+    if (!href) return null;
+    try {
+      const url = new URL(href, baseUrl);
+      return ['http:', 'https:'].includes(url.protocol) ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function extractPublicLinks(html: string, baseUrl: URL): string[] {
+  const links = new Set<string>();
+  for (const match of html.matchAll(/<a\b[^>]*>/gi)) {
+    const href = extractAttribute(match[0], 'href');
+    if (!href) continue;
+    try {
+      const url = new URL(href, baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+      url.hash = '';
+      if (url.toString().length > 500) continue;
+      links.add(url.toString());
+      if (links.size >= 100) break;
+    } catch {
+      // Links inválidos não são usados como destino nem evidência.
+    }
+  }
+  return [...links];
+}
+
+function securityHeaders(response: Response): ExternalPageSignals['securityHeaders'] {
+  return {
+    contentSecurityPolicy: safeText(response.headers.get('content-security-policy'), 1000),
+    strictTransportSecurity: safeText(response.headers.get('strict-transport-security'), 500),
+    xContentTypeOptions: safeText(response.headers.get('x-content-type-options'), 100),
+    xFrameOptions: safeText(response.headers.get('x-frame-options'), 100),
+    referrerPolicy: safeText(response.headers.get('referrer-policy'), 200),
+    permissionsPolicy: safeText(response.headers.get('permissions-policy'), 1000)
+  };
+}
+
+function buildPageSignals(input: {
+  response: Response;
+  html: string;
+  content: string;
+  finalUrl: URL;
+  contentType: string;
+}): ExternalPageSignals {
+  const htmlTag = input.html.match(/<html\b[^>]*>/i)?.[0] || '';
+  const images = Array.from(input.html.matchAll(/<img\b[^>]*>/gi));
+  const forms = Array.from(input.html.matchAll(/<form\b[^>]*>/gi));
+  const scripts = Array.from(input.html.matchAll(/<script\b[^>]*>/gi)).length;
+  const wordCount = (input.content.match(/[\p{L}\p{N}]+/gu) || []).length;
+  return {
+    httpStatus: input.response.status,
+    contentType: input.contentType.split(';')[0].trim(),
+    isHtml: true,
+    language: safeText(extractAttribute(htmlTag, 'lang'), 40),
+    metaDescription: extractMetaContent(input.html, 'description'),
+    canonicalUrl: extractCanonicalUrl(input.html, input.finalUrl),
+    metaRobots: (extractMetaContent(input.html, 'robots') || '')
+      .split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
+    headings: {
+      h1: extractTagText(input.html, /<h1[^>]*>([\s\S]*?)<\/h1>/gi).slice(0, 20),
+      h2: extractTagText(input.html, /<h2[^>]*>([\s\S]*?)<\/h2>/gi).slice(0, 30),
+      h3: extractTagText(input.html, /<h3[^>]*>([\s\S]*?)<\/h3>/gi).slice(0, 30)
+    },
+    links: extractPublicLinks(input.html, input.finalUrl),
+    images: {
+      total: images.length,
+      missingAltAttribute: images.filter((match) => extractAttribute(match[0], 'alt') === null).length
+    },
+    forms: {
+      total: forms.length,
+      insecureActions: forms.filter((match) => {
+        const action = extractAttribute(match[0], 'action');
+        if (!action) return false;
+        try { return new URL(action, input.finalUrl).protocol !== 'https:'; } catch { return true; }
+      }).length
+    },
+    scripts,
+    wordCount,
+    likelyClientRendered: wordCount < 80 && scripts >= 3,
+    securityHeaders: securityHeaders(input.response)
+  };
+}
+
+async function importWebPage(sourceUrl: string, timeoutMs?: number): Promise<ExternalImportResult> {
   const parsed = parsePublicHttpUrl(sourceUrl);
-  const { response, bytes, finalUrl } = await safeFetch(parsed);
+  const { response, bytes, finalUrl } = await safeFetch(parsed, { timeoutMs });
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
 
   if (!/(text\/|application\/(json|xml|xhtml\+xml))/.test(contentType)) {
@@ -359,6 +517,25 @@ async function importWebPage(sourceUrl: string): Promise<ExternalImportResult> {
     content: [`Fonte: ${finalUrl.toString()}`, `Título: ${title}`, '', content].join('\n'),
     mimeType: 'text/plain',
     structure: [...new Set(headings)].slice(0, 20),
+    pageSignals: isHtml
+      ? buildPageSignals({ response, html: decoded, content, finalUrl, contentType })
+      : {
+          httpStatus: response.status,
+          contentType: contentType.split(';')[0].trim(),
+          isHtml: false,
+          language: null,
+          metaDescription: null,
+          canonicalUrl: null,
+          metaRobots: [],
+          headings: { h1: [], h2: [], h3: [] },
+          links: [],
+          images: { total: 0, missingAltAttribute: 0 },
+          forms: { total: 0, insecureActions: 0 },
+          scripts: 0,
+          wordCount: (content.match(/[\p{L}\p{N}]+/gu) || []).length,
+          likelyClientRendered: false,
+          securityHeaders: securityHeaders(response)
+        },
     fetchedAt: new Date().toISOString()
   };
 }
@@ -498,9 +675,9 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
 }
 
 export class ExternalImportService {
-  static async import(input: { type: ImportType; url: string }): Promise<ExternalImportResult> {
+  static async import(input: { type: ImportType; url: string; timeoutMs?: number }): Promise<ExternalImportResult> {
     return input.type === 'github'
       ? importGithubRepository(input.url)
-      : importWebPage(input.url);
+      : importWebPage(input.url, input.timeoutMs);
   }
 }
