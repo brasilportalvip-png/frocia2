@@ -6,6 +6,7 @@ import {
   Github,
   Globe,
   Loader2,
+  ScanSearch,
   ShieldCheck,
   X
 } from 'lucide-react';
@@ -21,7 +22,7 @@ interface UrlImporterModalProps {
 }
 
 interface ImportedContent {
-  type: 'url' | 'github';
+  type: 'url' | 'github' | 'site-audit';
   sourceUrl: string;
   finalUrl: string;
   title: string;
@@ -51,6 +52,14 @@ function filenameForImport(imported: ImportedContent): string {
     return `github-${safeFilenamePart(imported.title)}.json`;
   }
 
+  if (imported.type === 'site-audit') {
+    try {
+      return `auditoria-site-${safeFilenamePart(new URL(imported.finalUrl).hostname)}.json`;
+    } catch {
+      return `auditoria-site-${safeFilenamePart(imported.title)}.json`;
+    }
+  }
+
   try {
     const hostname = new URL(imported.finalUrl).hostname;
     return `pagina-${safeFilenamePart(hostname)}.txt`;
@@ -77,10 +86,11 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
   onImport,
   defaultType = 'url'
 }) => {
-  const [importType, setImportType] = useState<'url' | 'github'>(defaultType);
+  const [importType, setImportType] = useState<'url' | 'github' | 'site-audit'>(defaultType);
   const [urlInput, setUrlInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isPreparingFile, setIsPreparingFile] = useState(false);
+  const [auditPageLimit, setAuditPageLimit] = useState<10 | 20 | 40>(20);
   const [previewData, setPreviewData] = useState<ImportedContent | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
@@ -92,6 +102,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
     setUrlInput('');
     setIsLoading(false);
     setIsPreparingFile(false);
+    setAuditPageLimit(20);
     setPreviewData(null);
     setImportError(null);
   };
@@ -111,7 +122,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
     onClose();
   };
 
-  const handleTypeChange = (type: 'url' | 'github') => {
+  const handleTypeChange = (type: 'url' | 'github' | 'site-audit') => {
     requestControllerRef.current?.abort();
     setImportType(type);
     setUrlInput('');
@@ -138,15 +149,22 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
         throw new Error('Faça login para importar páginas ou repositórios.');
       }
 
-      const response = await fetch('/api/imports/external', {
+      const response = await fetch(
+        importType === 'site-audit' ? '/api/site-audits' : '/api/imports/external',
+        {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ type: importType, url: normalizedUrl }),
+        body: JSON.stringify(
+          importType === 'site-audit'
+            ? { url: normalizedUrl, maxPages: auditPageLimit }
+            : { type: importType, url: normalizedUrl }
+        ),
         signal: controller.signal
-      });
+        }
+      );
 
       if (!response.ok) {
         throw new Error(await readErrorMessage(response));
@@ -184,8 +202,8 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
         name: filenameForImport(previewData),
         content: previewData.content,
         mimeType: previewData.mimeType,
-        source: previewData.type,
-        type: previewData.type
+        source: previewData.type === 'site-audit' ? 'url' : previewData.type,
+        type: previewData.type === 'site-audit' ? 'code' : previewData.type
       });
 
       const importedFile: UploadedFile = {
@@ -196,7 +214,9 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
           docType:
             previewData.type === 'github'
               ? 'Repositório público do GitHub'
-              : 'Página pública da web',
+              : previewData.type === 'site-audit'
+                ? 'Auditoria verificável de site'
+                : 'Página pública da web',
           keyTopics: previewData.structure.slice(0, 20)
         }
       };
@@ -224,6 +244,8 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-200 text-black shadow-lg shadow-amber-500/20">
               {importType === 'github' ? (
                 <Github className="h-5 w-5" />
+              ) : importType === 'site-audit' ? (
+                <ScanSearch className="h-5 w-5" />
               ) : (
                 <Globe className="h-5 w-5" />
               )}
@@ -232,7 +254,9 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
               <h3 className="text-base font-bold">
                 {importType === 'github'
                   ? 'Importar repositório público'
-                  : 'Importar página pública'}
+                  : importType === 'site-audit'
+                    ? 'Auditar site público'
+                    : 'Importar página pública'}
               </h3>
               <p className="text-xs text-white/60">
                 Conteúdo real validado pelo backend da Froc.IA
@@ -275,6 +299,18 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
           >
             <Github className="h-3.5 w-3.5" /> GitHub público
           </button>
+          <button
+            type="button"
+            onClick={() => handleTypeChange('site-audit')}
+            disabled={isLoading || isPreparingFile}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 transition-all ${
+              importType === 'site-audit'
+                ? 'bg-amber-400 font-bold text-black'
+                : 'text-white/60 hover:text-white'
+            }`}
+          >
+            <ScanSearch className="h-3.5 w-3.5" /> Site inteiro
+          </button>
         </div>
 
         <form onSubmit={(event) => void handleFetchUrl(event)} className="space-y-3">
@@ -285,7 +321,9 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
             >
               {importType === 'github'
                 ? 'URL do repositório público'
-                : 'URL da página pública'}
+                : importType === 'site-audit'
+                  ? 'URL inicial do site público'
+                  : 'URL da página pública'}
             </label>
             <div className="flex gap-2">
               <input
@@ -301,7 +339,9 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
                 placeholder={
                   importType === 'github'
                     ? 'https://github.com/usuario/repositorio'
-                    : 'https://exemplo.com/pagina'
+                    : importType === 'site-audit'
+                      ? 'https://exemplo.com/'
+                      : 'https://exemplo.com/pagina'
                 }
                 required
                 disabled={isLoading || isPreparingFile}
@@ -321,6 +361,29 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
               </button>
             </div>
           </div>
+          {importType === 'site-audit' && (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div>
+                <label htmlFor="site-audit-page-limit" className="block text-xs font-semibold text-white/80">
+                  Limite desta execução
+                </label>
+                <p className="mt-0.5 text-[10px] text-white/45">
+                  Ao atingir o limite, o relatório será marcado como parcial.
+                </p>
+              </div>
+              <select
+                id="site-audit-page-limit"
+                value={auditPageLimit}
+                onChange={(event) => setAuditPageLimit(Number(event.target.value) as 10 | 20 | 40)}
+                disabled={isLoading || isPreparingFile}
+                className="rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-xs font-bold text-white outline-none focus:border-amber-400/50"
+              >
+                <option value={10}>10 páginas</option>
+                <option value={20}>20 páginas</option>
+                <option value={40}>40 páginas</option>
+              </select>
+            </div>
+          )}
         </form>
 
         {previewData && (

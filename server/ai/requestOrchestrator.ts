@@ -110,6 +110,10 @@ export class AIRequestOrchestrator {
       automaticTools.push('social_search');
     }
 
+    if (classification.siteAuditUrl) {
+      automaticTools.push('site_audit');
+    }
+
     if (input.knowledgeBaseIds?.length) {
       automaticTools.push(
         'search_knowledge_base'

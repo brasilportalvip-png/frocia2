@@ -62,6 +62,7 @@ import { requestIntegrityMiddleware } from './server/middlewares/requestIntegrit
 import { releaseGovernanceRouter } from './server/routes/releaseGovernanceRoutes.js';
 import { securityIncidentRouter } from './server/routes/securityIncidentRoutes.js';
 import { socialSearchRouter } from './server/routes/socialSearchRoutes.js';
+import { siteAuditRouter } from './server/routes/siteAuditRoutes.js';
 
 
 import { aiRouter } from './server/routes/aiRoutes.js';
@@ -181,6 +182,7 @@ export async function createApp() {
   app.use('/api/admin/releases', releaseGovernanceRouter);
   app.use('/api/admin/security/incidents', securityIncidentRouter);
   app.use('/api/imports', externalImportRouter);
+  app.use('/api/site-audits', siteAuditRouter);
   app.use('/api/social-search', socialSearchRouter);
   app.use(
     '/api/ai',

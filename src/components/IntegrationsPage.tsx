@@ -14,7 +14,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  Share2
+  Share2,
+  ScanSearch
 } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
 
@@ -366,6 +367,15 @@ export const IntegrationsPage: React.FC = () => {
                     .join(', ')}. A tela confirma configuração; cada consulta registra o resultado real da API.`
                 : 'YouTube, X, Reddit, Instagram/Facebook e TikTok exigem credenciais ou aprovação próprias. Sem isso, a Froc.IA usa somente pesquisa pública na web e não finge acesso autenticado.'
             }
+          />
+
+          <StatusCard
+            title="Auditoria de sites e URLs"
+            description="Crawler público com evidências por página"
+            status={backendOnline ? 'Disponível' : 'Indisponível'}
+            tone={backendOnline ? 'operational' : 'offline'}
+            icon={ScanSearch}
+            details="Lê robots.txt, sitemaps e links internos, gera SHA-256 e verifica acesso, SEO, acessibilidade e cabeçalhos de segurança. Não contorna login, CAPTCHA, paywall ou conteúdo privado; páginas dependentes de JavaScript são declaradas como limitação."
           />
         </div>
 
