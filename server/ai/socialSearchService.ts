@@ -248,8 +248,15 @@ async function fetchJson(
   );
 
   try {
+    const headers = {
+      Accept: 'application/json',
+      'User-Agent':
+        'Froc.IA/1.0 (+https://frocia2.vercel.app)',
+      ...(init.headers as Record<string, string> | undefined),
+    };
     const response = await fetchFn(url, {
       ...init,
+      headers,
       signal: controller.signal,
     });
     const body = await response.text();
@@ -325,7 +332,9 @@ function providerFailureResult(
     checkedAt,
     items: [],
     limitation: notAuthorized
-      ? 'A API oficial recusou a credencial ou o escopo informado.'
+      ? accessMode === 'public_api'
+        ? 'A API pública oficial recusou temporariamente a solicitação. Nenhuma credencial privada foi alegada.'
+        : 'A API oficial recusou a credencial ou o escopo informado.'
       : 'A API oficial não concluiu a consulta. Nenhum resultado foi inventado.',
   };
 }
@@ -1021,12 +1030,33 @@ async function searchBluesky(
   });
 
   try {
-    const payload = asRecord(
-      await fetchJson(
-        fetchFn,
-        `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?${params.toString()}`
-      )
-    );
+    const endpointPath =
+      `/xrpc/app.bsky.feed.searchPosts?${params.toString()}`;
+    const appViewHosts = [
+      'https://api.bsky.app',
+      'https://public.api.bsky.app',
+    ];
+    let payload: JsonRecord | null = null;
+    let lastError: unknown = null;
+
+    for (const host of appViewHosts) {
+      try {
+        payload = asRecord(
+          await fetchJson(
+            fetchFn,
+            `${host}${endpointPath}`
+          )
+        );
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!payload) {
+      throw lastError || new Error('bluesky_unavailable');
+    }
+
     const items = asArray(payload.posts)
       .map((value): SocialSearchItem | null => {
         const post = asRecord(value);

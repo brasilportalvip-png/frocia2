@@ -75,3 +75,30 @@
   antigos ainda não foi executada.
 - Não há revisão independente nem homologação em preview/produção nesta branch;
   por isso nenhum requisito foi marcado como `VERIFIED`.
+
+## Hotfix após homologação do preview
+
+O primeiro teste vivo do PR confirmou o grounding web, mas também revelou três
+falhas que impediam o merge: o AppView público `public.api.bsky.app` respondeu
+403, as fontes web eram exibidas como redirecionamentos do Google e uma falha
+de cota do Gemini aparecia como JSON bruto. O hotfix corrige esses pontos sem
+transformar bloqueios externos em sucesso:
+
+- Bluesky consulta primeiro `api.bsky.app`, host oficial funcional para leitura
+  pública, e mantém o segundo AppView apenas como fallback.
+- Chamadas sociais enviam `Accept` e um `User-Agent` identificável.
+- Redirecionamentos de grounding são resolvidos com limite de tempo e saltos;
+  cada destino é revalidado como HTTPS público antes de entrar na resposta.
+- Destinos privados, loopback e HTTP são recusados e o redirecionamento original
+  permanece visível quando não pode ser resolvido com segurança.
+- A execução tenta toda a cadeia deduplicada de modelos de fallback e registra
+  todos os modelos realmente tentados.
+- Erros de cota, autorização e timeout do Gemini são convertidos em mensagens
+  públicas controladas, sem devolver o JSON interno do provedor.
+
+Evidência local do hotfix: 45 testes específicos aprovados, 312/312 testes da
+suíte completa aprovados, tipagem aprovada, build de produção aprovado e
+tracker preservado com 563 requisitos e 563 IDs únicos. O YouTube continua
+dependendo da variável externa `YOUTUBE_DATA_API_KEY` habilitada em Production
+e Preview; as demais redes autenticadas continuam dependendo dos planos,
+credenciais e aprovações descritos acima.

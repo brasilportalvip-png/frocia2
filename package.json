@@ -25,7 +25,7 @@
     "test:security-release": "vitest run tests/securityAndReleaseGovernance.test.ts tests/attachmentImportSecurity.test.ts tests/authAndHealthSecurity.test.ts",
     "test:social-search": "vitest run tests/socialSearchOfficialApis.test.ts tests/researchAndRagEvidence.test.ts",
     "test:site-audit": "vitest run tests/fullSiteAuditor.test.ts tests/attachmentImportSecurity.test.ts",
-    "test:research-memory-deep": "vitest run tests/socialSearchOfficialApis.test.ts tests/longTermConversationMemory.test.ts tests/longTermMemoryPersistence.test.ts tests/fullSiteAuditor.test.ts",
+    "test:research-memory-deep": "vitest run tests/socialSearchOfficialApis.test.ts tests/citationUrlResolver.test.ts tests/geminiProviderErrors.test.ts tests/longTermConversationMemory.test.ts tests/longTermMemoryPersistence.test.ts tests/fullSiteAuditor.test.ts",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "node --import tsx scripts/validate-requirement-tracker.ts",
     "validate:production-integrity": "node --import tsx scripts/validate-production-integrity.ts"
