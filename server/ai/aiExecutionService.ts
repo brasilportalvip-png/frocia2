@@ -28,6 +28,7 @@ import {
 import { SocialSearchPolicyService } from './socialSearchPolicyService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
+import { CitationUrlResolver } from './citationUrlResolver.js';
 
 export class AIExecutionService {
   /**
@@ -143,6 +144,7 @@ export class AIExecutionService {
     let aiResponseText = '';
     let inputTokens = 0;
     let outputTokens = 0;
+    const attemptedModels: string[] = [];
     let startTime = Date.now();
     const citations: MessageCitation[] = [];
     let ragChunksUsed: KnowledgeChunk[] = [];
@@ -306,73 +308,86 @@ if (params.abortSignal?.aborted) {
       ].join('');
 
       startTime = Date.now();
-      // 6. Execute with Primary Model and Fallback
-try {
-  const primaryModelConfig =
-    ModelRegistry.getModel(modelToUse);
+      // 6. Execute across the complete, deduplicated fallback chain.
+      const candidateModels = Array.from(
+          new Set([
+            modelToUse,
+            ...route.fallbackModels,
+          ])
+        );
+        let generatedResponse: Awaited<
+          ReturnType<typeof GeminiProvider.generate>
+        > | null = null;
+        let lastProviderError: unknown = null;
 
-  const res = await GeminiProvider.generate({
-          model: modelToUse,
-          systemInstruction: assembled.systemInstruction,
-          userMessage: modelUserMessage,
-          attachments,
-          responseFormat,
-          enableSearchGrounding,
-abortSignal,
-timeoutMs: primaryModelConfig.timeoutMs,
-maxRetries: primaryModelConfig.maxRetries,
-});
+        for (
+          let index = 0;
+          index < candidateModels.length;
+          index += 1
+        ) {
+          const candidateModel = candidateModels[index];
+          const modelConfig =
+            ModelRegistry.getModel(candidateModel);
+          const attemptStartedAt = Date.now();
+          modelToUse = candidateModel;
+          attemptedModels.push(candidateModel);
 
-        aiResponseText = res.text;
-        inputTokens = res.inputTokens;
-        outputTokens = res.outputTokens;
+          try {
+            generatedResponse =
+              await GeminiProvider.generate({
+                model: candidateModel,
+                systemInstruction:
+                  assembled.systemInstruction,
+                userMessage: modelUserMessage,
+                attachments,
+                responseFormat,
+                enableSearchGrounding,
+                abortSignal,
+                timeoutMs: modelConfig.timeoutMs,
+                maxRetries: modelConfig.maxRetries,
+              });
+            fallbackUsed = index > 0;
+            ModelHealthService.recordCall(
+              candidateModel,
+              Date.now() - attemptStartedAt,
+              true,
+              false,
+              fallbackUsed
+            );
+            break;
+          } catch (providerError) {
+            lastProviderError = providerError;
+            ModelHealthService.recordCall(
+              candidateModel,
+              Date.now() - attemptStartedAt,
+              false
+            );
 
-        if (res.groundingMetadata) {
-          const webCitations = CitationService.extractSearchGroundingCitations(res.groundingMetadata);
-          citations.push(...webCitations);
-        }
-
-        ModelHealthService.recordCall(modelToUse, Date.now() - startTime, true);
-      } catch (primaryErr: any) {
-        console.warn(`⚠️ Primary AI model ${modelToUse} failed: ${primaryErr.message}. Trying fallback...`);
-        ModelHealthService.recordCall(modelToUse, Date.now() - startTime, false);
-
-        if (route.fallbackModels.length > 0) {
-          modelToUse = route.fallbackModels[0];
-          fallbackUsed = true;
-
-
-const fallbackModelConfig =
-  ModelRegistry.getModel(modelToUse);
-
-
-
-
-          const fbRes = await GeminiProvider.generate({
-            model: modelToUse,
-            systemInstruction: assembled.systemInstruction,
-            userMessage: modelUserMessage,
-            attachments,
-            responseFormat,
-            enableSearchGrounding,
-abortSignal,
-timeoutMs: fallbackModelConfig.timeoutMs,
-maxRetries: fallbackModelConfig.maxRetries,
-});
-
-          aiResponseText = fbRes.text;
-          inputTokens = fbRes.inputTokens;
-          outputTokens = fbRes.outputTokens;
-
-          if (fbRes.groundingMetadata) {
-            const webCitations = CitationService.extractSearchGroundingCitations(fbRes.groundingMetadata);
-            citations.push(...webCitations);
+            if (index < candidateModels.length - 1) {
+              console.warn(
+                `⚠️ Modelo ${candidateModel} indisponível. Tentando fallback ${index + 1}/${candidateModels.length - 1}.`
+              );
+            }
           }
-
-          ModelHealthService.recordCall(modelToUse, Date.now() - startTime, true, false, true);
-        } else {
-          throw primaryErr;
         }
+
+        if (!generatedResponse) {
+          throw (
+            lastProviderError ||
+            new Error('Nenhum modelo de IA respondeu.')
+          );
+        }
+
+        aiResponseText = generatedResponse.text;
+        inputTokens = generatedResponse.inputTokens;
+        outputTokens = generatedResponse.outputTokens;
+
+      if (generatedResponse.groundingMetadata) {
+        citations.push(
+          ...CitationService.extractSearchGroundingCitations(
+            generatedResponse.groundingMetadata
+          )
+        );
       }
       } catch (execErr: any) {
   if (executionId) {
@@ -397,6 +412,7 @@ maxRetries: fallbackModelConfig.maxRetries,
       if (executionId) {
         await ExecutionTraceService.updateTrace(executionId, {
           status: 'failed',
+          attemptedModels,
           errorCode: execErr.message || 'ai_execution_failed',
           completedAt: new Date().toISOString(),
         });
@@ -419,6 +435,19 @@ maxRetries: fallbackModelConfig.maxRetries,
 
       throw execErr;
    }
+
+const resolvedCitationPayload =
+  await CitationUrlResolver.resolve({
+    text: aiResponseText,
+    citations,
+  });
+
+aiResponseText = resolvedCitationPayload.text;
+citations.splice(
+  0,
+  citations.length,
+  ...resolvedCitationPayload.citations
+);
 
 const mergedCitations = CitationService.mergeCitations(
   citations.filter(
@@ -546,6 +575,7 @@ const consumedCredits = CostService.calculateCreditCost(
       consumedCredits,
       latencyMs,
       fallbackUsed,
+      attemptedModels,
       researchEvidenceStatus:
         evidence.researchStatus,
       ragEvidenceStatus: evidence.ragStatus,
@@ -583,7 +613,7 @@ const consumedCredits = CostService.calculateCreditCost(
       outputTokens,
       cachedTokens: null,
       costCredits: consumedCredits,
-      attempts: fallbackUsed ? 2 : 1,
+      attempts: attemptedModels.length,
       model: modelToUse,
     });
 

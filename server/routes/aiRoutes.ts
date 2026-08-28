@@ -16,6 +16,7 @@ import { ExecutionTraceService } from '../ai/executionTraceService.js';
 import { ExecutionAbortRegistry } from '../ai/executionAbortRegistry.js';
 import { ModelRegistry } from '../ai/modelRegistry.js';
 import { CitationService } from '../ai/citationService.js';
+import { CitationUrlResolver } from '../ai/citationUrlResolver.js';
 import { ResearchEvidenceService } from '../ai/researchEvidenceService.js';
 import { CostService } from '../ai/costService.js';
 import {
@@ -732,6 +733,16 @@ aiRouter.post(
             );
         }
       }
+
+      const resolvedCitationPayload =
+        await CitationUrlResolver.resolve({
+          text: fullOutput,
+          citations: streamCitations,
+        });
+
+      fullOutput = resolvedCitationPayload.text;
+      streamCitations =
+        resolvedCitationPayload.citations;
 
       streamCitations =
         CitationService.mergeCitations(

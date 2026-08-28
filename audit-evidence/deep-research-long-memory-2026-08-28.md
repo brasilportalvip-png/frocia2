@@ -75,3 +75,50 @@
   antigos ainda não foi executada.
 - Não há revisão independente nem homologação em preview/produção nesta branch;
   por isso nenhum requisito foi marcado como `VERIFIED`.
+
+## Hotfix após homologação do preview
+
+O primeiro teste vivo do PR confirmou o grounding web, mas também revelou três
+falhas que impediam o merge: o AppView público `public.api.bsky.app` respondeu
+403, as fontes web eram exibidas como redirecionamentos do Google e uma falha
+de cota do Gemini aparecia como JSON bruto. O hotfix corrige esses pontos sem
+transformar bloqueios externos em sucesso:
+
+- Bluesky consulta primeiro `api.bsky.app`, host oficial funcional para leitura
+  pública, e mantém o segundo AppView apenas como fallback.
+- Chamadas sociais enviam `Accept` e um `User-Agent` identificável.
+- Redirecionamentos de grounding são resolvidos com limite de tempo e saltos;
+  cada destino é revalidado como HTTPS público antes de entrar na resposta.
+- Destinos privados, loopback e HTTP são recusados e o redirecionamento original
+  permanece visível quando não pode ser resolvido com segurança.
+- A execução tenta toda a cadeia deduplicada de modelos de fallback e registra
+  todos os modelos realmente tentados.
+- Erros de cota, autorização e timeout do Gemini são convertidos em mensagens
+  públicas controladas, sem devolver o JSON interno do provedor.
+
+Evidência local do hotfix: 45 testes específicos aprovados, 312/312 testes da
+suíte completa aprovados, tipagem aprovada, build de produção aprovado e
+tracker preservado com 563 requisitos e 563 IDs únicos. O YouTube continua
+dependendo da variável externa `YOUTUBE_DATA_API_KEY` habilitada em Production
+e Preview; as demais redes autenticadas continuam dependendo dos planos,
+credenciais e aprovações descritos acima.
+
+## Correção complementar da rota usada pela interface
+
+O teste vivo seguinte mostrou que a interface usa streaming e que o resolvedor
+de URLs ainda estava conectado somente à execução síncrona. Também revelou que
+o texto completo das instruções era enviado como consulta às APIs sociais. A
+correção complementar:
+
+- aplica o resolvedor seguro de URLs também ao fluxo SSE usado pelo chat;
+- extrai o assunto solicitado antes de consultar YouTube e Bluesky;
+- aceita `YOUTUBE_DATA_API_KEY`, `YOUTUBE_API_KEY` ou
+  `GOOGLE_YOUTUBE_API_KEY`, sem registrar o valor;
+- adiciona cabeçalhos compatíveis com o AppView do Bluesky e permite fallback
+  autenticado opcional por senha de aplicativo;
+- documenta `BLUESKY_IDENTIFIER` e `BLUESKY_APP_PASSWORD` sem exigir nem
+  armazenar a senha principal da conta.
+
+Evidência local complementar: 29 testes direcionados aprovados, 315/315 testes
+da suíte completa aprovados, tipagem e build aprovados, integridade validada em
+158 arquivos e tracker preservado com 563 IDs únicos.

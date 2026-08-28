@@ -1,5 +1,79 @@
 import { GoogleGenAI } from '@google/genai';
 
+export class GeminiProviderError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'GeminiProviderError';
+  }
+}
+
+export function normalizeGeminiProviderError(
+  error: unknown
+): GeminiProviderError {
+  if (error instanceof GeminiProviderError) {
+    return error;
+  }
+
+  const details =
+    error && typeof error === 'object'
+      ? (error as Record<string, unknown>)
+      : {};
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : JSON.stringify(error);
+  const searchable = [
+    rawMessage,
+    details.code,
+    details.status,
+  ]
+    .join(' ')
+    .toUpperCase();
+
+  if (
+    searchable.includes('RESOURCE_EXHAUSTED') ||
+    searchable.includes('PREPAYMENT CREDITS') ||
+    /(?:^|\D)429(?:\D|$)/.test(searchable)
+  ) {
+    return new GeminiProviderError(
+      'gemini_quota_exhausted',
+      'O provedor Gemini recusou a execução por limite ou saldo de API. Verifique a cota e o faturamento do projeto configurado.'
+    );
+  }
+
+  if (
+    searchable.includes('UNAUTHENTICATED') ||
+    searchable.includes('PERMISSION_DENIED') ||
+    /(?:^|\D)(401|403)(?:\D|$)/.test(searchable)
+  ) {
+    return new GeminiProviderError(
+      'gemini_not_authorized',
+      'O provedor Gemini recusou a chave ou as permissões configuradas.'
+    );
+  }
+
+  if (
+    searchable.includes('ABORT') ||
+    searchable.includes('TIMEOUT') ||
+    searchable.includes('DEADLINE_EXCEEDED')
+  ) {
+    return new GeminiProviderError(
+      'gemini_timeout',
+      'O provedor Gemini excedeu o tempo limite da solicitação.'
+    );
+  }
+
+  return new GeminiProviderError(
+    'gemini_provider_failed',
+    'O provedor Gemini não concluiu a solicitação. Tente novamente ou consulte os registros da execução.'
+  );
+}
+
 export interface GeminiGenerateOptions {
   model: string;
   systemInstruction?: string;
@@ -124,11 +198,18 @@ export class GeminiProvider {
       ];
     }
 
-    const response = await ai.models.generateContent({
-      model,
-      contents,
-      config,
-    });
+    let response: Awaited<
+      ReturnType<typeof ai.models.generateContent>
+    >;
+    try {
+      response = await ai.models.generateContent({
+        model,
+        contents,
+        config,
+      });
+    } catch (error) {
+      throw normalizeGeminiProviderError(error);
+    }
 
     const text = response.text || '';
     const usage = response.usageMetadata || {};
@@ -201,19 +282,23 @@ export class GeminiProvider {
       attachments
     );
 
-    const responseStream =
-      await ai.models.generateContentStream({
-        model,
-        contents,
-        config,
-      });
+    try {
+      const responseStream =
+        await ai.models.generateContentStream({
+          model,
+          contents,
+          config,
+        });
 
-    for await (const chunk of responseStream) {
-      yield {
-        text: chunk.text || '',
-        groundingMetadata:
-          chunk.candidates?.[0]?.groundingMetadata,
-      };
+      for await (const chunk of responseStream) {
+        yield {
+          text: chunk.text || '',
+          groundingMetadata:
+            chunk.candidates?.[0]?.groundingMetadata,
+        };
+      }
+    } catch (error) {
+      throw normalizeGeminiProviderError(error);
     }
   }
 }
