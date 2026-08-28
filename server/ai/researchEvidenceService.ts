@@ -26,6 +26,7 @@ interface FinalizeEvidenceInput {
   sensitivity: RequestSensitivity;
   knowledgeBaseRequested: boolean;
   ragChunksUsed: KnowledgeChunk[];
+  minimumSourceDomains?: number;
 }
 
 const NO_RESEARCH_EVIDENCE =
@@ -36,6 +37,9 @@ const NO_RAG_EVIDENCE =
 
 const LIMITED_HIGH_STAKES_EVIDENCE =
   'A pesquisa encontrou evidência limitada para um tema sensível. Confirme a informação em outra fonte oficial ou com um profissional qualificado antes de tomar uma decisão.';
+
+const LIMITED_DEEP_RESEARCH_EVIDENCE =
+  'A pesquisa profunda encontrou menos fontes independentes do que o mínimo esperado. A resposta acima é parcial e não representa cobertura completa da internet.';
 
 function uniqueDomains(
   citations: MessageCitation[]
@@ -80,6 +84,11 @@ export class ResearchEvidenceService {
       ) {
         researchStatus = 'limited';
         finalText = `${finalText}\n\n${LIMITED_HIGH_STAKES_EVIDENCE}`;
+      } else if (
+        sourceDomains.length < Math.max(1, input.minimumSourceDomains || 1)
+      ) {
+        researchStatus = 'limited';
+        finalText = `${finalText}\n\n${LIMITED_DEEP_RESEARCH_EVIDENCE}`;
       } else {
         researchStatus = 'supported';
       }

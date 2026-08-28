@@ -95,6 +95,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Hierarchical conversation memory is encrypted and backend-only. The API
+    // applies tenant ownership, retrieval limits and user deletion controls.
+    match /conversation_memory_segments/{segmentId} {
+      allow read, write: if false;
+    }
+
     // Durable execution state, immutable transition events and transactional
     // outbox are exclusively controlled by trusted backend workers.
     match /durable_executions/{executionId} {

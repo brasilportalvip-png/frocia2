@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
+import { LongTermConversationMemoryService } from '../ai/longTermConversationMemoryService.js';
 
 export const conversationRouter = Router();
 
@@ -80,6 +81,27 @@ conversationRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res)
     if (!checkDatabaseAvailability(req, res)) return;
     const uid = req.user!.uid;
     const { title = 'Nova Conversa', mode = 'smart', projectId = null } = req.body;
+
+    try {
+      const previousConversationSnapshot = await adminDb!
+        .collection('conversations')
+        .where('userId', '==', uid)
+        .orderBy('updatedAt', 'desc')
+        .limit(5)
+        .get();
+      const previous = previousConversationSnapshot.docs.find((doc) =>
+        belongsToAuthenticatedContext(doc.data(), req)
+      );
+      if (previous) {
+        await LongTermConversationMemoryService.archiveOwnedConversation({
+          userId: uid,
+          tenantId: req.user!.tenantId,
+          conversationId: previous.id,
+        });
+      }
+    } catch (error) {
+      console.warn('A conversa anterior não pôde ser compactada neste momento.', error);
+    }
 
     if (projectId) {
       await MemoryService.assertScopeAccess(
@@ -241,6 +263,11 @@ conversationRouter.delete('/:id', requireAuth, async (req: AuthenticatedRequest,
       }
     }
 
+    await LongTermConversationMemoryService.deleteConversation(
+      uid,
+      req.user!.tenantId,
+      id
+    );
     await ref.delete();
 
     return res.json({ success: true });
@@ -264,13 +291,33 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
       });
     }
 
-        const snap = await adminDb!
+    const requestedLimit = Number(req.query.limit || 200);
+    const pageLimit = Number.isInteger(requestedLimit)
+      ? Math.max(1, Math.min(200, requestedLimit))
+      : 200;
+    const before =
+      typeof req.query.before === 'string'
+        ? new Date(req.query.before)
+        : null;
+    if (before && Number.isNaN(before.getTime())) {
+      return res.status(400).json({
+        error: {
+          code: 'invalid_message_cursor',
+          message: 'Cursor de mensagens inválido.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+
+    let messageQuery: any = adminDb!
       .collection('messages')
       .where('conversationId', '==', id)
       .where('userId', '==', uid)
-      .orderBy('createdAt', 'desc')
-      .limit(200)
-      .get();
+      .orderBy('createdAt', 'desc');
+    if (before) {
+      messageQuery = messageQuery.where('createdAt', '<', before);
+    }
+    const snap = await messageQuery.limit(pageLimit).get();
 
     const messages = snap.docs
       .slice()
@@ -291,7 +338,14 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
       };
     });
 
-    return res.json({ messages });
+    return res.json({
+      messages,
+      nextCursor:
+        snap.size === pageLimit && messages.length > 0
+          ? messages[0].createdAt
+          : null,
+      hasMore: snap.size === pageLimit,
+    });
   } catch (err: any) {
     return res.status(500).json({ error: { code: 'messages_fetch_failed', message: 'Erro ao buscar mensagens da conversa.', correlationId: req.correlationId } });
   }

@@ -150,6 +150,8 @@ export class AIExecutionService {
     let siteAuditReport: SiteAuditReport | null = null;
     let contextTruncated = false;
     let omittedHistoryCount = 0;
+    let longTermSegmentsUsed = 0;
+    let longTermMessagesUsed = 0;
     const enableSearchGrounding =
       plan.classification.requiresSearch ||
       route.reasonCode === 'mode_research_grounded';
@@ -233,6 +235,8 @@ if (params.abortSignal?.aborted) {
         userId,
         tenantId,
         conversationId,
+        projectId,
+        prompt: sanitizedPrompt,
       });
       const assembled = await ContextBuilder.assemble({
         userId,
@@ -252,6 +256,8 @@ if (params.abortSignal?.aborted) {
       ragChunksUsed = assembled.ragChunksUsed;
       contextTruncated = assembled.contextTruncated;
       omittedHistoryCount = assembled.omittedHistoryCount;
+      longTermSegmentsUsed = assembled.longTermSegmentsUsed;
+      longTermMessagesUsed = assembled.longTermMessagesUsed;
 
       // Add RAG Citations
       for (const chunk of assembled.ragChunksUsed) {
@@ -284,7 +290,7 @@ if (params.abortSignal?.aborted) {
               SocialSearchService.extractRequestedPlatforms(
                 sanitizedPrompt
               ),
-            limit: 5,
+            limit: SocialSearchService.requestedLimit(sanitizedPrompt),
           });
         citations.push(
           ...CitationService.buildSocialCitations(
@@ -441,6 +447,8 @@ const evidence = ResearchEvidenceService.finalize({
   knowledgeBaseRequested:
     knowledgeBaseIds.length > 0,
   ragChunksUsed,
+  minimumSourceDomains:
+    SocialSearchService.requestedLimit(sanitizedPrompt) === 10 ? 2 : 1,
 });
 
 aiResponseText = evidence.text;
@@ -555,6 +563,8 @@ const consumedCredits = CostService.calculateCreditCost(
         siteAuditReport?.summary.pagesAnalyzed || 0,
       contextTruncated,
       omittedHistoryCount,
+      longTermSegmentsUsed,
+      longTermMessagesUsed,
       completedAt: new Date().toISOString(),
     });
 
