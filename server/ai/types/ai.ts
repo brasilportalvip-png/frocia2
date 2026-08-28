@@ -233,6 +233,9 @@ export interface MessageCitation {
   account?: string | null;
   externalId?: string;
   accessMode?: 'public_api' | 'authenticated_api';
+  startIndex?: number;
+  endIndex?: number;
+  supportedText?: string;
 }
 
 export interface Message {

@@ -845,6 +845,11 @@ export const ChatCentral: React.FC<
                                             {citation.domain}
                                           </span>
                                         )}
+                                        {citation.supportedText && (
+                                          <span className="mt-1 block line-clamp-2 text-[10px] leading-4 text-white/55">
+                                            “{citation.supportedText}”
+                                          </span>
+                                        )}
                                       </span>
                                       {isPublicWebSource && (
                                         <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/35" />

@@ -53,6 +53,7 @@ export class CapabilityRegistryService {
     );
 
     const firebaseOk = isFirebaseAdminConfigured();
+    const agenticResearchOk = geminiOk && firebaseOk;
 
     const mercadoPagoOk =
       MercadoPagoService.isConfigured();
@@ -132,6 +133,30 @@ export class CapabilityRegistryService {
         lastVerifiedAt: null,
         evidence:
           'Configuração detectada; execução real do provedor exige recibo separado',
+      },
+      {
+        id: 'agentic_deep_research',
+        name: 'Pesquisa Profunda Agêntica',
+        category: 'ai',
+        status: agenticResearchOk ? 'configured' : 'degraded',
+        provider: 'Google Gemini Search Grounding + Froc.IA',
+        model: process.env.GEMINI_REASONING_MODEL || 'Gemini Pro',
+        cost: {
+          credits: 18,
+          description:
+            'Reserva máxima interna por job; consumo externo depende das buscas e tokens',
+        },
+        limits:
+          'Até quatro subconsultas fundamentadas por job, retomada durável e sem contornar login, paywall, CAPTCHA ou conteúdo privado',
+        requirements: [
+          'GEMINI_API_KEY',
+          'Firebase Admin Auth',
+        ],
+        checkedAt: now,
+        lastVerifiedAt: null,
+        evidence: agenticResearchOk
+          ? 'Configuração detectada; o coordenador Gemini persiste plano, subconsultas, fontes, citações e avaliação de cobertura.'
+          : 'A pesquisa agêntica exige apenas a configuração Gemini e o Firebase já usados pela plataforma.',
       },
       {
         id: 'official_social_search',
@@ -393,7 +418,7 @@ export class CapabilityRegistryService {
     ];
 
     return {
-      version: '1.2.1',
+      version: '1.3.0',
       updatedAt: now,
       capabilities,
     };

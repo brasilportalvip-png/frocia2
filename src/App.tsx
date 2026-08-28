@@ -74,6 +74,93 @@ const CHAT_MODE_TO_AI_MODE: Partial<
   'Vídeo': 'video'
 };
 
+type ResearchJobStatus =
+  | 'queued'
+  | 'in_progress'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'incomplete';
+
+interface AIExecutionResult {
+  text: string;
+  modelUsed: string;
+  executionId: string;
+  consumedCredits: number;
+  citations?: ChatMessage['citations'];
+  fallbackUsed?: boolean;
+}
+
+interface ResearchJobView {
+  jobId: string;
+  status: ResearchJobStatus;
+  progress: {
+    percent: number;
+    stage: string;
+    searches: number;
+    pagesOpened: number;
+    inPageFinds: number;
+  };
+  limitations: string[];
+  result?: AIExecutionResult;
+  error?: { code: string; message: string };
+}
+
+const RESEARCH_POLL_INTERVAL_MS = 2_000;
+const RESEARCH_MAX_WAIT_MS = 25 * 60 * 1_000;
+
+function waitForNextResearchPoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    };
+    const timeout = window.setTimeout(finish, RESEARCH_POLL_INTERVAL_MS);
+    const abort = () => {
+      window.clearTimeout(timeout);
+      signal.removeEventListener('abort', abort);
+      reject(
+        Object.assign(new Error('Pesquisa cancelada pelo usuário.'), {
+          code: 'request_aborted'
+        })
+      );
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+function researchProgressText(job: ResearchJobView): string {
+  const progress = job.progress;
+  return [
+    `Pesquisa profunda — ${progress.stage} (${progress.percent}%)`,
+    `Buscas: ${progress.searches} · páginas abertas: ${progress.pagesOpened} · trechos localizados: ${progress.inPageFinds}`,
+    'Você pode interromper a pesquisa a qualquer momento.',
+  ].join('\n');
+}
+
+function upsertResearchProgress(
+  messages: ChatMessage[],
+  messageId: string,
+  job: ResearchJobView
+): ChatMessage[] {
+  const next: ChatMessage = {
+    id: messageId,
+    sender: 'ai',
+    text: researchProgressText(job),
+    timestamp: Date.now()
+  };
+  return messages.some((message) => message.id === messageId)
+    ? messages.map((message) =>
+        message.id === messageId ? { ...message, text: next.text } : message
+      )
+    : [...messages, next];
+}
+
 export default function App() {
   const { user: authUser, loading, isAuthenticated, isAdmin, profileError, logout, refreshProfile } = useAuth();
 
@@ -90,6 +177,8 @@ export default function App() {
 
 const activeRequestControllerRef =
   useRef<AbortController | null>(null);
+const activeResearchJobIdRef =
+  useRef<string | null>(null);
 
 const [isRefining, setIsRefining] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -132,6 +221,26 @@ const handleStopGeneration = () => {
     controller.abort();
   }
 
+  const researchJobId = activeResearchJobIdRef.current;
+  activeResearchJobIdRef.current = null;
+  if (researchJobId) {
+    if (authUser?.id) {
+      try {
+        localStorage.removeItem(
+          getPartitionedKey('frocia_active_research', authUser.id)
+        );
+      } catch {
+        // O cancelamento remoto continua sendo tentado.
+      }
+    }
+    void apiClient(
+      `/api/ai/research-jobs/${researchJobId}/cancel`,
+      { method: 'POST' }
+    ).catch(() => {
+      // A pesquisa também será cancelada pelo timeout do provedor se a rede cair.
+    });
+  }
+
   activeRequestControllerRef.current = null;
   setIsGenerating(false);
 };
@@ -160,7 +269,7 @@ const fetchConversations = async () => {
           role: string;
           content: string;
           createdAt: string;
-          citations?: Array<{ title: string; uri: string; snippet?: string }>;
+          citations?: ChatMessage['citations'];
         }>;
       }>(`/api/conversations/${convId}/messages`);
 
@@ -270,6 +379,97 @@ const fetchConversations = async () => {
       console.warn('Erro ao ler localStorage do usuário:', e);
     }
   }, [currentUser.id, isAuthenticated]);
+
+  // Retoma uma pesquisa longa após atualização da página ou queda da conexão.
+  useEffect(() => {
+    if (!isAuthenticated || !authUser?.id || activeResearchJobIdRef.current) {
+      return;
+    }
+    const storageKey = getPartitionedKey(
+      'frocia_active_research',
+      authUser.id
+    );
+    const jobId = localStorage.getItem(storageKey);
+    if (!jobId || !/^research_[A-Za-z0-9-]{20,80}$/.test(jobId)) return;
+
+    const controller = new AbortController();
+    let disposed = false;
+    activeResearchJobIdRef.current = jobId;
+    activeRequestControllerRef.current = controller;
+    setIsGenerating(true);
+
+    const resume = async () => {
+      const progressMessageId = `research-progress-${jobId}`;
+      try {
+        while (!disposed) {
+          const refreshed = await apiClient<{ job: ResearchJobView }>(
+            `/api/ai/research-jobs/${jobId}`,
+            { signal: controller.signal }
+          );
+          const job = refreshed.job;
+          setChatMessages((current) =>
+            upsertResearchProgress(current, progressMessageId, job)
+          );
+          if (['completed', 'failed', 'cancelled', 'incomplete'].includes(job.status)) {
+            localStorage.removeItem(storageKey);
+            setChatMessages((current) => {
+              const withoutProgress = current.filter(
+                (message) => message.id !== progressMessageId
+              );
+              if (job.status === 'completed' && job.result) {
+                const resultId = `ai-research-${job.result.executionId}`;
+                return withoutProgress.some((message) => message.id === resultId)
+                  ? withoutProgress
+                  : [
+                      ...withoutProgress,
+                      {
+                        id: resultId,
+                        sender: 'ai',
+                        text: job.result.text,
+                        timestamp: Date.now(),
+                        citations: job.result.citations ?? []
+                      }
+                    ];
+              }
+              return [
+                ...withoutProgress,
+                {
+                  id: `ai-research-ended-${jobId}`,
+                  sender: 'ai',
+                  text:
+                    job.error?.message ||
+                    job.limitations?.[0] ||
+                    'A pesquisa foi encerrada sem resultado completo.',
+                  timestamp: Date.now()
+                }
+              ];
+            });
+            await refreshProfile();
+            break;
+          }
+          await waitForNextResearchPoll(controller.signal);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn('A pesquisa será retomada na próxima abertura.', error);
+        }
+      } finally {
+        if (activeResearchJobIdRef.current === jobId) {
+          activeResearchJobIdRef.current = null;
+        }
+        if (activeRequestControllerRef.current === controller) {
+          activeRequestControllerRef.current = null;
+          setIsGenerating(false);
+        }
+      }
+    };
+
+    void resume();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [isAuthenticated, authUser?.id]);
 
   const handleNewChat = async () => {
     if (!isAuthenticated) {
@@ -771,35 +971,93 @@ const handleGeneralChat = async (
             .toString(36)
             .substring(2)}`;
 
-    const result = await apiClient<{
-      text: string;
-      modelUsed: string;
-      executionId: string;
-      consumedCredits: number;
-      citations?: Array<{
-        index?: number;
-        title: string;
-        uri: string;
-        snippet?: string;
-        sourceType?: 'web' | 'social' | 'knowledge_base';
-        domain?: string;
-        platform?: string;
-        account?: string | null;
-      }>;
-      fallbackUsed: boolean;
-    }>('/api/ai/executions', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify({
-        prompt,
-        mode: apiMode,
-        conversationId: activeConvId,
-        attachments,
-        knowledgeBaseIds,
-        idempotencyKey:
-          stableExecutionKey
-      })
-    });
+    const requestBody = {
+      prompt,
+      mode: apiMode,
+      conversationId: activeConvId,
+      attachments,
+      knowledgeBaseIds,
+      idempotencyKey: stableExecutionKey
+    };
+
+    let result: AIExecutionResult;
+
+    if (apiMode === 'research') {
+      const started = await apiClient<
+        | {
+            strategy: 'background';
+            job: ResearchJobView;
+          }
+        | {
+            strategy: 'completed';
+            provider: 'gemini';
+            fallbackReason: string;
+            result: AIExecutionResult;
+          }
+      >('/api/ai/research-jobs', {
+        method: 'POST',
+        signal: requestController.signal,
+        body: JSON.stringify(requestBody)
+      });
+
+      if (started.strategy === 'completed') {
+        result = started.result;
+      } else {
+        let job = started.job;
+        const progressMessageId = `research-progress-${job.jobId}`;
+        const startedAt = Date.now();
+        activeResearchJobIdRef.current = job.jobId;
+        localStorage.setItem(
+          getPartitionedKey('frocia_active_research', currentUser.id),
+          job.jobId
+        );
+        setChatMessages((current) =>
+          upsertResearchProgress(current, progressMessageId, job)
+        );
+
+        while (!['completed', 'failed', 'cancelled', 'incomplete'].includes(job.status)) {
+          if (Date.now() - startedAt > RESEARCH_MAX_WAIT_MS) {
+            throw new Error(
+              'A pesquisa continua no servidor, mas excedeu o tempo desta tela. Tente novamente em alguns minutos.'
+            );
+          }
+          await waitForNextResearchPoll(requestController.signal);
+          const refreshed = await apiClient<{ job: ResearchJobView }>(
+            `/api/ai/research-jobs/${job.jobId}`,
+            { signal: requestController.signal }
+          );
+          job = refreshed.job;
+          setChatMessages((current) =>
+            upsertResearchProgress(current, progressMessageId, job)
+          );
+        }
+
+        activeResearchJobIdRef.current = null;
+        localStorage.removeItem(
+          getPartitionedKey('frocia_active_research', currentUser.id)
+        );
+        if (job.status !== 'completed' || !job.result) {
+          const limitation = job.limitations?.[0];
+          throw new Error(
+            job.error?.message ||
+              limitation ||
+              (job.status === 'cancelled'
+                ? 'Pesquisa cancelada pelo usuário.'
+                : 'A pesquisa não reuniu evidência suficiente para uma resposta confiável.')
+          );
+        }
+        result = job.result;
+        setChatMessages((current) =>
+          current.filter((message) => message.id !== progressMessageId)
+        );
+      }
+    } else {
+      result = await apiClient<AIExecutionResult>('/api/ai/executions', {
+        method: 'POST',
+        signal: requestController.signal,
+        body: JSON.stringify(requestBody)
+      });
+    }
 
     const responseText =
       result.text ||
@@ -858,6 +1116,7 @@ const handleGeneralChat = async (
       }
     ]);
   } finally {
+    activeResearchJobIdRef.current = null;
     if (
       activeRequestControllerRef.current ===
       requestController

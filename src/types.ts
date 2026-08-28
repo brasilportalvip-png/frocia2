@@ -38,6 +38,9 @@ export interface ChatMessage {
     domain?: string;
     platform?: string;
     account?: string | null;
+    startIndex?: number;
+    endIndex?: number;
+    supportedText?: string;
   }>;
 }
 

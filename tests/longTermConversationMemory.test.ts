@@ -127,6 +127,45 @@ describe('Memória extensa e hierárquica de conversas', () => {
     expect(result[0].retrievalReason).toContain('conversa atual');
   });
 
+  it('recupera significado relacionado mesmo quando as palavras são diferentes', () => {
+    const base = {
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      projectId: null,
+      sourceMessageIds: ['m1'],
+      messageCount: 1,
+      characterCount: 50,
+      firstMessageAt: null,
+      lastMessageAt: null,
+      createdAt: '2026-08-28T10:00:00.000Z',
+    };
+    const result = rankLongTermConversationSegments({
+      prompt: 'Qual foi a decisão sobre manter dados antigos?',
+      queryEmbedding: [1, 0, 0],
+      segments: [
+        {
+          ...base,
+          id: 'semantic-match',
+          conversationId: 'older',
+          conversationTitle: 'Arquitetura',
+          content: 'Escolhemos persistência histórica criptografada.',
+          embedding: [0.98, 0.02, 0],
+        },
+        {
+          ...base,
+          id: 'semantic-unrelated',
+          conversationId: 'other',
+          conversationTitle: 'Culinária',
+          content: 'Receita de bolo de chocolate.',
+          embedding: [0, 1, 0],
+        },
+      ],
+    });
+
+    expect(result.map((segment) => segment.id)).toEqual(['semantic-match']);
+    expect(result[0].relevanceScore).toBeGreaterThan(10);
+  });
+
   it('injeta somente segmentos recuperados e identificados como dados não confiáveis', async () => {
     vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
     vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);

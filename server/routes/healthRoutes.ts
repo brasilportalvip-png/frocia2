@@ -48,16 +48,19 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       firestoreReachable,
       geminiConfigured,
       mercadoPagoConfigured: MercadoPagoService.isConfigured(),
+      agenticResearchConfigured: geminiConfigured && authConfigured,
     },
     evidenceLevel: {
       firebaseAdmin: 'configuration',
       firestore: 'live_read',
       gemini: 'configuration_only',
       mercadoPago: 'configuration_only',
+      agenticResearch: 'gemini_configuration_and_firestore_live_read',
     },
     limitations: [
       'Este endpoint não chama Gemini nem Mercado Pago para evitar custo e efeitos externos.',
       'Uma chave configurada não equivale a uma operação homologada no provedor.',
+      'A pesquisa profunda usa o Gemini configurado no projeto; nenhuma chave OpenAI é necessária.',
     ],
   });
 });
