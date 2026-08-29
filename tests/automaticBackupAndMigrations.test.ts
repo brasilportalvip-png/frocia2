@@ -10,6 +10,18 @@ import {
   validateMigrationCatalog,
 } from '../server/migrations/migrationCatalog.js';
 import { PortableBackupEnvelope } from '../server/services/portableRecoveryService.js';
+import { EnvSchema } from '../server/config/env.js';
+
+const productionEnvFixture = {
+  NODE_ENV: 'production',
+  FIREBASE_PROJECT_ID: 'froc-ia-test',
+  FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@example.iam.gserviceaccount.com',
+  FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----',
+  GEMINI_API_KEY: 'gemini-test-key',
+  MERCADO_PAGO_ACCESS_TOKEN: 'mercado-pago-test-token',
+  MERCADO_PAGO_WEBHOOK_SECRET: 'mercado-pago-test-webhook-secret',
+  INTERNAL_CRON_SECRET: 'segredo-interno-nao-previsivel-2026',
+};
 
 function backupFixture(): PortableBackupEnvelope {
   return {
@@ -34,6 +46,29 @@ function backupFixture(): PortableBackupEnvelope {
 }
 
 describe('Backup automático e migrations versionadas', () => {
+  it('não derruba a aplicação quando existe bucket sem chave de backup', () => {
+    const result = EnvSchema.safeParse({
+      ...productionEnvFixture,
+      FIREBASE_STORAGE_BUCKET: 'froc-ia-test.appspot.com',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('recusa ativação de backup com chave sem bucket ou curta', () => {
+    const missingBucket = EnvSchema.safeParse({
+      ...productionEnvFixture,
+      BACKUP_ENCRYPTION_KEY: 'segredo-de-backup-com-mais-de-32-caracteres',
+    });
+    expect(missingBucket.success).toBe(false);
+
+    const shortKey = EnvSchema.safeParse({
+      ...productionEnvFixture,
+      FIREBASE_STORAGE_BUCKET: 'froc-ia-test.appspot.com',
+      BACKUP_ENCRYPTION_KEY: 'curta',
+    });
+    expect(shortKey.success).toBe(false);
+  });
+
   it('criptografa, autentica e recupera o backup sem perder dados', async () => {
     const original = backupFixture();
     const encrypted = await encryptAutomaticBackup(

@@ -115,12 +115,11 @@ export const EnvSchema = z.object({
       });
     }
 
-    const backupPartiallyConfigured = Boolean(
-      data.FIREBASE_STORAGE_BUCKET || data.BACKUP_ENCRYPTION_KEY
-    );
+    // Um bucket pode existir para uploads comuns sem habilitar backups.
+    // Somente a presença da chave privada declara intenção de ativar o backup.
     if (
-      backupPartiallyConfigured &&
-      (!data.FIREBASE_STORAGE_BUCKET || (data.BACKUP_ENCRYPTION_KEY?.length || 0) < 32)
+      data.BACKUP_ENCRYPTION_KEY &&
+      (!data.FIREBASE_STORAGE_BUCKET || data.BACKUP_ENCRYPTION_KEY.length < 32)
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -136,12 +135,7 @@ export type ServerEnv = z.infer<typeof EnvSchema>;
 
 let parsedEnv: ServerEnv;
 
-const parseResult = EnvSchema.safeParse({
-  ...process.env,
-  FIREBASE_STORAGE_BUCKET:
-    process.env.FIREBASE_STORAGE_BUCKET ||
-    process.env.VITE_FIREBASE_STORAGE_BUCKET,
-});
+const parseResult = EnvSchema.safeParse(process.env);
 
 if (parseResult.success) {
   parsedEnv = parseResult.data;
@@ -176,8 +170,7 @@ if (parseResult.success) {
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
-    FIREBASE_STORAGE_BUCKET:
-      process.env.FIREBASE_STORAGE_BUCKET || process.env.VITE_FIREBASE_STORAGE_BUCKET,
+    FIREBASE_STORAGE_BUCKET: process.env.FIREBASE_STORAGE_BUCKET,
     BACKUP_ENCRYPTION_KEY: process.env.BACKUP_ENCRYPTION_KEY,
     BACKUP_RETENTION_DAYS: Number(process.env.BACKUP_RETENTION_DAYS) || 30,
     MEMORY_ENCRYPTION_KEY: process.env.MEMORY_ENCRYPTION_KEY,

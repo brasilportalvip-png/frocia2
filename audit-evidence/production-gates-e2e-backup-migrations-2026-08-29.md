@@ -54,6 +54,10 @@ O download local do Chromium expirou cinco vezes no CDN do Playwright. Portanto,
 
 O primeiro workflow do PR #13, execução `33265152238`, instalou o Chromium, mas falhou no navegador. O trace comprovou `Firebase: Error (auth/invalid-api-key)`: sem variáveis públicas `VITE_FIREBASE_*` no CI, `src/lib/firebase.ts` tentava inicializar o Auth antes do React e deixava a tela vazia. A correção tornou os serviços Firebase opcionais quando a configuração pública não existe, preservando a interface pública e bloqueando somente operações dependentes de autenticação. A nova execução do CI permanece necessária antes de aprovar o gate E2E.
 
+O workflow seguinte, execução `33265739834`, aprovou instalação limpa, tracker, migrations, integridade, tipagem, testes segmentados, oito execuções Playwright desktop/mobile, suíte completa, build e auditoria de segurança.
+
+O smoke test desse Preview retornou `FUNCTION_INVOCATION_FAILED` antes de `/api/live`. A reprodução de configuração identificou que `VITE_FIREBASE_STORAGE_BUCKET`, já usado pelo frontend, era promovido indevidamente a `FIREBASE_STORAGE_BUCKET`; sem `BACKUP_ENCRYPTION_KEY`, a validação opcional de backup encerrava toda a função. A correção separa a configuração pública do bucket privado de backup, aceita bucket sem chave como backup desativado e continua recusando uma tentativa real de ativação com chave curta ou sem bucket. O novo deploy ainda precisa comprovar `live` e `ready`.
+
 O backup automático somente ficará operacional depois de configurar no Vercel:
 
 - `CRON_SECRET` com valor aleatório de pelo menos 32 caracteres;
