@@ -5,7 +5,7 @@ Fonte de estado: `prompt-master-tracker.jsonl`.
 ## Bloqueadores atuais
 
 - Auditoria independente ainda não concluída; nenhum requisito está `VERIFIED`.
-- Smoke test da produção após o merge ainda não foi registrado no repositório.
+- A `main` `0532b63` possui smoke test registrado; a branch desta fase ainda precisa de preview e novo smoke test antes do merge.
 - Testes E2E completos, acessibilidade, regressão visual, carga e recuperação de falhas permanecem abertos.
 - Backups, alertas, tracing e runbooks não possuem evidência operacional completa.
 - Integrações que dependem de contas externas exigem credenciais, escopos e homologação nos respectivos provedores.
@@ -14,9 +14,9 @@ Fonte de estado: `prompt-master-tracker.jsonl`.
 
 ## Dependências
 
-`npm audit --omit=dev --audit-level=high` encerra com exit 0, sem vulnerabilidade alta ou crítica, mas ainda informa 6 vulnerabilidades moderadas transitivas relacionadas a `uuid` na árvore do Firebase Admin.
+Em 29/08/2026, `npm audit --omit=dev --audit-level=moderate` encerra com exit 0 e informa **0 vulnerabilidades**. A versão transitiva de `uuid` foi fixada em `11.1.1` por override, sem rebaixar o Firebase Admin.
 
-Não execute `npm audit fix --force` sem analisar a alteração incompatível sugerida para o Firebase Admin.
+Não execute `npm audit fix --force`; novas correções devem continuar sendo analisadas e travadas explicitamente.
 
 ## Estado de liberação
 

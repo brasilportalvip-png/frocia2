@@ -21,7 +21,7 @@ describe('Hardening final de produção', () => {
   it('mantém CI no Node 22 e auditoria sem mascarar falhas', () => {
     const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
     expect(ci).toContain("node-version: '22'");
-    expect(ci).toContain('npm audit --omit=dev --audit-level=high');
+    expect(ci).toContain('npm audit --omit=dev --audit-level=moderate');
     expect(ci).not.toContain('|| true');
   });
 

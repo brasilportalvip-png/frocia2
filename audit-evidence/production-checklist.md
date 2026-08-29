@@ -1,6 +1,22 @@
 # Checklist de produção Froc.IA
 
-Data da última auditoria local: 26/08/2026.
+Data da última auditoria local: 29/08/2026.
+
+## Gates locais do hardening final `1ddb802`
+
+- [x] Tipagem aprovada.
+- [x] 337 testes aprovados em 41 arquivos.
+- [x] Build de produção aprovado.
+- [x] Integridade aprovada em 162 arquivos.
+- [x] Auditoria de dependências com 0 vulnerabilidades.
+- [x] Failover entre quatro modelos e circuit breaker cobertos por testes.
+- [x] Merge supervisionado exige PR correto e SHA aprovado.
+- [x] Rollback cria PR real de reversão e só declara sucesso após merge.
+- [x] Avaliações em GET não executam processos do sistema.
+- [ ] Checks e preview da branch final na Vercel.
+- [ ] Smoke test do preview após deploy.
+- [ ] Revisão independente.
+- [ ] Drill de rollback em ambiente controlado.
 
 ## Gates comprovados no baseline `d1f0c66`
 
@@ -37,7 +53,8 @@ Data da última auditoria local: 26/08/2026.
 
 ## Gates ainda não comprovados integralmente
 
-- [ ] Smoke test registrado na URL de produção após o merge.
+- [x] Smoke test da `main` `0532b63` registrado antes desta fase.
+- [ ] Smoke test de produção após o futuro merge desta fase.
 - [ ] Logs de produção sem erro crítico durante uma janela observável.
 - [ ] Migrations e banco validados em staging e produção.
 - [ ] E2E dos fluxos críticos no navegador.

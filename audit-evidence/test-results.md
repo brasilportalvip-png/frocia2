@@ -1,5 +1,19 @@
 # Relatório do Resultado dos Testes e Compilação
 
+## Resultado auditado mais recente — 29/08/2026
+
+- Base: `0532b63`; implementação: `1ddb802`.
+- `npm run typecheck`: aprovado.
+- `npm test`: 41 arquivos, 337 testes aprovados.
+- `npm run build`: aprovado com Vite 6.4.3 e servidor esbuild.
+- `npm run validate:production-integrity`: 162 arquivos aprovados.
+- `npm audit --omit=dev --audit-level=moderate`: 0 vulnerabilidades.
+- `npm run validate:tracker`: 563 requisitos e 563 IDs únicos.
+
+Evidência detalhada: `audit-evidence/final-hardening-2026-08-29.md`.
+
+O relatório abaixo é um registro histórico anterior e não substitui os gates atuais.
+
 **Data:** 05 de Agosto de 2026  
 **Commit / Snapshot:** Operational Release v2.5.0  
 
