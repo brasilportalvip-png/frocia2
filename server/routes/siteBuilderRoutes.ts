@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
@@ -8,34 +7,23 @@ import { validateAIAttachments } from '../validators/aiAttachmentValidators.js';
 import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featureFlagService.js';
 import { getSiteSpecificationService } from '../siteFactory/siteFactoryRuntime.js';
 import { selectOfficialArchitecture } from '../siteFactory/siteArchitectureCatalog.js';
+import { env } from '../config/env.js';
+import {
+  configuredGeminiFailoverChain,
+  GeminiFailoverService,
+} from '../ai/geminiFailoverService.js';
 
 export const siteBuilderRouter = Router();
 
-const ALLOWED_SITE_MODELS = new Set([
-  'gemini-3.6-flash',
-  'gemini-3.1-pro-preview',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-]);
+const ALLOWED_SITE_MODELS = new Set(
+  configuredGeminiFailoverChain(env.GEMINI_DEFAULT_MODEL, [
+    env.GEMINI_CODE_MODEL,
+    env.GEMINI_REASONING_MODEL,
+  ])
+);
 
 const GENERATE_SITE_CREDIT_COST = 200;
 const REFINE_SITE_CREDIT_COST = 50;
-
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('A chave GEMINI_API_KEY não foi configurada nos Segredos.');
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
 
 function cleanMarkdownAndParseJson(rawText: string): any {
   if (!rawText) throw new Error('A IA não retornou conteúdo.');
@@ -83,7 +71,7 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
     tone = 'Profissional',
     features = [],
     language = 'pt-BR',
-    modelName = 'gemini-3.6-flash',
+    modelName = env.GEMINI_DEFAULT_MODEL,
     attachments: rawAttachments = [],
     projectId,
     specificationVersion,
@@ -240,8 +228,6 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
   }
 
   try {
-    const ai = getGeminiClient();
-
     const systemInstruction = `Você é o Froc.IA Site Engine, especialista em design front-end, HTML5, Tailwind CSS, JavaScript e interfaces web modernas de altíssima conversão.
 Responda ESTRITAMENTE em formato JSON com as chaves:
 - "siteTitle": título curto e atrativo do projeto
@@ -266,51 +252,49 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       userPrompt += `\n\nForam incluídos ${validatedAttachments.length} anexo(s) como contexto. Analise o conteúdo dos anexos para criar o site conforme instruído.`;
     }
 
-    const contentsParts: any[] = [{ text: userPrompt }];
+    const providerAttachments: Array<{
+      type: string;
+      data: string;
+      mimeType: string;
+    }> = [];
 
     for (const att of validatedAttachments) {
       if (att.mimeType.startsWith('image/') || att.mimeType.startsWith('audio/') || att.mimeType.startsWith('video/') || att.mimeType === 'application/pdf') {
-        contentsParts.push({
-          inlineData: {
-            mimeType: att.mimeType,
-            data: att.data
-          }
+        providerAttachments.push({
+          type: 'inline',
+          mimeType: att.mimeType,
+          data: att.data,
         });
       } else {
         const decodedText = Buffer.from(att.data, 'base64').toString('utf-8');
-        contentsParts.push({
-          text: `--- Anexo: ${att.name} (${att.mimeType}) ---\n${decodedText}\n--- Fim do Anexo ---`
-        });
+        userPrompt += `\n\n--- Anexo: ${att.name} (${att.mimeType}) ---\n${decodedText}\n--- Fim do Anexo ---`;
       }
     }
 
-    const response = await ai.models.generateContent({
+    const generation = await GeminiFailoverService.generate({
       model: modelName,
-      contents: contentsParts,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: 0.7,
-      },
+      systemInstruction,
+      userMessage: userPrompt,
+      attachments: providerAttachments,
+      responseFormat: 'json',
+      temperature: 0.7,
     });
 
-    const rawText = response.text || '';
+    const rawText = generation.response.text || '';
     let parsedData = cleanMarkdownAndParseJson(rawText);
 
     // Validate structured response
     const validationResult = GeneratedSiteSchema.safeParse(parsedData);
     if (!validationResult.success) {
       // Retry once if schema validation fails
-      const retryResponse = await ai.models.generateContent({
-        model: modelName,
-        contents: `Instrução: Corrija e retorne ESTRITAMENTE no formato JSON com "siteTitle", "description", "html" (código HTML completo) e "suggestedRefinements".\n\nTexto original:\n${rawText}`,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          temperature: 0.3,
-        },
+      const retryResponse = await GeminiFailoverService.generate({
+        model: generation.model,
+        userMessage: `Instrução: Corrija e retorne ESTRITAMENTE no formato JSON com "siteTitle", "description", "html" (código HTML completo) e "suggestedRefinements".\n\nTexto original:\n${rawText}`,
+        systemInstruction,
+        responseFormat: 'json',
+        temperature: 0.3,
       });
-      parsedData = cleanMarkdownAndParseJson(retryResponse.text || '');
+      parsedData = cleanMarkdownAndParseJson(retryResponse.response.text || '');
     }
 
     const finalData = GeneratedSiteSchema.parse(parsedData);
@@ -329,6 +313,8 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       html: finalData.html,
       suggestedRefinements: finalData.suggestedRefinements,
       consumedCredits: GENERATE_SITE_CREDIT_COST,
+      modelUsed: generation.model,
+      fallbackUsed: generation.fallbackUsed,
       ...(factoryContext
         ? {
             specificationId: factoryContext.specificationId,
@@ -368,7 +354,7 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
     currentHtml,
     instructions,
     prompt: altPrompt,
-    modelName = 'gemini-3.6-flash',
+    modelName = env.GEMINI_DEFAULT_MODEL,
     attachments: rawAttachments = []
   } = req.body;
 
@@ -454,8 +440,6 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
   }
 
   try {
-    const ai = getGeminiClient();
-
     const systemInstruction = `Você é o Froc.IA Site Refiner, especialista em alteração cirúrgica e aprimoramento de sites HTML/Tailwind.
 Responda ESTRITAMENTE em formato JSON com as chaves:
 - "html": o código HTML5 completo e atualizado do site com as alterações solicitadas.
@@ -471,35 +455,36 @@ ATENÇÃO: Preserve a estrutura e estilização geral do site, aplicando apenas 
 ${currentHtml}
 --- FIM DO HTML ATUAL ---`;
 
-    const contentsParts: any[] = [{ text: userMessage }];
+    let providerMessage = userMessage;
+    const providerAttachments: Array<{
+      type: string;
+      data: string;
+      mimeType: string;
+    }> = [];
 
     for (const att of validatedAttachments) {
       if (att.mimeType.startsWith('image/') || att.mimeType.startsWith('audio/') || att.mimeType.startsWith('video/') || att.mimeType === 'application/pdf') {
-        contentsParts.push({
-          inlineData: {
-            mimeType: att.mimeType,
-            data: att.data
-          }
+        providerAttachments.push({
+          type: 'inline',
+          mimeType: att.mimeType,
+          data: att.data,
         });
       } else {
         const decodedText = Buffer.from(att.data, 'base64').toString('utf-8');
-        contentsParts.push({
-          text: `--- Anexo para Refinamento: ${att.name} (${att.mimeType}) ---\n${decodedText}\n--- Fim do Anexo ---`
-        });
+        providerMessage += `\n\n--- Anexo para Refinamento: ${att.name} (${att.mimeType}) ---\n${decodedText}\n--- Fim do Anexo ---`;
       }
     }
 
-    const response = await ai.models.generateContent({
+    const generation = await GeminiFailoverService.generate({
       model: modelName,
-      contents: contentsParts,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: 0.5,
-      },
+      systemInstruction,
+      userMessage: providerMessage,
+      attachments: providerAttachments,
+      responseFormat: 'json',
+      temperature: 0.5,
     });
 
-    const rawText = response.text || '';
+    const rawText = generation.response.text || '';
     const parsedData = cleanMarkdownAndParseJson(rawText);
     const finalData = RefinedSiteSchema.parse(parsedData);
 
@@ -516,6 +501,8 @@ ${currentHtml}
       explanation: finalData.explanation,
       suggestedRefinements: finalData.suggestedRefinements,
       consumedCredits: REFINE_SITE_CREDIT_COST,
+      modelUsed: generation.model,
+      fallbackUsed: generation.fallbackUsed,
       correlationId,
     });
   } catch (aiErr: any) {

@@ -50,6 +50,14 @@ interface GitHubPullRequestResponse {
   head?: {
     sha?: string;
   };
+  state?: string;
+  draft?: boolean;
+}
+
+export interface MergePullRequestResult {
+  success: boolean;
+  mergeCommitSha?: string;
+  message: string;
 }
 
 export class GithubAutomationService {
@@ -637,6 +645,84 @@ export class GithubAutomationService {
           ? 'A automação do GitHub excedeu o limite de tempo.'
           : `Erro na automação do GitHub: ${error?.message || error}`
       );
+    }
+  }
+
+  static async mergeApprovedPullRequest(
+    pullRequestUrl: string | undefined,
+    expectedHeadSha: string | undefined
+  ): Promise<MergePullRequestResult> {
+    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
+    const owner = (process.env.GITHUB_OWNER || 'brasilportalvip-png').trim();
+    const repo = (process.env.GITHUB_REPO || 'frocia2').trim();
+    const match = pullRequestUrl?.match(
+      /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/
+    );
+
+    if (!this.isConfigured() || !token) {
+      return { success: false, message: 'Integração GitHub não configurada para merge.' };
+    }
+    if (!match || match[1] !== owner || match[2] !== repo) {
+      return { success: false, message: 'URL do Pull Request não pertence ao repositório configurado.' };
+    }
+    if (!expectedHeadSha || !/^[a-f0-9]{40}$/i.test(expectedHeadSha)) {
+      return { success: false, message: 'SHA esperado do Pull Request é inválido ou ausente.' };
+    }
+
+    const pullNumber = Number(match[3]);
+    const repositoryUrl = `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    try {
+      const inspectResponse = await this.githubFetch(
+        `${repositoryUrl}/pulls/${pullNumber}`,
+        { headers: this.getHeaders(token) }
+      );
+      if (!inspectResponse.ok) {
+        return { success: false, message: `Falha ao conferir PR #${pullNumber}: HTTP ${inspectResponse.status}.` };
+      }
+      const pull = (await inspectResponse.json()) as GitHubPullRequestResponse;
+      if (pull.state !== 'open' || pull.draft === true) {
+        return { success: false, message: `PR #${pullNumber} não está aberto e pronto para merge.` };
+      }
+      if (pull.head?.sha !== expectedHeadSha) {
+        return {
+          success: false,
+          message: 'O commit do PR mudou depois da aprovação. O comitê deve revisar novamente.',
+        };
+      }
+
+      const mergeResponse = await this.githubFetch(
+        `${repositoryUrl}/pulls/${pullNumber}/merge`,
+        {
+          method: 'PUT',
+          headers: this.getHeaders(token, true),
+          body: JSON.stringify({
+            sha: expectedHeadSha,
+            merge_method: 'merge',
+            commit_title: `Merge supervisionado do PR #${pullNumber}`,
+          }),
+        }
+      );
+      const merge = (await mergeResponse.json()) as {
+        merged?: boolean;
+        sha?: string;
+        message?: string;
+      };
+      if (!mergeResponse.ok || merge.merged !== true) {
+        return {
+          success: false,
+          message: merge.message || `GitHub recusou o merge (HTTP ${mergeResponse.status}).`,
+        };
+      }
+      return {
+        success: true,
+        mergeCommitSha: merge.sha,
+        message: `PR #${pullNumber} mergeado; deploy e smoke test ainda precisam ser comprovados.`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Falha no merge supervisionado: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 }

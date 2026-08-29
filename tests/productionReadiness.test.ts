@@ -212,7 +212,15 @@ describe(
         );
 
         expect(rollbackSource).toContain(
-          'nenhuma reversão foi executada'
+          'revertPullRequest(input: $input)'
+        );
+
+        expect(rollbackSource).toContain(
+          "status: 'revert_pr_created'"
+        );
+
+        expect(rollbackSource).toContain(
+          'mergeData.merged !== true'
         );
 
         expect(githubSource).toContain(

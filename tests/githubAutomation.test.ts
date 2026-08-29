@@ -297,5 +297,63 @@ describe(
         );
       }
     );
+
+    it('merges only the exact commit approved by the committee', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      process.env.GITHUB_OWNER = 'test-owner';
+      process.env.GITHUB_REPO = 'test-repo';
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockResponse({
+            state: 'open',
+            draft: false,
+            head: { sha: CREATED_COMMIT_SHA },
+          })
+        )
+        .mockResolvedValueOnce(
+          mockResponse({
+            merged: true,
+            sha: 'f'.repeat(40),
+            message: 'Pull Request successfully merged',
+          })
+        );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await GithubAutomationService.mergeApprovedPullRequest(
+        'https://github.com/test-owner/test-repo/pull/42',
+        CREATED_COMMIT_SHA
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.mergeCommitSha).toBe('f'.repeat(40));
+      const mergeBody = JSON.parse(
+        String((fetchMock.mock.calls[1][1] as RequestInit).body)
+      );
+      expect(mergeBody.sha).toBe(CREATED_COMMIT_SHA);
+    });
+
+    it('blocks merge when the PR head changed after approval', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      process.env.GITHUB_OWNER = 'test-owner';
+      process.env.GITHUB_REPO = 'test-repo';
+      const fetchMock = vi.fn().mockResolvedValueOnce(
+        mockResponse({
+          state: 'open',
+          draft: false,
+          head: { sha: '0'.repeat(40) },
+        })
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await GithubAutomationService.mergeApprovedPullRequest(
+        'https://github.com/test-owner/test-repo/pull/42',
+        CREATED_COMMIT_SHA
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('mudou depois da aprovação');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   }
 );

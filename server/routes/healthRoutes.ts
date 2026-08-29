@@ -4,6 +4,8 @@ import { MercadoPagoService } from '../services/mercadoPagoService.js';
 import { AuthenticatedRequest } from '../types.js';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { requireAdmin } from '../middlewares/requireAdmin.js';
+import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
+import { SocialSearchService } from '../ai/socialSearchService.js';
 
 export const healthRouter = Router();
 
@@ -22,6 +24,12 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
   const geminiConfigured = Boolean(
     process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5
   );
+  const geminiFailoverModels = configuredGeminiFailoverChain(
+    process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.7-flash'
+  );
+  const socialPlatformsConfigured = SocialSearchService.capabilities()
+    .filter((capability) => capability.configured)
+    .map((capability) => capability.platform);
 
   let firestoreReachable = false;
   if (authConfigured && adminDb) {
@@ -49,6 +57,7 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       geminiConfigured,
       mercadoPagoConfigured: MercadoPagoService.isConfigured(),
       agenticResearchConfigured: geminiConfigured && authConfigured,
+      modelFailoverConfigured: geminiFailoverModels.length >= 4,
     },
     evidenceLevel: {
       firebaseAdmin: 'configuration',
@@ -56,7 +65,11 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       gemini: 'configuration_only',
       mercadoPago: 'configuration_only',
       agenticResearch: 'gemini_configuration_and_firestore_live_read',
+      modelFailover: 'configuration_and_automated_tests',
+      socialSearch: 'configuration_only',
     },
+    configuredModels: geminiFailoverModels,
+    configuredSocialPlatforms: socialPlatformsConfigured,
     limitations: [
       'Este endpoint não chama Gemini nem Mercado Pago para evitar custo e efeitos externos.',
       'Uma chave configurada não equivale a uma operação homologada no provedor.',

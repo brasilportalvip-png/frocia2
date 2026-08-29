@@ -312,7 +312,7 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
         'merge-commit-test-123'
       );
       expect(result.message).toContain(
-        'nenhuma reversão foi executada'
+        'não está mergeado'
       );
     } finally {
       vi.unstubAllGlobals();
@@ -334,6 +334,57 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
       } else {
         process.env.GITHUB_REPO = previousRepo;
       }
+    }
+  });
+
+  it('creates a real GitHub revert PR without claiming production rollback', async () => {
+    const previousToken = process.env.GITHUB_TOKEN;
+    const previousDeploy = process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED;
+    process.env.GITHUB_TOKEN = 'test-github-token';
+    process.env.GITHUB_OWNER = 'test-owner';
+    process.env.GITHUB_REPO = 'test-repo';
+    process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED = 'false';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          node_id: 'PR_node_42',
+          merge_commit_sha: 'a'.repeat(40),
+          merged_at: '2026-08-29T00:00:00.000Z',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            revertPullRequest: {
+              revertPullRequest: {
+                url: 'https://github.com/test-owner/test-repo/pull/43',
+                number: 43,
+                headRefOid: 'b'.repeat(40),
+              },
+            },
+          },
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const result = await RollbackService.executeRollback('candidate-42', 'falha real', 42);
+      expect(result.status).toBe('revert_pr_created');
+      expect(result.success).toBe(false);
+      expect(result.revertPullRequestUrl).toContain('/pull/43');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[1][0])).toBe('https://api.github.com/graphql');
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousToken;
+      if (previousDeploy === undefined) delete process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED;
+      else process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED = previousDeploy;
     }
   });
 
