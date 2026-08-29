@@ -16,25 +16,24 @@ export const isFirebaseClientConfigured = (): boolean => {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 };
 
-let app: FirebaseApp;
+const clientConfigured = isFirebaseClientConfigured();
 
-if (!getApps().length) {
-  if (!isFirebaseClientConfigured()) {
-    console.warn(
-      '⚠️ Firebase Client SDK não configurado no Frontend. Configure as variáveis VITE_FIREBASE_* nas configurações do ambiente.'
-    );
-  }
-  app = initializeApp(firebaseConfig);
-} else {
-  app = getApp();
+if (!clientConfigured) {
+  console.warn(
+    '⚠️ Firebase Client SDK não configurado no Frontend. O modo público continuará disponível, mas autenticação e armazenamento permanecerão desativados.'
+  );
 }
 
-export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
-export const storage: FirebaseStorage = getStorage(app);
+const app: FirebaseApp | null = clientConfigured
+  ? (getApps().length ? getApp() : initializeApp(firebaseConfig))
+  : null;
+
+export const auth: Auth | null = app ? getAuth(app) : null;
+export const db: Firestore | null = app ? getFirestore(app) : null;
+export const storage: FirebaseStorage | null = app ? getStorage(app) : null;
 
 export const getIdToken = async (): Promise<string | null> => {
-  if (!auth.currentUser) return null;
+  if (!auth?.currentUser) return null;
   try {
     return await auth.currentUser.getIdToken();
   } catch (err) {

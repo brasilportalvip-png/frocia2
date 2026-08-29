@@ -44,12 +44,19 @@ export const EnvSchema = z.object({
 
   // Internal Cron & Maintenance
   INTERNAL_CRON_SECRET: z.string().optional(),
+  CRON_SECRET: z.string().optional(),
 
   // Firebase Admin SDK
   FIREBASE_SERVICE_ACCOUNT_KEY: z.string().optional(),
   FIREBASE_PROJECT_ID: z.string().optional(),
   FIREBASE_CLIENT_EMAIL: z.string().optional(),
   FIREBASE_PRIVATE_KEY: z.string().optional(),
+  FIREBASE_STORAGE_BUCKET: z.string().optional(),
+
+  // Encrypted automatic backups. Optional until the storage bucket and
+  // secret are provisioned; readiness reports the missing configuration.
+  BACKUP_ENCRYPTION_KEY: z.string().optional(),
+  BACKUP_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
 
   // Optional application-level encryption for personal memories. When it is
   // absent, personal data is rejected instead of being persisted in cleartext.
@@ -99,6 +106,28 @@ export const EnvSchema = z.object({
         message: 'O segredo INTERNAL_CRON_SECRET em produção deve ter pelo menos 16 caracteres e não pode ser previsível.',
       });
     }
+
+    if (data.CRON_SECRET && data.CRON_SECRET.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CRON_SECRET'],
+        message: 'CRON_SECRET deve possuir pelo menos 32 caracteres em produção.',
+      });
+    }
+
+    // Um bucket pode existir para uploads comuns sem habilitar backups.
+    // Somente a presença da chave privada declara intenção de ativar o backup.
+    if (
+      data.BACKUP_ENCRYPTION_KEY &&
+      (!data.FIREBASE_STORAGE_BUCKET || data.BACKUP_ENCRYPTION_KEY.length < 32)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BACKUP_ENCRYPTION_KEY'],
+        message:
+          'Backup automático exige FIREBASE_STORAGE_BUCKET e BACKUP_ENCRYPTION_KEY com pelo menos 32 caracteres.',
+      });
+    }
   }
 });
 
@@ -137,9 +166,13 @@ if (parseResult.success) {
       process.env.GEMINI_MODEL_FAILOVER_CHAIN ||
       'gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite',
     INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET || 'froc_dev_cron_secret_unpredictable_local_key_32_bytes',
+    CRON_SECRET: process.env.CRON_SECRET,
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,
     FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY,
+    FIREBASE_STORAGE_BUCKET: process.env.FIREBASE_STORAGE_BUCKET,
+    BACKUP_ENCRYPTION_KEY: process.env.BACKUP_ENCRYPTION_KEY,
+    BACKUP_RETENTION_DAYS: Number(process.env.BACKUP_RETENTION_DAYS) || 30,
     MEMORY_ENCRYPTION_KEY: process.env.MEMORY_ENCRYPTION_KEY,
     MERCADO_PAGO_ACCESS_TOKEN: process.env.MERCADO_PAGO_ACCESS_TOKEN,
     MERCADO_PAGO_PUBLIC_KEY: process.env.MERCADO_PAGO_PUBLIC_KEY,

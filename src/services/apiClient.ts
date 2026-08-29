@@ -137,7 +137,7 @@ export async function apiClient<T = any>(
     headers.set('Content-Type', 'application/json');
   }
 
-  if (auth.currentUser) {
+  if (auth?.currentUser) {
     try {
       const token =
         await auth.currentUser.getIdToken();
@@ -211,7 +211,7 @@ export async function apiClientBlob(
 ): Promise<Blob> {
   const headers = new Headers(options.headers);
 
-  if (!auth.currentUser) {
+  if (!auth?.currentUser) {
     throw new ApiClientError(
       'Faça login novamente para acessar este arquivo.',
       401,

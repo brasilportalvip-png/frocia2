@@ -49,7 +49,7 @@ export const SelfEvolutionDashboard: React.FC = () => {
 
   const getAuthHeader = async (): Promise<Record<string, string>> => {
     try {
-      const user = auth.currentUser;
+      const user = auth?.currentUser;
       if (user) {
         const token = await user.getIdToken();
         return { Authorization: `Bearer ${token}` };
@@ -356,4 +356,3 @@ export const SelfEvolutionDashboard: React.FC = () => {
     </div>
   );
 };
-

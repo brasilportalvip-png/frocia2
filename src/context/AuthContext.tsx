@@ -109,7 +109,7 @@ export const AuthProvider: React.FC<{
   };
 
   useEffect(() => {
-    if (!isFirebaseClientConfigured()) {
+    if (!isFirebaseClientConfigured() || !auth) {
       setFirebaseUser(null);
       setProfile(null);
       setLoading(false);
@@ -118,8 +118,9 @@ export const AuthProvider: React.FC<{
 
     let cancelled = false;
 
+    const configuredAuth = auth;
     const unsubscribe = onAuthStateChanged(
-      auth,
+      configuredAuth,
       async (fbUser) => {
         if (cancelled) return;
 
@@ -164,7 +165,7 @@ export const AuthProvider: React.FC<{
   }, []);
 
   const refreshProfile = async () => {
-    if (!auth.currentUser) {
+    if (!auth?.currentUser) {
       setProfile(null);
       return;
     }
@@ -188,14 +189,14 @@ export const AuthProvider: React.FC<{
   };
 
   const sendVerificationEmail = async (): Promise<void> => {
-    if (!auth.currentUser) {
+    if (!auth?.currentUser) {
       throw new Error('Nenhum usuário autenticado.');
     }
     await sendEmailVerification(auth.currentUser);
   };
 
   const updateUserProfile = async (displayName: string, avatarUrl: string): Promise<void> => {
-    if (!auth.currentUser) {
+    if (!auth?.currentUser) {
       throw new Error('Nenhum usuário autenticado.');
     }
 
@@ -216,7 +217,7 @@ export const AuthProvider: React.FC<{
 
   const getIdToken =
     async (): Promise<string | null> => {
-      if (!auth.currentUser) return null;
+      if (!auth?.currentUser) return null;
 
       return auth.currentUser.getIdToken(true);
     };
@@ -238,12 +239,17 @@ export const AuthProvider: React.FC<{
       throw new Error('Informe seu e-mail.');
     }
 
+    if (!auth) {
+      throw new Error('Autenticação não configurada neste ambiente.');
+    }
+
+    const configuredAuth = auth;
     setLoading(true);
 
     try {
       const credentials =
         await createUserWithEmailAndPassword(
-          auth,
+          configuredAuth,
           normalizedEmail,
           passStr
         );
@@ -271,12 +277,17 @@ export const AuthProvider: React.FC<{
     const normalizedEmail =
       emailStr.trim().toLowerCase();
 
+    if (!auth) {
+      throw new Error('Autenticação não configurada neste ambiente.');
+    }
+
+    const configuredAuth = auth;
     setLoading(true);
 
     try {
       const credentials =
         await signInWithEmailAndPassword(
-          auth,
+          configuredAuth,
           normalizedEmail,
           passStr
         );
@@ -295,6 +306,11 @@ export const AuthProvider: React.FC<{
   };
 
   const loginWithGoogle = async () => {
+    if (!auth) {
+      throw new Error('Autenticação não configurada neste ambiente.');
+    }
+
+    const configuredAuth = auth;
     setLoading(true);
 
     try {
@@ -305,7 +321,7 @@ export const AuthProvider: React.FC<{
       });
 
       const credentials =
-        await signInWithPopup(auth, provider);
+        await signInWithPopup(configuredAuth, provider);
 
       const syncedProfile =
         await createOrLoadProfile(credentials.user);
@@ -321,10 +337,17 @@ export const AuthProvider: React.FC<{
   };
 
   const logout = async () => {
+    if (!auth) {
+      setProfile(null);
+      setFirebaseUser(null);
+      return;
+    }
+
+    const configuredAuth = auth;
     setLoading(true);
 
     try {
-      await signOut(auth);
+      await signOut(configuredAuth);
       setProfile(null);
       setFirebaseUser(null);
     } finally {
@@ -342,9 +365,15 @@ export const AuthProvider: React.FC<{
       throw new Error('Informe seu e-mail.');
     }
 
+    if (!auth) {
+      throw new Error('Autenticação não configurada neste ambiente.');
+    }
+
+    const configuredAuth = auth;
+
     try {
       await sendPasswordResetEmail(
-        auth,
+        configuredAuth,
         normalizedEmail
       );
     } catch (error: unknown) {

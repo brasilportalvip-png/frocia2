@@ -40,6 +40,9 @@ export const PORTABLE_BACKUP_COLLECTIONS = [
   'prompt_versions',
   'system_config',
   'feature_flag_audit',
+  'production_release_plans',
+  'schema_migrations',
+  'automatic_backup_runs',
   AUDIT_COLLECTION
 ] as const;
 

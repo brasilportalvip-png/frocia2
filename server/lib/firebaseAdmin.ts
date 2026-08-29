@@ -82,5 +82,6 @@ export const adminAuth: Auth = getAuth(app);
 
 export const adminDb: Firestore = getFirestore(app);
 
-export default app;
+export const adminApp: App = app;
 
+export default app;

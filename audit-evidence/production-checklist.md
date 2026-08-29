@@ -2,6 +2,24 @@
 
 Data da última auditoria local: 29/08/2026.
 
+## Gates locais de E2E, migrations e backup `0ef36c8`
+
+- [x] Tipagem aprovada.
+- [x] 342 testes Vitest aprovados em 42 arquivos.
+- [x] 13 testes específicos de produção aprovados.
+- [x] Build de produção aprovado.
+- [x] Integridade aprovada em 165 arquivos.
+- [x] Auditoria de dependências de produção com 0 vulnerabilidades.
+- [x] Catálogo de migrations válido, ordenado e com checksum.
+- [x] Backup criptografado, validação pós-upload e retenção segura cobertos por testes.
+- [x] Oito execuções Playwright foram descobertas para desktop e mobile.
+- [x] Playwright aprovado no GitHub Actions, execução `33265739834`, após detectar e corrigir o crash do frontend sem `VITE_FIREBASE_*`.
+- [ ] Preview responde `live` e `ready`; a primeira implantação após o E2E revelou ativação indevida da validação de backup, corrigida e aguardando novo deploy.
+- [ ] Variáveis e bucket do backup configurados no Preview e em produção.
+- [ ] Primeiro backup automático validado e primeira restauração ensaiada.
+- [ ] Migration versão 1 aplicada primeiro no Preview e depois em produção.
+- [ ] Revisão independente registrada.
+
 ## Gates locais do hardening final `1ddb802`
 
 - [x] Tipagem aprovada.
