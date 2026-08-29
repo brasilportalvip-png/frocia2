@@ -138,7 +138,9 @@ export async function createApp() {
           fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
                     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
           mediaSrc: ["'self'", 'data:', 'blob:', 'https:'],
-          connectSrc: ["'self'", 'https:', 'wss:'],
+          connectSrc: isProd
+            ? ["'self'", 'https:', 'wss:']
+            : ["'self'", 'https:', 'wss:', 'ws:'],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
           formAction: ["'self'"],

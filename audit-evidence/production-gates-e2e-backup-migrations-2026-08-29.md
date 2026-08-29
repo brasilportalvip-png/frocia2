@@ -50,7 +50,9 @@ Resultados:
 
 ## Evidência ainda pendente
 
-O download local do Chromium expirou cinco vezes no CDN do Playwright. Portanto, os oito testes E2E **não são declarados aprovados localmente**. O workflow do PR instalará o Chromium e será a fonte de evidência do gate E2E.
+O download local do Chromium expirou cinco vezes no CDN do Playwright. Portanto, os oito testes E2E **não são declarados aprovados localmente**.
+
+O primeiro workflow do PR #13, execução `33265152238`, instalou o Chromium, mas falhou no navegador. O trace comprovou `Firebase: Error (auth/invalid-api-key)`: sem variáveis públicas `VITE_FIREBASE_*` no CI, `src/lib/firebase.ts` tentava inicializar o Auth antes do React e deixava a tela vazia. A correção tornou os serviços Firebase opcionais quando a configuração pública não existe, preservando a interface pública e bloqueando somente operações dependentes de autenticação. A nova execução do CI permanece necessária antes de aprovar o gate E2E.
 
 O backup automático somente ficará operacional depois de configurar no Vercel:
 

@@ -13,7 +13,7 @@ Data da última auditoria local: 29/08/2026.
 - [x] Catálogo de migrations válido, ordenado e com checksum.
 - [x] Backup criptografado, validação pós-upload e retenção segura cobertos por testes.
 - [x] Oito execuções Playwright foram descobertas para desktop e mobile.
-- [ ] Playwright executado no GitHub Actions; o download local do Chromium expirou no CDN.
+- [ ] Playwright aprovado no GitHub Actions; a primeira execução encontrou e registrou o crash do frontend sem `VITE_FIREBASE_*`, já corrigido e aguardando nova execução.
 - [ ] Variáveis e bucket do backup configurados no Preview e em produção.
 - [ ] Primeiro backup automático validado e primeira restauração ensaiada.
 - [ ] Migration versão 1 aplicada primeiro no Preview e depois em produção.
