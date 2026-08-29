@@ -6,6 +6,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { requireAdmin } from '../middlewares/requireAdmin.js';
 import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
 import { SocialSearchService } from '../ai/socialSearchService.js';
+import { AutomaticBackupService } from '../services/automaticBackupService.js';
 
 export const healthRouter = Router();
 
@@ -58,6 +59,7 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       mercadoPagoConfigured: MercadoPagoService.isConfigured(),
       agenticResearchConfigured: geminiConfigured && authConfigured,
       modelFailoverConfigured: geminiFailoverModels.length >= 4,
+      automaticBackupConfigured: AutomaticBackupService.isConfigured(),
     },
     evidenceLevel: {
       firebaseAdmin: 'configuration',
@@ -67,6 +69,7 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       agenticResearch: 'gemini_configuration_and_firestore_live_read',
       modelFailover: 'configuration_and_automated_tests',
       socialSearch: 'configuration_only',
+      automaticBackup: 'configuration_and_automated_crypto_tests',
     },
     configuredModels: geminiFailoverModels,
     configuredSocialPlatforms: socialPlatformsConfigured,
@@ -74,6 +77,9 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       'Este endpoint não chama Gemini nem Mercado Pago para evitar custo e efeitos externos.',
       'Uma chave configurada não equivale a uma operação homologada no provedor.',
       'A pesquisa profunda usa o Gemini configurado no projeto; nenhuma chave OpenAI é necessária.',
+      AutomaticBackupService.isConfigured()
+        ? 'O backup automático está configurado; o histórico administrativo registra cada execução verificada.'
+        : 'O backup automático exige FIREBASE_STORAGE_BUCKET e BACKUP_ENCRYPTION_KEY.',
     ],
   });
 });

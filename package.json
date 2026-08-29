@@ -13,7 +13,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run tests",
     "test:unit": "vitest run tests/walletService.test.ts tests/webhookSignature.test.ts",
     "test:integration": "vitest run tests/walletAndCheckout.test.ts tests/phase2_wallet_integration.test.ts",
     "test:ai": "vitest run tests/phase3_ai_engine.test.ts",
@@ -27,8 +27,12 @@
     "test:site-audit": "vitest run tests/fullSiteAuditor.test.ts tests/attachmentImportSecurity.test.ts",
     "test:research-memory-deep": "vitest run tests/socialSearchOfficialApis.test.ts tests/citationUrlResolver.test.ts tests/geminiProviderErrors.test.ts tests/longTermConversationMemory.test.ts tests/longTermMemoryPersistence.test.ts tests/fullSiteAuditor.test.ts",
     "test:agentic-research": "vitest run tests/geminiAgenticResearch.test.ts tests/geminiFailoverService.test.ts tests/researchQualityService.test.ts tests/researchJobProgress.test.ts tests/researchBenchmarkCatalog.test.ts tests/longTermConversationMemory.test.ts",
+    "test:production-gates": "vitest run tests/automaticBackupAndMigrations.test.ts tests/finalProductionHardening.test.ts tests/portableRecovery.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:report": "playwright show-report",
     "test:rules": "vitest run tests/rules.test.ts",
     "validate:tracker": "node --import tsx scripts/validate-requirement-tracker.ts",
+    "validate:migrations": "node --import tsx scripts/validate-migrations.ts",
     "validate:production-integrity": "node --import tsx scripts/validate-production-integrity.ts"
   },
   "dependencies": {
@@ -47,6 +51,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

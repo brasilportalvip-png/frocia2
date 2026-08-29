@@ -3,8 +3,10 @@ import crypto from 'crypto';
 import { AuthenticatedRequest } from '../types.js';
 import { env } from '../config/env.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
-import { adminDb } from '../lib/firebaseAdmin.js';
+import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { DurableExecutionService } from '../ai/durableExecutionService.js';
+import { AutomaticBackupService } from '../services/automaticBackupService.js';
+import { MigrationService } from '../migrations/migrationService.js';
 
 export const internalRouter = Router();
 
@@ -14,8 +16,17 @@ export const internalRouter = Router();
  */
 const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
   const secretHeader = req.headers['x-cron-secret'];
-  
-  if (typeof secretHeader !== 'string' || !secretHeader) {
+  const authorization = req.headers.authorization;
+  const bearer =
+    typeof authorization === 'string' && authorization.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length)
+      : '';
+  const provided =
+    typeof secretHeader === 'string' && secretHeader.length > 0
+      ? secretHeader
+      : bearer;
+
+  if (!provided) {
     return res.status(401).json({
       error: {
         code: 'unauthorized_cron',
@@ -25,12 +36,18 @@ const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
     });
   }
 
-  const expectedSecret = env.INTERNAL_CRON_SECRET;
-  
-  const bufA = Buffer.from(secretHeader);
-  const bufB = Buffer.from(expectedSecret);
+  const expectedSecrets = [env.CRON_SECRET, env.INTERNAL_CRON_SECRET]
+    .filter((candidate): candidate is string => Boolean(candidate));
+  const providedBuffer = Buffer.from(provided);
+  const valid = expectedSecrets.some((expectedSecret) => {
+    const expectedBuffer = Buffer.from(expectedSecret);
+    return (
+      providedBuffer.length === expectedBuffer.length &&
+      crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+    );
+  });
 
-  if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) {
+  if (!valid) {
     return res.status(401).json({
       error: {
         code: 'unauthorized_cron',
@@ -42,6 +59,97 @@ const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
 
   next();
 };
+
+/**
+ * Vercel invokes this route daily and sends CRON_SECRET as Authorization
+ * Bearer. The same handler accepts x-cron-secret for an operator-initiated run.
+ */
+internalRouter.get('/backups/run', requireCronSecret, async (req: AuthenticatedRequest, res) => {
+  if (!AutomaticBackupService.isConfigured()) {
+    return res.status(503).json({
+      error: {
+        code: 'automatic_backup_not_configured',
+        message:
+          'Configure FIREBASE_STORAGE_BUCKET e BACKUP_ENCRYPTION_KEY para ativar backups automáticos.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+
+  try {
+    const result = await AutomaticBackupService.run('vercel-cron');
+    return res.json({
+      status: 'verified',
+      result,
+      correlationId: req.correlationId,
+    });
+  } catch (error) {
+    console.error('Falha no backup automático criptografado:', error);
+    return res.status(500).json({
+      error: {
+        code: 'automatic_backup_failed',
+        message: 'O backup automático não foi concluído ou verificado.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+internalRouter.get('/migrations/status', requireCronSecret, async (req: AuthenticatedRequest, res) => {
+  if (!isFirebaseAdminConfigured()) {
+    return res.status(503).json({
+      error: {
+        code: 'migration_database_unavailable',
+        message: 'Firebase Admin não está configurado para validar migrations.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+  try {
+    return res.json({
+      status: await MigrationService.status(),
+      correlationId: req.correlationId,
+    });
+  } catch (error) {
+    console.error('Falha ao consultar migrations:', error);
+    return res.status(500).json({
+      error: {
+        code: 'migration_status_failed',
+        message: 'Não foi possível validar o estado das migrations.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+internalRouter.post('/migrations/apply', requireCronSecret, async (req: AuthenticatedRequest, res) => {
+  if (!isFirebaseAdminConfigured()) {
+    return res.status(503).json({
+      error: {
+        code: 'migration_database_unavailable',
+        message: 'Firebase Admin não está configurado para aplicar migrations.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+  try {
+    const result = await MigrationService.applyPending('release-operator');
+    return res.json({
+      status: 'completed',
+      result,
+      correlationId: req.correlationId,
+    });
+  } catch (error) {
+    console.error('Falha ao aplicar migrations:', error);
+    return res.status(409).json({
+      error: {
+        code: 'migration_apply_failed',
+        message: 'A migration não foi aplicada; consulte o ledger antes de repetir.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
 
 /**
  * Internal route to expire stale credit reservations

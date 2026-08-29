@@ -8,6 +8,7 @@ import {
   PORTABLE_BACKUP_COLLECTIONS
 } from '../services/portableRecoveryService.js';
 import { AuthenticatedRequest } from '../types.js';
+import { AutomaticBackupService } from '../services/automaticBackupService.js';
 
 export const portableRecoveryRouter = Router();
 
@@ -185,8 +186,10 @@ portableRecoveryRouter.get(
         configured: true,
         projectId: projectId(),
         databaseId: '(default)',
-        automaticBackup: false,
-        cloudStorageBackup: false,
+        automaticBackup: AutomaticBackupService.isConfigured(),
+        cloudStorageBackup: AutomaticBackupService.isConfigured(),
+        automaticBackupConfiguration:
+          AutomaticBackupService.configuration(),
         firebaseAuthIncluded: false,
         firebaseStorageIncluded: false,
         protectedCollections: PORTABLE_BACKUP_COLLECTIONS,
