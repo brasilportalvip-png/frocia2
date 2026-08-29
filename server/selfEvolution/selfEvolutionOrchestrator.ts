@@ -194,7 +194,32 @@ export class SelfEvolutionOrchestrator {
       prUrl: candidate.pullRequestUrl,
     });
 
-    return { success: true, message: 'Release aprovada pelo administrador com sucesso.' };
+    if (
+      SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed()
+    ) {
+      const merge = await GithubAutomationService.mergeApprovedPullRequest(
+        candidate.pullRequestUrl,
+        candidate.headCommitSha
+      );
+      await AuditService.logEvent({
+        actor: adminUid,
+        action: 'merge_approved_release',
+        resource: candidateId,
+        riskLevel: candidate.riskLevel,
+        result: merge.success ? 'success' : 'failure',
+        reason: merge.message,
+        commitHash: merge.mergeCommitSha,
+        prUrl: candidate.pullRequestUrl,
+      });
+      if (!merge.success) return merge;
+      return { success: true, message: merge.message };
+    }
+
+    return {
+      success: true,
+      message:
+        'Release aprovada. O merge continua manual porque AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED está desativado.',
+    };
   }
 
    static async executeEmergencyRollback(

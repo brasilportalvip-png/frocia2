@@ -2,6 +2,7 @@ import { isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { MercadoPagoService } from './mercadoPagoService.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
 import { SocialSearchService } from '../ai/socialSearchService.js';
+import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
 
 export type CapabilityStatus =
   | 'available'
@@ -54,6 +55,9 @@ export class CapabilityRegistryService {
 
     const firebaseOk = isFirebaseAdminConfigured();
     const agenticResearchOk = geminiOk && firebaseOk;
+    const modelFailoverChain = configuredGeminiFailoverChain(
+      process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.7-flash'
+    );
 
     const mercadoPagoOk =
       MercadoPagoService.isConfigured();
@@ -115,9 +119,7 @@ export class CapabilityRegistryService {
             ? 'configured'
             : 'degraded',
         provider: 'Google Gemini',
-        model:
-          `${process.env.GEMINI_DEFAULT_MODEL || 'Gemini Flash'} / ` +
-          `${process.env.GEMINI_REASONING_MODEL || 'Gemini Pro'}`,
+        model: modelFailoverChain.join(' → '),
         cost: {
           credits: 5,
           description:
@@ -140,7 +142,7 @@ export class CapabilityRegistryService {
         category: 'ai',
         status: agenticResearchOk ? 'configured' : 'degraded',
         provider: 'Google Gemini Search Grounding + Froc.IA',
-        model: process.env.GEMINI_REASONING_MODEL || 'Gemini Pro',
+        model: modelFailoverChain.join(' → '),
         cost: {
           credits: 18,
           description:
@@ -418,7 +420,7 @@ export class CapabilityRegistryService {
     ];
 
     return {
-      version: '1.3.0',
+      version: '1.4.0',
       updatedAt: now,
       capabilities,
     };

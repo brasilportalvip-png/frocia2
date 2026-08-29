@@ -330,9 +330,12 @@ selfEvolutionRouter.post('/releases/:id/rollback', requireAuth, requireAdmin, as
 
 // GET /api/admin/self-evolution/evaluations
 selfEvolutionRouter.get('/evaluations', requireAuth, requireAdmin, async (_req: AuthenticatedRequest, res) => {
-  const golden = EvaluationEngine.runSuite('golden');
-  const security = EvaluationEngine.runSuite('security');
-  return res.json({ evaluations: [golden, security] });
+  const evaluations = await EvaluationEngine.listResults();
+  return res.json({
+    evaluations,
+    executionEndpoint: '/api/admin/ai/evaluations/run',
+    readOnly: true,
+  });
 });
 
 // GET /api/admin/self-evolution/budget

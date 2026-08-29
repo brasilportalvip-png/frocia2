@@ -29,13 +29,18 @@ export const EnvSchema = z.object({
 
   // Gemini AI
   GEMINI_API_KEY: z.string().optional(),
-  GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.6-flash'),
-  GEMINI_FAST_MODEL: z.string().default('gemini-3.1-flash-lite'),
-  GEMINI_REASONING_MODEL: z.string().default('gemini-3.1-pro-preview'),
-  GEMINI_CODE_MODEL: z.string().default('gemini-3.1-pro-preview'),
-  GEMINI_VISION_MODEL: z.string().default('gemini-3.6-flash'),
+  GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.7-flash'),
+  GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  GEMINI_REASONING_MODEL: z.string().default('gemini-3.7-flash'),
+  GEMINI_CODE_MODEL: z.string().default('gemini-3.7-flash'),
+  GEMINI_VISION_MODEL: z.string().default('gemini-3.7-flash'),
   GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.6-flash'),
+  GEMINI_MODEL_FAILOVER_CHAIN: z
+    .string()
+    .default(
+      'gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite'
+    ),
 
   // Internal Cron & Maintenance
   INTERNAL_CRON_SECRET: z.string().optional(),
@@ -121,13 +126,16 @@ if (parseResult.success) {
     APP_URL: process.env.APP_URL,
     TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-    GEMINI_DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.6-flash',
-    GEMINI_FAST_MODEL: process.env.GEMINI_FAST_MODEL || 'gemini-3.1-flash-lite',
-    GEMINI_REASONING_MODEL: process.env.GEMINI_REASONING_MODEL || 'gemini-3.1-pro-preview',
-    GEMINI_CODE_MODEL: process.env.GEMINI_CODE_MODEL || 'gemini-3.1-pro-preview',
-    GEMINI_VISION_MODEL: process.env.GEMINI_VISION_MODEL || 'gemini-3.6-flash',
+    GEMINI_DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.7-flash',
+    GEMINI_FAST_MODEL: process.env.GEMINI_FAST_MODEL || 'gemini-3.5-flash-lite',
+    GEMINI_REASONING_MODEL: process.env.GEMINI_REASONING_MODEL || 'gemini-3.7-flash',
+    GEMINI_CODE_MODEL: process.env.GEMINI_CODE_MODEL || 'gemini-3.7-flash',
+    GEMINI_VISION_MODEL: process.env.GEMINI_VISION_MODEL || 'gemini-3.7-flash',
     GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2',
     GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash',
+    GEMINI_MODEL_FAILOVER_CHAIN:
+      process.env.GEMINI_MODEL_FAILOVER_CHAIN ||
+      'gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite',
     INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET || 'froc_dev_cron_secret_unpredictable_local_key_32_bytes',
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL,

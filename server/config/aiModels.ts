@@ -1,8 +1,8 @@
 import { env } from './env.js';
 import { AIModelDefinition } from '../ai/types/ai.js';
 
-export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
-  [env.GEMINI_DEFAULT_MODEL]: {
+const MODEL_DEFINITIONS: AIModelDefinition[] = [
+  {
     id: env.GEMINI_DEFAULT_MODEL,
     provider: 'google',
     enabled: true,
@@ -28,7 +28,7 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     },
   },
 
-  [env.GEMINI_FAST_MODEL]: {
+  {
     id: env.GEMINI_FAST_MODEL,
     provider: 'google',
     enabled: true,
@@ -54,7 +54,7 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     },
   },
 
-  [env.GEMINI_REASONING_MODEL]: {
+  {
     id: env.GEMINI_REASONING_MODEL,
     provider: 'google',
     enabled: true,
@@ -80,7 +80,7 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
     },
   },
 
-  [env.GEMINI_EMBEDDING_MODEL]: {
+  {
     id: env.GEMINI_EMBEDDING_MODEL,
     provider: 'google',
     enabled: true,
@@ -105,7 +105,19 @@ export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> = {
       baseCreditCost: 1,
     },
   },
-};
+];
+
+// Variáveis diferentes podem apontar para o mesmo modelo estável. Nesse caso,
+// mantém a primeira definição em vez de sobrescrever silenciosamente cobrança,
+// timeout e prioridade por causa de uma chave duplicada no objeto.
+export const DEFAULT_MODELS_CONFIG: Record<string, AIModelDefinition> =
+  MODEL_DEFINITIONS.reduce<Record<string, AIModelDefinition>>(
+    (models, definition) => {
+      if (!models[definition.id]) models[definition.id] = definition;
+      return models;
+    },
+    {}
+  );
 
 export function getModelDefinition(modelId: string): AIModelDefinition {
   if (DEFAULT_MODELS_CONFIG[modelId]) {

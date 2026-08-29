@@ -2,9 +2,7 @@ import { CreditWalletService } from '../services/creditWalletService.js';
 import { SafetyService } from './safetyService.js';
 import { AIRequestOrchestrator } from './requestOrchestrator.js';
 import { ContextBuilder } from './contextBuilder.js';
-import { GeminiProvider } from './providers/geminiProvider.js';
 import { ExecutionTraceService } from './executionTraceService.js';
-import { ModelHealthService } from './modelHealthService.js';
 import { CostService } from './costService.js';
 import { CitationService } from './citationService.js';
 import {
@@ -15,7 +13,6 @@ import {
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
 import { FeatureFlagService } from '../services/featureFlagService.js';
-import { ModelRegistry } from './modelRegistry.js';
 import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
 import { ConversationContextService } from './conversationContextService.js';
@@ -26,6 +23,7 @@ import {
   SocialSearchService,
 } from './socialSearchService.js';
 import { SocialSearchPolicyService } from './socialSearchPolicyService.js';
+import { GeminiFailoverService } from './geminiFailoverService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
@@ -308,79 +306,27 @@ if (params.abortSignal?.aborted) {
       ].join('');
 
       startTime = Date.now();
-      // 6. Execute across the complete, deduplicated fallback chain.
-      const candidateModels = Array.from(
-          new Set([
-            modelToUse,
-            ...route.fallbackModels,
-          ])
-        );
-        let generatedResponse: Awaited<
-          ReturnType<typeof GeminiProvider.generate>
-        > | null = null;
-        let lastProviderError: unknown = null;
+      // 6. Execute across the complete, deduplicated and health-aware chain.
+      const generation = await GeminiFailoverService.generate(
+        {
+          model: modelToUse,
+          systemInstruction: assembled.systemInstruction,
+          userMessage: modelUserMessage,
+          attachments,
+          responseFormat,
+          enableSearchGrounding,
+          abortSignal,
+        },
+        route.fallbackModels
+      );
+      const generatedResponse = generation.response;
+      modelToUse = generation.model;
+      attemptedModels.push(...generation.attemptedModels);
+      fallbackUsed = generation.fallbackUsed;
 
-        for (
-          let index = 0;
-          index < candidateModels.length;
-          index += 1
-        ) {
-          const candidateModel = candidateModels[index];
-          const modelConfig =
-            ModelRegistry.getModel(candidateModel);
-          const attemptStartedAt = Date.now();
-          modelToUse = candidateModel;
-          attemptedModels.push(candidateModel);
-
-          try {
-            generatedResponse =
-              await GeminiProvider.generate({
-                model: candidateModel,
-                systemInstruction:
-                  assembled.systemInstruction,
-                userMessage: modelUserMessage,
-                attachments,
-                responseFormat,
-                enableSearchGrounding,
-                abortSignal,
-                timeoutMs: modelConfig.timeoutMs,
-                maxRetries: modelConfig.maxRetries,
-              });
-            fallbackUsed = index > 0;
-            ModelHealthService.recordCall(
-              candidateModel,
-              Date.now() - attemptStartedAt,
-              true,
-              false,
-              fallbackUsed
-            );
-            break;
-          } catch (providerError) {
-            lastProviderError = providerError;
-            ModelHealthService.recordCall(
-              candidateModel,
-              Date.now() - attemptStartedAt,
-              false
-            );
-
-            if (index < candidateModels.length - 1) {
-              console.warn(
-                `⚠️ Modelo ${candidateModel} indisponível. Tentando fallback ${index + 1}/${candidateModels.length - 1}.`
-              );
-            }
-          }
-        }
-
-        if (!generatedResponse) {
-          throw (
-            lastProviderError ||
-            new Error('Nenhum modelo de IA respondeu.')
-          );
-        }
-
-        aiResponseText = generatedResponse.text;
-        inputTokens = generatedResponse.inputTokens;
-        outputTokens = generatedResponse.outputTokens;
+      aiResponseText = generatedResponse.text;
+      inputTokens = generatedResponse.inputTokens;
+      outputTokens = generatedResponse.outputTokens;
 
       if (generatedResponse.groundingMetadata) {
         citations.push(

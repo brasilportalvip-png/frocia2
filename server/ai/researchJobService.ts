@@ -11,11 +11,14 @@ import { ConversationContextService } from './conversationContextService.js';
 import { CostService } from './costService.js';
 import { ExecutionTraceService } from './executionTraceService.js';
 import {
+  configuredGeminiFailoverChain,
+  GeminiFailoverService,
+} from './geminiFailoverService.js';
+import {
   decryptPersonalMemory,
   encryptPersonalMemory,
 } from './memoryCryptoService.js';
 import {
-  GeminiProvider,
   GeminiProviderError,
 } from './providers/geminiProvider.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
@@ -123,6 +126,8 @@ interface StoredResearchJob {
   idempotencyKey: string;
   provider: 'gemini';
   model: string;
+  attemptedModels: string[];
+  fallbackUsed: boolean;
   status: ResearchJobStatus;
   sensitivity: RequestSensitivity;
   promptCiphertext: string;
@@ -452,6 +457,10 @@ function publicProviderError(error: unknown): { code: string; message: string } 
   };
 }
 
+function mergedAttempts(job: StoredResearchJob, current: string[]): string[] {
+  return [...new Set([...(job.attemptedModels || []), ...current])];
+}
+
 export class ResearchJobService {
   static isConfigured(): boolean {
     return Boolean(adminDb && env.GEMINI_API_KEY?.trim());
@@ -501,8 +510,10 @@ export class ResearchJobService {
         projectId: input.projectId || null,
         mode: 'research',
         selectedModel: env.GEMINI_REASONING_MODEL,
-        fallbackModels: [env.GEMINI_DEFAULT_MODEL],
-        attemptedModels: [env.GEMINI_REASONING_MODEL],
+        fallbackModels: configuredGeminiFailoverChain(
+          env.GEMINI_REASONING_MODEL
+        ).slice(1),
+        attemptedModels: [],
         status: 'running',
         promptVersion: 'research-agent-gemini-v2',
         inputTokens: null,
@@ -556,6 +567,8 @@ export class ResearchJobService {
         idempotencyKey: input.idempotencyKey,
         provider: 'gemini',
         model: env.GEMINI_REASONING_MODEL,
+        attemptedModels: [],
+        fallbackUsed: false,
         status: 'queued',
         sensitivity: input.sensitivity,
         promptCiphertext: encryptedPrompt.contentCiphertext,
@@ -695,7 +708,7 @@ export class ResearchJobService {
     job: StoredResearchJob
   ): Promise<ResearchJobView> {
     const payload = decodePayload(job);
-    const response = await GeminiProvider.generate({
+    const generation = await GeminiFailoverService.generate({
       model: job.model,
       systemInstruction: planningInstructions(),
       userMessage: [
@@ -711,10 +724,14 @@ export class ResearchJobService {
       timeoutMs: 55_000,
       maxRetries: 1,
     });
+    const response = generation.response;
     const plan = parseResearchPlan(response.text, payload.prompt);
     await this.commitClaimedStep(ref, token, {
       status: 'in_progress',
       plan,
+      model: generation.model,
+      attemptedModels: mergedAttempts(job, generation.attemptedModels),
+      fallbackUsed: job.fallbackUsed || generation.fallbackUsed,
       inputTokens: (job.inputTokens || 0) + response.inputTokens,
       outputTokens: (job.outputTokens || 0) + response.outputTokens,
       actions: [
@@ -736,7 +753,7 @@ export class ResearchJobService {
       return this.latestView(ref);
     }
     const payload = decodePayload(job);
-    const response = await GeminiProvider.generate({
+    const generation = await GeminiFailoverService.generate({
       model: job.model,
       systemInstruction: findingInstructions(),
       userMessage: [
@@ -753,6 +770,7 @@ export class ResearchJobService {
       timeoutMs: 75_000,
       maxRetries: 1,
     });
+    const response = generation.response;
     const extracted = CitationService.extractSearchGroundingCitations(
       response.groundingMetadata
     );
@@ -787,6 +805,9 @@ export class ResearchJobService {
       status:
         findings.length >= job.plan.length ? 'finalizing' : 'in_progress',
       findings,
+      model: generation.model,
+      attemptedModels: mergedAttempts(job, generation.attemptedModels),
+      fallbackUsed: job.fallbackUsed || generation.fallbackUsed,
       citations: CitationService.mergeCitations(
         job.citations || [],
         ...findings.map((item) => item.citations)
@@ -822,7 +843,7 @@ export class ResearchJobService {
       )
       .join('\n\n')
       .slice(0, 80_000);
-    const response = await GeminiProvider.generate({
+    const generation = await GeminiFailoverService.generate({
       model: job.model,
       systemInstruction: providerInstructions(),
       userMessage: [
@@ -842,6 +863,7 @@ export class ResearchJobService {
       timeoutMs: 75_000,
       maxRetries: 1,
     });
+    const response = generation.response;
     const cited = attachCitationMarkers(response.text, citations);
     const evidence = ResearchEvidenceService.finalize({
       text: response.text,
@@ -870,7 +892,7 @@ export class ResearchJobService {
     const consumedCredits = Math.min(
       CostService.getModeCreditRange('research')?.maximum || 18,
       CostService.calculateCreditCost(
-        job.model,
+        generation.model,
         totalInputTokens,
         totalOutputTokens,
         true,
@@ -912,7 +934,7 @@ export class ResearchJobService {
           content: text,
           citations: cited,
           executionId: job.executionId,
-          model: job.model,
+          model: generation.model,
           researchQuality: quality,
           createdAt: FieldValue.serverTimestamp(),
         },
@@ -928,7 +950,7 @@ export class ResearchJobService {
 
     const result: ResearchJobResult = {
       text,
-      modelUsed: job.model,
+      modelUsed: generation.model,
       executionId: job.executionId,
       consumedCredits,
       citations: cited,
@@ -941,6 +963,9 @@ export class ResearchJobService {
       status: 'completed',
       citations: cited,
       result,
+      model: generation.model,
+      attemptedModels: mergedAttempts(job, generation.attemptedModels),
+      fallbackUsed: job.fallbackUsed || generation.fallbackUsed,
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
       completedAt: FieldValue.serverTimestamp(),
@@ -955,7 +980,8 @@ export class ResearchJobService {
       sourceCount: evidence.sourceCount,
       sourceDomains: evidence.sourceDomains,
       researchEvidenceStatus: evidence.researchStatus,
-      attemptedModels: [job.model],
+      attemptedModels: mergedAttempts(job, generation.attemptedModels),
+      fallbackUsed: job.fallbackUsed || generation.fallbackUsed,
       completedAt: new Date().toISOString(),
     });
     await recordOperationalEventBestEffort({
@@ -972,7 +998,7 @@ export class ResearchJobService {
       outputTokens: totalOutputTokens,
       costCredits: consumedCredits,
       attempts: Math.max(1, job.plan.length + 2),
-      model: job.model,
+      model: generation.model,
     });
     return this.latestView(ref);
   }

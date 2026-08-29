@@ -3,6 +3,7 @@ import { ModelRegistry } from './modelRegistry.js';
 import { ModelHealthService } from './modelHealthService.js';
 import { CostService } from './costService.js';
 import { RouterInput, RouterResult, AIMode } from './types/ai.js';
+import { configuredGeminiFailoverChain } from './geminiFailoverService.js';
 
 export class AIRouter {
   static route(input: RouterInput): RouterResult {
@@ -111,7 +112,10 @@ export class AIRouter {
     }
 
     // Deduplicate fallback list excluding selected model
-    fallbackModels = Array.from(new Set(fallbackModels)).filter((m) => m !== selectedModel);
+    fallbackModels = configuredGeminiFailoverChain(
+      selectedModel,
+      fallbackModels
+    ).filter((model) => model !== selectedModel);
 
     const estimatedCredits = CostService.estimateReservationCeiling(
   selectedModel,
