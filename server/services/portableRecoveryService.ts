@@ -256,6 +256,12 @@ function payloadForChecksum(
   };
 }
 
+export function computePortableBackupChecksum(
+  envelope: Pick<PortableBackupEnvelope, 'manifest' | 'data'>
+): string {
+  return sha256(stableStringify(payloadForChecksum(envelope)));
+}
+
 async function audit(input: {
   action: 'backup_created' | 'backup_validated' | 'restore_completed';
   actorUid: string;
@@ -361,9 +367,7 @@ export class PortableRecoveryService {
     };
 
     const envelope: PortableBackupEnvelope = { manifest, data };
-    envelope.manifest.checksum = sha256(
-      stableStringify(payloadForChecksum(envelope))
-    );
+    envelope.manifest.checksum = computePortableBackupChecksum(envelope);
 
     const serializedBytes = Buffer.byteLength(
       JSON.stringify(envelope),
@@ -477,14 +481,10 @@ export class PortableRecoveryService {
     }
 
     if (manifest && envelope.data && errors.length === 0) {
-      const expectedChecksum = sha256(
-        stableStringify(
-          payloadForChecksum({
-            manifest,
-            data: envelope.data
-          } as PortableBackupEnvelope)
-        )
-      );
+      const expectedChecksum = computePortableBackupChecksum({
+        manifest,
+        data: envelope.data
+      } as PortableBackupEnvelope);
 
       if (expectedChecksum !== manifest.checksum) {
         errors.push(

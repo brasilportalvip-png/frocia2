@@ -1405,9 +1405,11 @@ try {
     });
 
     // Frontend local. Na Vercel, esta aplicação atende somente as rotas /api.
+    const serveBuiltFrontend = process.env.E2E_SERVE_DIST === 'true';
     if (
   process.env.NODE_ENV !== 'production' &&
   process.env.NODE_ENV !== 'test' &&
+  !serveBuiltFrontend &&
   !process.env.VERCEL
 ) {
     const require = createRequire(import.meta.url);
@@ -1422,7 +1424,7 @@ try {
     });
     app.use(vite.middlewares);
   } else if (
-  process.env.NODE_ENV !== 'test' &&
+  (process.env.NODE_ENV !== 'test' || serveBuiltFrontend) &&
   !process.env.VERCEL
 ) {
     const distPath = path.join(process.cwd(), 'dist');

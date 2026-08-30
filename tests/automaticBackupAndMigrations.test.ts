@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   decryptAutomaticBackup,
   encryptAutomaticBackup,
+  inspectAutomaticBackupPayload,
   selectExpiredBackupNames,
 } from '../server/services/automaticBackupService.js';
 import {
@@ -9,7 +11,10 @@ import {
   MigrationDefinition,
   validateMigrationCatalog,
 } from '../server/migrations/migrationCatalog.js';
-import { PortableBackupEnvelope } from '../server/services/portableRecoveryService.js';
+import {
+  computePortableBackupChecksum,
+  PortableBackupEnvelope,
+} from '../server/services/portableRecoveryService.js';
 import { EnvSchema } from '../server/config/env.js';
 
 const productionEnvFixture = {
@@ -24,7 +29,7 @@ const productionEnvFixture = {
 };
 
 function backupFixture(): PortableBackupEnvelope {
-  return {
+  const backup: PortableBackupEnvelope = {
     manifest: {
       format: 'froc-portable-backup-v1',
       backupId: 'froc-backup-e2e',
@@ -37,12 +42,14 @@ function backupFixture(): PortableBackupEnvelope {
       collections: { users: 1 },
       limitations: [],
       checksumAlgorithm: 'sha256',
-      checksum: 'a'.repeat(64),
+      checksum: '',
     },
     data: {
       users: [{ id: 'user-1', data: { email: 'encrypted@example.com' } }],
     },
   };
+  backup.manifest.checksum = computePortableBackupChecksum(backup);
+  return backup;
 }
 
 describe('Backup automático e migrations versionadas', () => {
@@ -98,6 +105,49 @@ describe('Backup automático e migrations versionadas', () => {
         'segredo-de-backup-com-mais-de-32-caracteres-2026'
       )
     ).rejects.toThrow('automatic_backup_authentication_failed');
+  });
+
+  it('executa a inspeção usada no drill e confirma projeto e dois checksums', async () => {
+    const secret = 'segredo-de-backup-com-mais-de-32-caracteres-2026';
+    const original = backupFixture();
+    const encrypted = await encryptAutomaticBackup(original, secret);
+    const encryptedSha256 = createHash('sha256')
+      .update(encrypted.payload)
+      .digest('hex');
+
+    const inspection = await inspectAutomaticBackupPayload({
+      payload: encrypted.payload,
+      secret,
+      expectedProjectId: 'frocia-e07a5',
+      expectedPlaintextSha256: encrypted.plaintextSha256,
+      expectedEncryptedSha256: encryptedSha256,
+    });
+
+    expect(inspection.backup).toEqual(original);
+    expect(inspection.plaintextSha256).toBe(encrypted.plaintextSha256);
+    expect(inspection.encryptedSha256).toBe(encryptedSha256);
+  });
+
+  it('interrompe o drill quando o hash criptografado ou o projeto divergem', async () => {
+    const secret = 'segredo-de-backup-com-mais-de-32-caracteres-2026';
+    const encrypted = await encryptAutomaticBackup(backupFixture(), secret);
+
+    await expect(
+      inspectAutomaticBackupPayload({
+        payload: encrypted.payload,
+        secret,
+        expectedProjectId: 'frocia-e07a5',
+        expectedEncryptedSha256: '0'.repeat(64),
+      })
+    ).rejects.toThrow('automatic_backup_encrypted_checksum_mismatch');
+
+    await expect(
+      inspectAutomaticBackupPayload({
+        payload: encrypted.payload,
+        secret,
+        expectedProjectId: 'outro-projeto',
+      })
+    ).rejects.toThrow('automatic_backup_payload_invalid');
   });
 
   it('retém pelo menos três cópias e remove somente objetos antigos do prefixo oficial', () => {

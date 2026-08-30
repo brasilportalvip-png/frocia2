@@ -36,6 +36,27 @@ export interface AutomaticBackupResult {
   createdAt: string;
 }
 
+export interface AutomaticBackupInspection {
+  backup: PortableBackupEnvelope;
+  plaintextSha256: string;
+  encryptedSha256: string;
+}
+
+export interface AutomaticBackupDrillResult {
+  backupId: string;
+  objectName: string;
+  bucket: string;
+  documentCount: number;
+  collectionCount: number;
+  plaintextSha256: string;
+  encryptedSha256: string;
+  encryptedBytes: number;
+  verified: true;
+  dryRun: true;
+  startedAt: string;
+  completedAt: string;
+}
+
 function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -109,6 +130,45 @@ export async function decryptAutomaticBackup(
   }
 }
 
+export async function inspectAutomaticBackupPayload(input: {
+  payload: Buffer;
+  secret: string;
+  expectedProjectId: string;
+  expectedPlaintextSha256?: string;
+  expectedEncryptedSha256?: string;
+}): Promise<AutomaticBackupInspection> {
+  const encryptedSha256 = sha256(input.payload);
+  if (
+    input.expectedEncryptedSha256 &&
+    encryptedSha256 !== input.expectedEncryptedSha256
+  ) {
+    throw new Error('automatic_backup_encrypted_checksum_mismatch');
+  }
+
+  const backup = await decryptAutomaticBackup(input.payload, input.secret);
+  const validation = PortableRecoveryService.validateBackup(
+    backup,
+    input.expectedProjectId
+  );
+  if (!validation.valid) {
+    throw new Error(
+      `automatic_backup_payload_invalid:${validation.errors.join(' | ')}`
+    );
+  }
+
+  const plaintextSha256 = sha256(
+    Buffer.from(JSON.stringify(backup), 'utf8')
+  );
+  if (
+    input.expectedPlaintextSha256 &&
+    plaintextSha256 !== input.expectedPlaintextSha256
+  ) {
+    throw new Error('automatic_backup_plaintext_checksum_mismatch');
+  }
+
+  return { backup, plaintextSha256, encryptedSha256 };
+}
+
 export function selectExpiredBackupNames(
   objects: Array<{ name: string; createdAt: string }>,
   now: Date,
@@ -163,18 +223,13 @@ export class AutomaticBackupService {
   ): Promise<boolean> {
     const file = this.bucket().file(objectName);
     const [downloaded] = await file.download();
-    const decoded = await decryptAutomaticBackup(
-      downloaded,
-      env.BACKUP_ENCRYPTION_KEY!
-    );
-    const validation = PortableRecoveryService.validateBackup(
-      decoded,
-      expectedProjectId
-    );
-    const decodedHash = sha256(
-      Buffer.from(JSON.stringify(decoded), 'utf8')
-    );
-    return validation.valid && decodedHash === expectedPlaintextSha256;
+    await inspectAutomaticBackupPayload({
+      payload: downloaded,
+      secret: env.BACKUP_ENCRYPTION_KEY!,
+      expectedProjectId,
+      expectedPlaintextSha256,
+    });
+    return true;
   }
 
   private static async pruneExpired(now: Date): Promise<number> {
@@ -266,5 +321,97 @@ export class AutomaticBackupService {
       status: 'verified',
     });
     return result;
+  }
+
+  static async drillLatest(
+    actorUid = 'recovery-drill'
+  ): Promise<AutomaticBackupDrillResult> {
+    const projectId = String(env.FIREBASE_PROJECT_ID || '').trim();
+    if (!projectId) throw new Error('automatic_backup_project_id_missing');
+    if (!this.isConfigured()) throw new Error('automatic_backup_not_configured');
+
+    const startedAt = new Date().toISOString();
+    const bucket = this.bucket();
+    const [files] = await bucket.getFiles({ prefix: BACKUP_PREFIX });
+    const candidates: Array<{
+      file: (typeof files)[number];
+      createdAt: string;
+      backupId: string;
+      plaintextSha256: string;
+      encryptedSha256: string;
+    }> = [];
+
+    for (const file of files) {
+      const [metadata] = await file.getMetadata();
+      if (metadata.metadata?.frocBackupFormat !== FILE_FORMAT) continue;
+      const createdAt = String(
+        metadata.metadata?.createdAt || metadata.timeCreated || ''
+      );
+      const backupId = String(metadata.metadata?.backupId || '');
+      const plaintextSha256 = String(
+        metadata.metadata?.plaintextSha256 || ''
+      );
+      const encryptedSha256 = String(
+        metadata.metadata?.encryptedSha256 || ''
+      );
+      if (
+        !Number.isFinite(Date.parse(createdAt)) ||
+        !backupId ||
+        !/^[a-f0-9]{64}$/.test(plaintextSha256) ||
+        !/^[a-f0-9]{64}$/.test(encryptedSha256)
+      ) {
+        continue;
+      }
+      candidates.push({
+        file,
+        createdAt,
+        backupId,
+        plaintextSha256,
+        encryptedSha256,
+      });
+    }
+
+    const latest = candidates.sort(
+      (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)
+    )[0];
+    if (!latest) throw new Error('automatic_backup_verified_object_not_found');
+
+    const [payload] = await latest.file.download();
+    const inspection = await inspectAutomaticBackupPayload({
+      payload,
+      secret: env.BACKUP_ENCRYPTION_KEY!,
+      expectedProjectId: projectId,
+      expectedPlaintextSha256: latest.plaintextSha256,
+      expectedEncryptedSha256: latest.encryptedSha256,
+    });
+    const restore = await PortableRecoveryService.restoreBackup({
+      backup: inspection.backup,
+      actorUid,
+      projectId,
+      dryRun: true,
+    });
+
+    if (
+      restore.documentsProcessed !==
+        inspection.backup.manifest.documentCount ||
+      restore.backupId !== latest.backupId
+    ) {
+      throw new Error('automatic_backup_restore_drill_mismatch');
+    }
+
+    return {
+      backupId: restore.backupId,
+      objectName: latest.file.name,
+      bucket: env.FIREBASE_STORAGE_BUCKET!,
+      documentCount: restore.documentsProcessed,
+      collectionCount: restore.collectionsProcessed,
+      plaintextSha256: inspection.plaintextSha256,
+      encryptedSha256: inspection.encryptedSha256,
+      encryptedBytes: payload.length,
+      verified: true,
+      dryRun: true,
+      startedAt,
+      completedAt: restore.completedAt,
+    };
   }
 }

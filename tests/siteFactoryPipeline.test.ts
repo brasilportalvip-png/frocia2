@@ -17,6 +17,7 @@ import {
   SiteQualityGateError,
   SiteQualityGateService,
 } from '../server/siteFactory/siteQualityGateService.js';
+import { buildSiteBrowserTestPlan } from '../server/siteFactory/siteBrowserTestPlanService.js';
 
 const scope = {
   projectId: 'project-site-factory',
@@ -147,6 +148,22 @@ function createSpecificationService() {
     () => new Date(`2026-08-27T10:00:0${counter++}.000Z`),
     () => 'specification-id'
   );
+}
+
+async function createApprovedSpecification(
+  overrides: Partial<SiteSpecificationInput> = {}
+) {
+  const service = createSpecificationService();
+  await service.create({
+    scope,
+    specification: validSpecification(overrides),
+    actorUserId: scope.ownerUserId,
+  });
+  return service.approve({
+    scope,
+    expectedVersion: 1,
+    actorUserId: scope.ownerUserId,
+  });
 }
 
 describe('Versioned site engineering specification', () => {
@@ -553,5 +570,91 @@ describe('Site quality gates and honest readiness', () => {
       gate: 'preview-deployment',
       code: 'VERCEL_CREDENTIAL_MISSING',
     });
+  });
+});
+
+describe('Deterministic browser acceptance plan', () => {
+  it('covers universal, authenticated, multi-tenant, admin and upload flows', async () => {
+    const specification = await createApprovedSpecification();
+    const plan = buildSiteBrowserTestPlan(specification);
+    const keys = plan.scenarios.map((scenario) => scenario.key);
+
+    expect(keys).toEqual([...keys].sort());
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'direct-routes',
+        'navigation',
+        'refresh',
+        'responsive-layout',
+        'keyboard-navigation',
+        'screen-reader',
+        'reduced-motion',
+        'console-errors',
+        'network-failures',
+        'http-status',
+        'visual-errors',
+        'persistence',
+        'broken-links',
+        'public-url-smoke',
+        'registration',
+        'login',
+        'logout',
+        'password-recovery',
+        'expired-session',
+        'company-switch',
+        'admin-panel',
+        'uploads',
+      ])
+    );
+    expect(plan.requiredScenarioCount).toBe(plan.scenarios.length);
+    expect(plan.scenarios.every((scenario) => scenario.required)).toBe(true);
+  });
+
+  it('adds payment sandbox scenarios only when the approved specification requires them', async () => {
+    const specification = await createApprovedSpecification({
+      productType: 'payments',
+      requestedArchitectureId: 'official-commerce-v1',
+      payments: {
+        required: true,
+        provider: 'mercado-pago',
+        sandboxRequired: true,
+        products: ['Plano Pro'],
+      },
+    });
+    const plan = buildSiteBrowserTestPlan(specification);
+    const keys = plan.scenarios.map((scenario) => scenario.key);
+
+    expect(keys).toEqual(
+      expect.arrayContaining(['subscription', 'payment-sandbox', 'cancellation'])
+    );
+    expect(
+      plan.scenarios
+        .filter((scenario) =>
+          ['subscription', 'payment-sandbox', 'cancellation'].includes(
+            scenario.key
+          )
+        )
+        .every((scenario) => scenario.externalDependency)
+    ).toBe(true);
+  });
+
+  it('is deterministic and makes every scenario gate mandatory for readiness', async () => {
+    const specification = await createApprovedSpecification();
+    const first = buildSiteBrowserTestPlan(specification);
+    const replay = buildSiteBrowserTestPlan(structuredClone(specification));
+    expect(replay).toEqual(first);
+
+    const quality = new SiteQualityGateService(
+      new InMemorySiteQualityPlanRepository()
+    );
+    const qualityPlan = await quality.createPlan({
+      scope,
+      specification,
+      actorUserId: scope.ownerUserId,
+    });
+    const requiredGates = new Set(qualityPlan.gates.map((gate) => gate.key));
+    expect(
+      first.scenarios.every((scenario) => requiredGates.has(scenario.gate))
+    ).toBe(true);
   });
 });

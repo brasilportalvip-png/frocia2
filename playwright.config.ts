@@ -37,7 +37,7 @@ export default defineConfig({
   webServer: externalBaseUrl
     ? undefined
     : {
-        command: 'npm run dev',
+        command: 'npm run build && npm run start',
         url: `${localBaseUrl}/api/live`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
@@ -47,7 +47,7 @@ export default defineConfig({
           ...process.env,
           NODE_ENV: 'development',
           PORT: '4173',
-          DISABLE_HMR: 'true',
+          E2E_SERVE_DIST: 'true',
         },
       },
 });

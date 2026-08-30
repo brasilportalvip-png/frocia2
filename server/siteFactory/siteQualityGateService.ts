@@ -12,6 +12,7 @@ import {
   SiteScope,
   SiteSpecificationVersion,
 } from './siteSpecificationService.js';
+import { buildSiteBrowserTestPlan } from './siteBrowserTestPlanService.js';
 
 export type SiteQualityGateStatus =
   | 'pending'
@@ -388,6 +389,9 @@ export class SiteQualityGateService {
       ...new Set<SiteQualityGateKey>([
         ...architecture.requiredGates,
         ...criteriaByGate.keys(),
+        ...buildSiteBrowserTestPlan(input.specification).scenarios.map(
+          (scenario) => scenario.gate
+        ),
       ]),
     ];
     const gates = requiredGates.map((key) => {

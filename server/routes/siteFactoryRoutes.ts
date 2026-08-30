@@ -19,6 +19,7 @@ import {
   getSiteQualityGateService,
   getSiteSpecificationService,
 } from '../siteFactory/siteFactoryRuntime.js';
+import { buildSiteBrowserTestPlan } from '../siteFactory/siteBrowserTestPlanService.js';
 
 export const siteFactoryRouter = Router();
 
@@ -308,6 +309,31 @@ siteFactoryRouter.get(
     try {
       const qualityPlan = await getSiteQualityGateService().getPlan(getReviewScope(req));
       return res.json({ qualityPlan, correlationId: req.correlationId });
+    } catch (error) {
+      return sendRouteError(error, req, res);
+    }
+  }
+);
+
+siteFactoryRouter.get(
+  '/projects/:projectId/browser-test-plan',
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const specification = await getSiteSpecificationService().getCurrent(
+        getReviewScope(req)
+      );
+      if (specification.status !== 'approved') {
+        throw new SiteQualityGateError(
+          'specification_not_approved',
+          'A especificação precisa estar aprovada para gerar o plano de navegador.',
+          409
+        );
+      }
+      const browserTestPlan = buildSiteBrowserTestPlan(specification);
+      return res.json({
+        browserTestPlan,
+        correlationId: req.correlationId,
+      });
     } catch (error) {
       return sendRouteError(error, req, res);
     }

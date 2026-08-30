@@ -66,3 +66,19 @@ O backup automático somente ficará operacional depois de configurar no Vercel:
 - opcionalmente `BACKUP_RETENTION_DAYS`, padrão 30.
 
 A migration versão 1 está implementada e testada, mas ainda precisa ser aplicada primeiro no Preview e depois em produção pela rota interna protegida. Staging, execução E2E no CI e auditoria independente continuam pendentes; nenhum desses gates é chamado de `VERIFIED` nesta evidência.
+
+## Evidência real após o merge — 2026-08-30
+
+- PR #13 integrado na `main` pelo merge `3438fd8271799f11aad4d24bee3e9f0f0e1542a5`;
+- workflow do PR, execução `33267490487`, concluído com sucesso após os hotfixes de inicialização pública e configuração opcional do backup;
+- Preview Vercel `frocia2-git-feat-prompt-m-512448-brasilportalvip-4274s-projects.vercel.app` retornou `live` e `ready` e declarou `automaticBackupConfigured: true`;
+- produção `https://frocia2.vercel.app/api/ready` retornou `ready`, Firestore acessível e backup automático configurado;
+- catálogo de migrations íntegro, sem checksum divergente; migration `20260829_001_database_schema_baseline` aplicada em produção, elevando `currentVersion` de 0 para 1, com `pending: []`;
+- bucket `frocia-e07a5.firebasestorage.app` provisionado no Firebase Storage;
+- primeiro backup real `froc-backup-2026-08-30T07-36-11-570Z` exportou 409 documentos de 29 coleções;
+- objeto criptografado `frocia-automatic-backups/2026/08/30/froc-backup-2026-08-30T07-36-11-570Z.froc.enc`, com 508745 bytes, foi gravado, baixado novamente, autenticado, descriptografado e validado;
+- SHA-256 do conteúdo: `14b724c405eb2481424d4f3194ce692d715e7014383bee748c90401a409d3073`;
+- SHA-256 do objeto criptografado: `83c6938a93e78a4e4ae858dd8aa0a9b5978d9e2a061d042cbc922fb13f4ab82c`;
+- recibo retornou `status: verified`, `verified: true` e correlação `30ff01c4-3a5c-4683-8462-5878e0c344e6`.
+
+Esses resultados retiram os bloqueadores de staging, migrations e configuração do backup. Eles permanecem `FIXED_NOT_VERIFIED`, não `VERIFIED`, porque não existe revisor independente registrado. O exercício de restauração continua pendente e mantém o requisito amplo de recuperação em andamento.
