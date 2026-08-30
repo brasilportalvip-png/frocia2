@@ -95,6 +95,48 @@ internalRouter.get('/backups/run', requireCronSecret, async (req: AuthenticatedR
   }
 });
 
+/**
+ * Downloads the newest encrypted backup, verifies both checksums, decrypts it
+ * and runs the full restore validator without writing restored documents.
+ */
+internalRouter.post(
+  '/backups/drill',
+  requireCronSecret,
+  async (req: AuthenticatedRequest, res) => {
+    if (!AutomaticBackupService.isConfigured()) {
+      return res.status(503).json({
+        error: {
+          code: 'automatic_backup_not_configured',
+          message:
+            'Configure o backup automático antes de executar o exercício de recuperação.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+
+    try {
+      const result = await AutomaticBackupService.drillLatest(
+        'release-operator'
+      );
+      return res.json({
+        status: 'verified',
+        result,
+        correlationId: req.correlationId,
+      });
+    } catch (error) {
+      console.error('Falha no exercício seguro de recuperação:', error);
+      return res.status(500).json({
+        error: {
+          code: 'automatic_backup_drill_failed',
+          message:
+            'O backup mais recente não passou pelo exercício seguro de recuperação.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+  }
+);
+
 internalRouter.get('/migrations/status', requireCronSecret, async (req: AuthenticatedRequest, res) => {
   if (!isFirebaseAdminConfigured()) {
     return res.status(503).json({
