@@ -43,7 +43,7 @@ test.describe('Gates públicos da Froc.IA', () => {
 
     await dialog.getByRole('button', { name: 'Cadastre-se grátis' }).click();
     await email.fill('cadastro-e2e@example.com');
-    await dialog.getByLabel('Senha').fill('Senha1!');
+    await dialog.locator('#auth-password').fill('Senha1!');
     await dialog.getByRole('button', { name: 'Criar Minha Conta Grátis' }).click();
     await expect(dialog.getByRole('alert')).toContainText(
       'Por favor, informe seu nome.'
