@@ -36,6 +36,19 @@ const ALLOWED_MIME_TYPES = new Set([
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_FILENAME_PATTERN = /^[^\\/:*?"<>|\0]+$/;
+const DANGEROUS_EXTENSIONS = new Set([
+  'exe', 'dll', 'com', 'scr', 'msi', 'bat', 'cmd', 'jar', 'apk', 'app',
+  'dmg', 'iso', 'so', 'dylib'
+]);
+
+function extensionOf(filename: string): string {
+  const dot = filename.toLowerCase().lastIndexOf('.');
+  return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : '';
+}
+
+function startsWithBytes(value: Buffer, signature: number[]): boolean {
+  return signature.every((byte, index) => value[index] === byte);
+}
 
 const attachmentSchema = z
   .object({
@@ -109,6 +122,63 @@ const attachmentSchema = z
         code: z.ZodIssueCode.custom,
         path: ['data'],
         message: 'O Base64 informado é inválido.'
+      });
+    }
+
+    const extension = extensionOf(attachment.name);
+    if (DANGEROUS_EXTENSIONS.has(extension)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['name'],
+        message: 'Arquivos executáveis não são aceitos como anexos da IA.'
+      });
+    }
+
+    if (attachment.mimeType.startsWith('text/')) {
+      try {
+        const decodedText = new TextDecoder('utf-8', { fatal: true }).decode(decoded);
+        if (decodedText.includes('\0')) {
+          throw new Error('binary_text');
+        }
+      } catch {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['data'],
+          message: 'O anexo textual não contém UTF-8 válido.'
+        });
+      }
+    }
+    if (
+      attachment.mimeType === 'application/pdf' &&
+      !startsWithBytes(decoded, [0x25, 0x50, 0x44, 0x46, 0x2d])
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['data'],
+        message: 'O conteúdo não possui uma assinatura PDF válida.'
+      });
+    }
+
+    if (
+      extension === 'pdf' &&
+      attachment.mimeType !== 'application/pdf'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mimeType'],
+        message: 'A extensão PDF não corresponde ao MIME informado.'
+      });
+    }
+
+    if (
+      (extension === 'doc' || extension === 'docx' ||
+        extension === 'xls' || extension === 'xlsx')
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['name'],
+        message:
+          'Documentos Office devem ser extraídos com segurança para texto antes do envio.'
       });
     }
 

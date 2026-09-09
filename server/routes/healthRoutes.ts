@@ -7,6 +7,40 @@ import { requireAdmin } from '../middlewares/requireAdmin.js';
 import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
 import { SocialSearchService } from '../ai/socialSearchService.js';
 import { AutomaticBackupService } from '../services/automaticBackupService.js';
+import { MigrationService } from '../migrations/migrationService.js';
+
+export interface RequiredReadinessChecks {
+  firebaseAdminConfigured: boolean;
+  firestoreReachable: boolean;
+  geminiConfigured: boolean;
+  mercadoPagoConfigured: boolean;
+  internalMaintenanceConfigured: boolean;
+  automaticBackupConfigured: boolean;
+  migrationsCurrent: boolean;
+}
+
+export function evaluateRequiredReadiness(
+  checks: RequiredReadinessChecks
+): boolean {
+  return Object.values(checks).every(Boolean);
+}
+
+async function withReadinessTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('readiness_dependency_timeout')),
+          3000
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export const healthRouter = Router();
 
@@ -33,34 +67,47 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
     .map((capability) => capability.platform);
 
   let firestoreReachable = false;
+  let migrationsCurrent = false;
   if (authConfigured && adminDb) {
     try {
       const pingDoc = adminDb.collection('_healthcheck').doc('ping');
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 3000)
+      const [, migrationStatus] = await withReadinessTimeout(
+        Promise.all([pingDoc.get(), MigrationService.status()])
       );
-      await Promise.race([pingDoc.get(), timeoutPromise]);
       firestoreReachable = true;
+      migrationsCurrent =
+        migrationStatus.pending.length === 0 &&
+        migrationStatus.checksumMismatches.length === 0 &&
+        migrationStatus.currentVersion === migrationStatus.targetVersion;
     } catch {
       firestoreReachable = false;
+      migrationsCurrent = false;
     }
   }
 
-  const isReady = firestoreReachable && geminiConfigured;
+  const requiredChecks: RequiredReadinessChecks = {
+    firebaseAdminConfigured: authConfigured,
+    firestoreReachable,
+    geminiConfigured,
+    mercadoPagoConfigured: MercadoPagoService.isConfigured(),
+    internalMaintenanceConfigured: Boolean(
+      process.env.INTERNAL_CRON_SECRET?.trim() || process.env.CRON_SECRET?.trim()
+    ),
+    automaticBackupConfigured: AutomaticBackupService.isConfigured(),
+    migrationsCurrent,
+  };
+  const isReady = evaluateRequiredReadiness(requiredChecks);
   const statusCode = isReady ? 200 : 503;
 
   return res.status(statusCode).json({
     status: isReady ? 'ready' : 'not_ready',
     timestamp,
     checks: {
-      firebaseAdminConfigured: authConfigured,
-      firestoreReachable,
-      geminiConfigured,
-      mercadoPagoConfigured: MercadoPagoService.isConfigured(),
+      ...requiredChecks,
       agenticResearchConfigured: geminiConfigured && authConfigured,
       modelFailoverConfigured: geminiFailoverModels.length >= 4,
-      automaticBackupConfigured: AutomaticBackupService.isConfigured(),
     },
+    requiredChecks: Object.keys(requiredChecks),
     evidenceLevel: {
       firebaseAdmin: 'configuration',
       firestore: 'live_read',
@@ -70,6 +117,7 @@ healthRouter.get(['/ready', '/api/ready'], async (req: AuthenticatedRequest, res
       modelFailover: 'configuration_and_automated_tests',
       socialSearch: 'configuration_only',
       automaticBackup: 'configuration_and_automated_crypto_tests',
+      migrations: 'live_ledger_read',
     },
     configuredModels: geminiFailoverModels,
     configuredSocialPlatforms: socialPlatformsConfigured,

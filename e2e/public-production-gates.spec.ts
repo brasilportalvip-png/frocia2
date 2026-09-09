@@ -22,11 +22,12 @@ test.describe('Gates públicos da Froc.IA', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('Acesse seu ecossistema inteligente de criação')).toBeVisible();
+    await expect(dialog.getByLabel('E-mail')).toBeFocused();
 
-    await dialog.getByPlaceholder('seuemail@exemplo.com').fill('e2e@example.com');
-    await dialog.getByPlaceholder('••••••••').fill('123');
+    await dialog.getByLabel('E-mail').fill('e2e@example.com');
+    await dialog.getByLabel('Senha').fill('123');
     await dialog.getByRole('button', { name: 'Entrar na Froc.IA' }).click();
-    await expect(dialog.getByText('A senha deve conter no mínimo 6 caracteres.')).toBeVisible();
+    await expect(dialog.getByRole('alert')).toHaveText('A senha deve conter no mínimo 6 caracteres.');
 
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();

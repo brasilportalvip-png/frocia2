@@ -53,11 +53,16 @@ function normalizedOrigin(value: string): string | null {
 
 export function trustedOrigins(req: AuthenticatedRequest): Set<string> {
   const result = new Set<string>();
-  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const protocol = forwardedProtocol || req.protocol || 'https';
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
-  const currentOrigin = normalizedOrigin(`${protocol}://${host}`);
-  if (currentOrigin) result.add(currentOrigin);
+
+  // Host and X-Forwarded-Host are request-controlled unless every deployment
+  // is behind a trusted proxy. They must not expand the production allowlist.
+  if (process.env.NODE_ENV !== 'production') {
+    const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const protocol = forwardedProtocol || req.protocol || 'https';
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const currentOrigin = normalizedOrigin(`${protocol}://${host}`);
+    if (currentOrigin) result.add(currentOrigin);
+  }
 
   const configured = [process.env.APP_URL, ...(process.env.TRUSTED_ORIGINS || '').split(',')];
   for (const value of configured) {

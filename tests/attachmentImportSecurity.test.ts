@@ -10,6 +10,13 @@ import {
   ZipInspectionError,
   ZipInspectionService
 } from '../src/services/zipInspectionService.js';
+import {
+  prepareNativeFiles,
+  toAIAttachmentPayloads
+} from '../src/services/attachmentService.js';
+
+const XLSX_MIME_FOR_TEST =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function makeTextAttachment(content: string) {
   const bytes = Buffer.from(content, 'utf8');
@@ -68,6 +75,129 @@ describe('Attachment and Import Security Regression', () => {
           { ...attachment, name: 'duplicado.ts' }
         ])
       ).toThrow(InvalidAIAttachmentError);
+    });
+
+    it('rejects a forged PDF even when MIME, size and hash agree', () => {
+      const bytes = Buffer.from('isto nao e um pdf', 'utf8');
+      expect(() => validateAIAttachments([{
+        type: 'document',
+        name: 'relatorio.pdf',
+        mimeType: 'application/pdf',
+        data: bytes.toString('base64'),
+        sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      }])).toThrow(InvalidAIAttachmentError);
+    });
+
+    it('rejects executable content disguised as text', () => {
+      const bytes = Buffer.from('MZ executable payload', 'utf8');
+      expect(() => validateAIAttachments([{
+        type: 'document',
+        name: 'relatorio.exe',
+        mimeType: 'text/plain',
+        data: bytes.toString('base64'),
+        sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      }])).toThrow(InvalidAIAttachmentError);
+    });
+
+    it('rejects binary bytes disguised as UTF-8 text', () => {
+      const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
+      expect(() => validateAIAttachments([{
+        type: 'document',
+        name: 'dados.txt',
+        mimeType: 'text/plain',
+        data: bytes.toString('base64'),
+        sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      }])).toThrow(InvalidAIAttachmentError);
+    });
+
+    it('extracts real DOCX text and sends only inert plain text', async () => {
+      const docx = zipSync({
+        '[Content_Types].xml': strToU8('<Types/>'),
+        'word/document.xml': strToU8(
+          '<w:document><w:body><w:p><w:r><w:t>Contrato &amp; condições</w:t></w:r></w:p><w:p><w:r><w:t>Segunda linha</w:t></w:r></w:p></w:body></w:document>'
+        )
+      });
+      const [prepared] = await prepareNativeFiles([
+        new File([docx], 'contrato.docx', { type: 'application/octet-stream' })
+      ]);
+
+      expect(prepared.name).toBe('contrato.docx.txt');
+      expect(prepared.mime).toBe('text/plain');
+      expect(prepared.contentText).toContain('Contrato & condições');
+      expect(prepared.contentText).toContain('Segunda linha');
+      expect(toAIAttachmentPayloads([prepared])[0]).toMatchObject({
+        name: 'contrato.docx.txt',
+        mimeType: 'text/plain',
+        type: 'document'
+      });
+    });
+
+    it('extracts shared strings and numeric cells from XLSX', async () => {
+      const xlsx = zipSync({
+        '[Content_Types].xml': strToU8('<Types/>'),
+        'xl/sharedStrings.xml': strToU8(
+          '<sst><si><t>Produto</t></si><si><t>Preço</t></si><si><t>Café</t></si></sst>'
+        ),
+        'xl/worksheets/sheet1.xml': strToU8(
+          '<worksheet><sheetData><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row><row><c t="s"><v>2</v></c><c><v>12.50</v></c></row></sheetData></worksheet>'
+        )
+      });
+      const [prepared] = await prepareNativeFiles([
+        new File([xlsx], 'precos.xlsx', { type: XLSX_MIME_FOR_TEST })
+      ]);
+
+      expect(prepared.name).toBe('precos.xlsx.txt');
+      expect(prepared.contentText).toContain('Produto\tPreço');
+      expect(prepared.contentText).toContain('Café\t12.50');
+    });
+
+    it.each(['documento.doc', 'planilha.xls'])(
+      'rejects unsupported legacy Office format %s honestly',
+      async (name) => {
+        await expect(prepareNativeFiles([
+          new File(['legacy'], name, { type: 'application/octet-stream' })
+        ])).rejects.toMatchObject({ code: 'legacy_office_unsupported' });
+      }
+    );
+
+    it('rejects invalid UTF-8 CSV instead of replacing bytes silently', async () => {
+      await expect(prepareNativeFiles([
+        new File([new Uint8Array([0xff, 0xfe, 0xfd])], 'dados.csv', {
+          type: 'text/csv'
+        })
+      ])).rejects.toMatchObject({ code: 'invalid_text_encoding' });
+    });
+
+    it('accepts a structurally identified PDF for native provider analysis', async () => {
+      const [prepared] = await prepareNativeFiles([
+        new File(['%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'], 'scan.pdf', {
+          type: 'application/pdf'
+        })
+      ]);
+      const [payload] = toAIAttachmentPayloads([prepared]);
+      expect(payload).toMatchObject({
+        name: 'scan.pdf',
+        mimeType: 'application/pdf',
+        type: 'document'
+      });
+    });
+
+    it('never drops a ZIP silently from the AI payload', () => {
+      expect(() => toAIAttachmentPayloads([{
+        id: 'zip-1',
+        name: 'projeto.zip',
+        size: 100,
+        type: 'zip',
+        status: 'ready',
+        progress: 100,
+        mime: 'application/zip',
+        contentBase64: 'UEs=',
+        hash: 'a'.repeat(64),
+        source: 'local'
+      }])).toThrowError(/precisa ser inspecionado/);
     });
   });
 
