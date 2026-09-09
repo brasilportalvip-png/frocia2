@@ -61,7 +61,7 @@ jobs:
         run: npm run test:security-release
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run Browser E2E Gates
         run: npm run test:e2e
