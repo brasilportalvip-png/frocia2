@@ -25,7 +25,7 @@ test.describe('Gates públicos da Froc.IA', () => {
     await expect(dialog.getByLabel('E-mail')).toBeFocused();
 
     await dialog.getByLabel('E-mail').fill('e2e@example.com');
-    await dialog.getByLabel('Senha').fill('123');
+    await dialog.getByLabel('Senha', { exact: true }).fill('123');
     await dialog.getByRole('button', { name: 'Entrar na Froc.IA' }).click();
     await expect(dialog.getByRole('alert')).toHaveText('A senha deve conter no mínimo 6 caracteres.');
 
