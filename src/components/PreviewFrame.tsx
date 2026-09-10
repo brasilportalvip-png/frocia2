@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React from 'react';
 import {
   RotateCcw,
   ExternalLink,
@@ -7,6 +7,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { DeviceView, GeneratedSite } from '../types';
+import { SandboxedSiteFrame } from './SandboxedSiteFrame';
 
 interface PreviewFrameProps {
   site: GeneratedSite | null;
@@ -23,15 +24,6 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
   onOpenFullscreen,
   onRefresh
 }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  // Set iframe srcdoc whenever HTML changes
-  useEffect(() => {
-    if (iframeRef.current && site?.html) {
-      iframeRef.current.srcdoc = site.html;
-    }
-  }, [site?.html]);
-
     const openNewTab = () => {
     if (!site?.html) return;
 
@@ -159,12 +151,10 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
             {deviceView !== 'desktop' && (
               <div className="absolute top-2 left-1/2 -translate-x-1/2 w-20 h-3 bg-black/80 rounded-full z-20"></div>
             )}
-            <iframe
-              ref={iframeRef}
-              id="live-preview-iframe"
+            <SandboxedSiteFrame
+              site={site}
               title="froc.ia Live Preview"
               className="w-full h-full border-none bg-white rounded-b-[28px]"
-              sandbox="allow-scripts allow-forms"
             />
           </div>
         ) : (
@@ -195,4 +185,3 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
     </div>
   );
 };
-

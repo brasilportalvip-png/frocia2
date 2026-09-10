@@ -8,6 +8,7 @@ import React, {
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { PreviewFrame } from './components/PreviewFrame';
+import { SandboxedSiteFrame } from './components/SandboxedSiteFrame';
 import { CodeViewer } from './components/CodeViewer';
 
 import { Dashboard } from './components/Dashboard';
@@ -1597,12 +1598,10 @@ const handleGeneralChat = async (
               <span>Sair da Tela Cheia</span>
             </button>
           </div>
-                    <iframe
-            srcDoc={activeSite.html}
+          <SandboxedSiteFrame
+            site={activeSite}
             title="Prévia segura em tela cheia"
             className="w-full flex-1 border-none bg-white"
-            sandbox="allow-scripts allow-forms"
-            referrerPolicy="no-referrer"
           />
         </div>
       )}
