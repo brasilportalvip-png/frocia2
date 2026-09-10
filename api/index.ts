@@ -1,7 +1,9 @@
 import type { Request, Response } from 'express';
 import { getApp } from '../server.js';
 
-export const maxDuration = 60;
+// A geração de projetos completos pode produzir dezenas de milhares de tokens.
+// O limite anterior de 60 s encerrava a função antes de uma resposta válida.
+export const maxDuration = 300;
 
 export default async function handler(
   req: Request,

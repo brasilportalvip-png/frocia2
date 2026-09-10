@@ -24,6 +24,8 @@ const ALLOWED_SITE_MODELS = new Set(
 
 const GENERATE_SITE_CREDIT_COST = 200;
 const REFINE_SITE_CREDIT_COST = 50;
+const SITE_GENERATION_TIMEOUT_MS = 180_000;
+const SITE_FORMAT_REPAIR_TIMEOUT_MS = 90_000;
 
 function cleanMarkdownAndParseJson(rawText: string): any {
   if (!rawText) throw new Error('A IA não retornou conteúdo.');
@@ -278,6 +280,8 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       attachments: providerAttachments,
       responseFormat: 'json',
       temperature: 0.7,
+      timeoutMs: SITE_GENERATION_TIMEOUT_MS,
+      maxRetries: 0,
     });
 
     const rawText = generation.response.text || '';
@@ -293,6 +297,8 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
         systemInstruction,
         responseFormat: 'json',
         temperature: 0.3,
+        timeoutMs: SITE_FORMAT_REPAIR_TIMEOUT_MS,
+        maxRetries: 0,
       });
       parsedData = cleanMarkdownAndParseJson(retryResponse.response.text || '');
     }

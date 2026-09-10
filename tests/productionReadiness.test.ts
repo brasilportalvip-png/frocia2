@@ -53,11 +53,11 @@ describe(
           );
 
         expect(indexApi).toMatch(
-          /export\s+const\s+maxDuration\s*=\s*60/
+          /export\s+const\s+maxDuration\s*=\s*300/
         );
 
         expect(dynamicApi).toMatch(
-          /export\s+const\s+maxDuration\s*=\s*60/
+          /export\s+const\s+maxDuration\s*=\s*300/
         );
       }
     );
