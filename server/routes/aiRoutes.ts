@@ -46,6 +46,10 @@ import {
   ResearchJobNotFoundError,
   ResearchJobService,
 } from '../ai/researchJobService.js';
+import {
+  ExternalImportError,
+  ExternalImportService,
+} from '../services/externalImportService.js';
 
 export const aiRouter = Router();
 
@@ -322,7 +326,7 @@ aiRouter.post(
       conversationId = null,
       projectId = null,
       knowledgeBaseIds = [],
-      attachments = [],
+      attachments: submittedAttachments = [],
       tools = [],
       modelOverride,
       idempotencyKey: providedKey
@@ -346,6 +350,43 @@ aiRouter.post(
 
     const sanitizedPrompt =
       SafetyService.sanitizeInput(prompt);
+
+    let attachments = submittedAttachments;
+    const githubRepositoryUrl =
+      attachments.length === 0
+        ? sanitizedPrompt.match(
+            /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:[/?#][^\s]*)?/i
+          )?.[0]
+        : undefined;
+
+    if (githubRepositoryUrl) {
+      try {
+        const imported = await ExternalImportService.import({
+          type: 'github',
+          url: githubRepositoryUrl,
+        });
+        const bytes = Buffer.from(imported.content, 'utf8');
+        attachments = [
+          {
+            type: 'code',
+            name: 'github-repository.json',
+            mimeType: imported.mimeType,
+            data: bytes.toString('base64'),
+          },
+        ];
+      } catch (error) {
+        if (error instanceof ExternalImportError) {
+          return res.status(error.status).json({
+            error: {
+              code: error.code,
+              message: error.message,
+              correlationId: req.correlationId,
+            },
+          });
+        }
+        throw error;
+      }
+    }
 
     try {
       if (projectId) {

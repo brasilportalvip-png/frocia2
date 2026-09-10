@@ -171,6 +171,24 @@ describe('Attachment and Import Security Regression', () => {
       ])).rejects.toMatchObject({ code: 'invalid_text_encoding' });
     });
 
+    it('preserves valid UTF-8 CSV content as direct model context', async () => {
+      const [prepared] = await prepareNativeFiles([
+        new File([
+          'codigo,produto,preco\nITM-7301,Café especial,48.90\n'
+        ], 'dados.csv', { type: 'text/csv' })
+      ]);
+      const [payload] = toAIAttachmentPayloads([prepared]);
+
+      expect(prepared.contentText).toContain(
+        'ITM-7301,Café especial,48.90'
+      );
+      expect(payload).toMatchObject({
+        name: 'dados.csv',
+        mimeType: 'text/csv',
+        type: 'code'
+      });
+    });
+
     it('accepts a structurally identified PDF for native provider analysis', async () => {
       const [prepared] = await prepareNativeFiles([
         new File(['%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'], 'scan.pdf', {

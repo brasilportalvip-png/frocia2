@@ -1192,11 +1192,28 @@ const handleGeneralChat = async (
     setErrorMsg(null);
   };
 
-  const handleDeleteSite = (siteId: string) => {
-    const updatedList = savedSites.filter(s => s.id !== siteId);
-    saveSitesToStorage(updatedList);
-    if (activeSite?.id === siteId) {
-      setActiveSite(updatedList[0] || null);
+  const handleDeleteSite = async (siteId: string) => {
+    setErrorMsg(null);
+
+    try {
+      await apiClient(`/api/projects/${encodeURIComponent(siteId)}`, {
+        method: 'DELETE'
+      });
+
+      const updatedList = savedSites.filter(
+        (site) => site.id !== siteId
+      );
+      saveSitesToStorage(updatedList);
+
+      if (activeSite?.id === siteId) {
+        setActiveSite(updatedList[0] || null);
+      }
+    } catch (error) {
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível excluir o projeto.'
+      );
     }
   };
 
