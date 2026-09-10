@@ -72,6 +72,18 @@ describe('AI request classification and orchestration', () => {
     );
   });
 
+  it('does not run a site audit after a repository was imported as context', () => {
+    const classification = AIRequestClassifier.classify({
+      mode: 'research',
+      prompt:
+        'Analise somente o repositório https://github.com/openai/example.',
+      hasFiles: true,
+    });
+
+    expect(classification.requiresSearch).toBe(false);
+    expect(classification.siteAuditUrl).toBeNull();
+  });
+
   it('selects site engineering and independent verification for a production site', () => {
     const plan = AIRequestOrchestrator.plan({
       mode: 'site-builder',

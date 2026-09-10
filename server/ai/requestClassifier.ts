@@ -121,23 +121,23 @@ export class AIRequestClassifier {
     ].includes(domain);
     const personalData =
       PERSONAL_DATA_PATTERN.test(prompt);
+    const attachmentOnly =
+      Boolean(input.hasFiles) &&
+      ATTACHMENT_ONLY_PATTERN.test(prompt);
     const socialPlatforms =
       SocialSearchService.extractRequestedPlatforms(
         prompt
       );
     const requiresSocialSearch =
-      SocialSearchService.shouldSearch(
+      !attachmentOnly && SocialSearchService.shouldSearch(
         prompt,
         input.mode
       );
     const requiresSiteAudit =
-      SiteAuditService.shouldAudit(prompt);
+      !attachmentOnly && SiteAuditService.shouldAudit(prompt);
     const siteAuditUrl = requiresSiteAudit
       ? SiteAuditService.extractRequestedUrl(prompt)
       : null;
-    const attachmentOnly =
-      Boolean(input.hasFiles) &&
-      ATTACHMENT_ONLY_PATTERN.test(prompt);
     const requiresSearch =
       !attachmentOnly &&
       (input.mode === 'research' ||
