@@ -83,6 +83,9 @@ const DOMAIN_PATTERNS: Array<{
 const CURRENT_INFORMATION_PATTERN =
   /\b(hoje|agora|atual(?:mente)?|recente|[uú]ltim[oa]s?|not[ií]cia|pre[çc]o|cota[çc][aã]o|agenda|calend[aá]rio|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento)\b/i;
 
+const ATTACHMENT_ONLY_PATTERN =
+  /\b(?:somente|apenas|exclusivamente)\b[\s\S]{0,80}\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b|\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b[\s\S]{0,80}\b(?:somente|apenas|exclusivamente)\b/i;
+
 const COMPLEXITY_PATTERN =
   /\b(arquitetura|auditoria|estrat[eé]gia|compare|implemente|investigue|passo a passo|plano completo|produ[çc][aã]o|multiempresa|migra[çc][aã]o)\b/i;
 
@@ -132,12 +135,16 @@ export class AIRequestClassifier {
     const siteAuditUrl = requiresSiteAudit
       ? SiteAuditService.extractRequestedUrl(prompt)
       : null;
+    const attachmentOnly =
+      Boolean(input.hasFiles) &&
+      ATTACHMENT_ONLY_PATTERN.test(prompt);
     const requiresSearch =
-      input.mode === 'research' ||
-      highStakes ||
-      requiresSocialSearch ||
-      requiresSiteAudit ||
-      CURRENT_INFORMATION_PATTERN.test(prompt);
+      !attachmentOnly &&
+      (input.mode === 'research' ||
+        highStakes ||
+        requiresSocialSearch ||
+        requiresSiteAudit ||
+        CURRENT_INFORMATION_PATTERN.test(prompt));
     const requiresCode =
       input.mode === 'code' ||
       input.mode === 'site-builder' ||
@@ -175,6 +182,10 @@ export class AIRequestClassifier {
 
     if (requiresSearch) {
       reasons.push('current_sources_required');
+    }
+
+    if (attachmentOnly) {
+      reasons.push('attachment_context_only');
     }
 
     if (requiresSocialSearch) {

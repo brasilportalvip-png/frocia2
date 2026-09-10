@@ -51,6 +51,27 @@ describe('AI request classification and orchestration', () => {
     );
   });
 
+  it.each([
+    'Usando somente a planilha Excel anexada, informe o valor atual registrado.',
+    'Analise apenas o CSV anexado e preserve os valores exatamente.',
+    'Use exclusivamente o documento Word anexado e informe a versão.',
+    'Analise somente os arquivos contidos no ZIP anexado.',
+  ])('prioritizes attachment evidence over web research: %s', (prompt) => {
+    const classification = AIRequestClassifier.classify({
+      mode: 'research',
+      prompt,
+      hasFiles: true,
+    });
+
+    expect(classification.requiresSearch).toBe(false);
+    expect(classification.reasons).toContain(
+      'attachment_context_only'
+    );
+    expect(classification.reasons).not.toContain(
+      'current_sources_required'
+    );
+  });
+
   it('selects site engineering and independent verification for a production site', () => {
     const plan = AIRequestOrchestrator.plan({
       mode: 'site-builder',

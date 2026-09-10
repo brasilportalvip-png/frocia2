@@ -27,6 +27,7 @@ import { GeminiFailoverService } from './geminiFailoverService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
+import { ExternalImportService } from '../services/externalImportService.js';
 
 export class AIExecutionService {
   /**
@@ -75,7 +76,7 @@ export class AIExecutionService {
       projectId,
       mode,
       prompt,
-      attachments = [],
+      attachments: submittedAttachments = [],
       systemInstruction,
       responseFormat = 'text',
       idempotencyKey: providedKey,
@@ -90,6 +91,30 @@ export class AIExecutionService {
     }
 
     const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
+
+    let attachments = submittedAttachments;
+    const githubRepositoryUrl =
+      attachments.length === 0
+        ? sanitizedPrompt.match(
+            /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:[/?#][^\s]*)?/i
+          )?.[0]
+        : undefined;
+
+    if (githubRepositoryUrl) {
+      const imported = await ExternalImportService.import({
+        type: 'github',
+        url: githubRepositoryUrl,
+      });
+      attachments = [
+        {
+          type: 'code',
+          name: 'github-repository.json',
+          mimeType: imported.mimeType,
+          data: Buffer.from(imported.content, 'utf8').toString('base64'),
+          url: imported.finalUrl,
+        },
+      ];
+    }
 
     if (projectId) {
       await MemoryService.assertScopeAccess(userId, tenantId, 'project', projectId);

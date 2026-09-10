@@ -225,7 +225,13 @@ describe('Base de Conhecimento e RAG', () => {
     expect(
       result.systemInstruction
     ).toContain(
-      'Nunca revele códigos de homologação'
+      'Nunca revele senhas, tokens, códigos temporários de autenticação'
+    );
+
+    expect(
+      result.systemInstruction
+    ).toContain(
+      'Códigos comuns de pedido, protocolo, homologação, validação ou verificação'
     );
   });
 });
