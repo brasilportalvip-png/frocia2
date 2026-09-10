@@ -63,6 +63,20 @@ function sanitizeStringArray(
   ).slice(0, maxItems);
 }
 
+export function nextPromptVersion(sequence: unknown): {
+  sequence: number;
+  version: string;
+} {
+  const current =
+    typeof sequence === 'number' &&
+    Number.isSafeInteger(sequence) &&
+    sequence >= 0
+      ? sequence
+      : 0;
+  const next = current + 1;
+  return { sequence: next, version: `v1.${next}.0` };
+}
+
 function serializeDocument(
   document: FirebaseFirestore.DocumentSnapshot
 ): Record<string, unknown> & { id: string } {
@@ -509,6 +523,7 @@ adminAiRouter.post(
         agent: agent.trim(),
         mode,
         activeVersionId: '',
+        versionSequence: 0,
         createdAt: now,
         updatedAt: now
       };
@@ -596,47 +611,40 @@ adminAiRouter.post(
         .collection('prompt_definitions')
         .doc(promptId);
 
-      const definitionSnapshot =
-        await definitionRef.get();
-
-      if (!definitionSnapshot.exists) {
-        return res.status(404).json({
-          error: {
-            code: 'prompt_not_found',
-            message: 'Prompt não encontrado.',
-            correlationId: req.correlationId
-          }
-        });
-      }
-
       const now = new Date().toISOString();
       const versionRef = adminDb
         .collection('prompt_versions')
         .doc();
+      let version: Record<string, unknown> | null = null;
 
-      const version = {
-        promptId,
-        version: `v${Date.now()}`,
-        status: 'draft',
-        compatibleModels: sanitizeStringArray(
-          compatibleModels
-        ),
-        content: content.trim(),
-        variables: sanitizeStringArray(variables),
-        authorUid: req.user?.uid ?? 'unknown',
-        evalScore: null,
-        distributionPercentage: 0,
-        createdAt: now
-      };
+      await adminDb.runTransaction(async (transaction) => {
+        const definitionSnapshot = await transaction.get(definitionRef);
+        if (!definitionSnapshot.exists) {
+          throw new Error('prompt_not_found');
+        }
 
-      const batch = adminDb.batch();
+        const next = nextPromptVersion(
+          definitionSnapshot.data()?.versionSequence
+        );
+        version = {
+          promptId,
+          version: next.version,
+          status: 'draft',
+          compatibleModels: sanitizeStringArray(compatibleModels),
+          content: content.trim(),
+          variables: sanitizeStringArray(variables),
+          authorUid: req.user?.uid ?? 'unknown',
+          evalScore: null,
+          distributionPercentage: 0,
+          createdAt: now
+        };
 
-      batch.set(versionRef, version);
-      batch.update(definitionRef, {
-        updatedAt: now
+        transaction.set(versionRef, version);
+        transaction.update(definitionRef, {
+          versionSequence: next.sequence,
+          updatedAt: now
+        });
       });
-
-      await batch.commit();
 
       return res.status(201).json({
         version: {
@@ -645,7 +653,19 @@ adminAiRouter.post(
         },
         correlationId: req.correlationId
       });
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'prompt_not_found'
+      ) {
+        return res.status(404).json({
+          error: {
+            code: 'prompt_not_found',
+            message: 'Prompt não encontrado.',
+            correlationId: req.correlationId
+          }
+        });
+      }
       return res.status(500).json({
         error: {
           code: 'admin_prompt_version_failed',
