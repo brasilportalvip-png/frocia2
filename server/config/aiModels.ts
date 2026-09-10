@@ -55,6 +55,32 @@ const MODEL_DEFINITIONS: AIModelDefinition[] = [
   },
 
   {
+    id: env.GEMINI_FALLBACK_MODEL,
+    provider: 'google',
+    enabled: true,
+    capabilities: {
+      text: true,
+      vision: true,
+      audio: false,
+      video: false,
+      code: true,
+      tools: true,
+      structuredOutput: true,
+      longContext: true,
+      embeddings: false,
+    },
+    priority: 4,
+    timeoutMs: 30000,
+    maxRetries: 1,
+    costProfile: 'Fallback Flash',
+    pricing: {
+      inputTokensPerCredit: 5000,
+      outputTokensPerCredit: 2000,
+      baseCreditCost: 2,
+    },
+  },
+
+  {
     id: env.GEMINI_REASONING_MODEL,
     provider: 'google',
     enabled: true,

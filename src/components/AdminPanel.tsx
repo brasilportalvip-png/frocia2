@@ -35,7 +35,7 @@ interface AdminModelView {
   calls: number;
   averageLatencyMs: number | null;
   errorRate: number | null;
-  status: 'operacional' | 'degradado' | 'historico';
+  status: 'operacional' | 'degradado' | 'sem_dados' | 'historico';
 }
 
 function modelDisplayName(modelId: string): string {
@@ -99,7 +99,13 @@ export function buildAdminModelViews(
       errorRate,
       status: !definition
         ? 'historico'
-        : errorRate !== null && errorRate > 0.1
+        : terminalCount === 0
+          ? 'sem_dados'
+          : (errorRate !== null && errorRate > 0.1) ||
+              (latencySamples.length > 0 &&
+                latencySamples.reduce((total, value) => total + value, 0) /
+                  latencySamples.length >
+                  2_000)
           ? 'degradado'
           : 'operacional',
     };
@@ -408,7 +414,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                           : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
                     }`}>
-                      {m.status.toUpperCase()}
+                      {m.status === 'sem_dados' ? 'SEM DADOS' : m.status.toUpperCase()}
                     </span>
                     <span className="text-xs text-white/50 font-mono">Google Gemini</span>
                   </div>
