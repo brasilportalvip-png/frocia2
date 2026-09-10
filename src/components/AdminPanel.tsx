@@ -13,7 +13,7 @@ import {
   Sliders,
   Loader2
 } from 'lucide-react';
-import { AIModelConfig, AuditLog } from '../types';
+import { AuditLog } from '../types';
 import { PromptRegistryModal } from './PromptRegistryModal';
 import { EvaluationsModal } from './EvaluationsModal';
 import { ExecutionTracesModal } from './ExecutionTracesModal';
@@ -25,6 +25,85 @@ import { apiClient } from '../services/apiClient';
 
 interface AdminPanelProps {
   onGrantCreditsToUser?: (amount: number, userEmail: string) => void;
+}
+
+interface AdminModelView {
+  id: string;
+  name: string;
+  configured: boolean;
+  baseCredits: number | null;
+  calls: number;
+  averageLatencyMs: number | null;
+  errorRate: number | null;
+  status: 'operacional' | 'degradado' | 'historico';
+}
+
+function modelDisplayName(modelId: string): string {
+  return modelId
+    .split('-')
+    .map((part, index) =>
+      index === 0 && part.toLowerCase() === 'gemini'
+        ? 'Gemini'
+        : part.charAt(0).toUpperCase() + part.slice(1)
+    )
+    .join(' ');
+}
+
+export function buildAdminModelViews(
+  definitions: Array<{ id: string; pricing?: { baseCreditCost?: number } }>,
+  executions: Array<{
+    selectedModel?: string;
+    attemptedModels?: string[];
+    status?: string;
+    latencyMs?: number | null;
+  }>
+): AdminModelView[] {
+  const configured = new Map(definitions.map((model) => [model.id, model]));
+  const ids = new Set(configured.keys());
+  for (const execution of executions) {
+    const path = execution.attemptedModels?.filter(Boolean) || [];
+    const effectiveModel = path.at(-1) || execution.selectedModel;
+    if (effectiveModel) ids.add(effectiveModel);
+  }
+
+  return Array.from(ids).map((id) => {
+    const definition = configured.get(id);
+    const samples = executions.filter((execution) => {
+      const path = execution.attemptedModels?.filter(Boolean) || [];
+      return (path.at(-1) || execution.selectedModel) === id;
+    });
+    const completed = samples.filter((sample) => sample.status === 'completed');
+    const failed = samples.filter((sample) => sample.status === 'failed');
+    const terminalCount = completed.length + failed.length;
+    const latencySamples = samples
+      .map((sample) => sample.latencyMs)
+      .filter((value): value is number => typeof value === 'number' && value >= 0);
+    const errorRate = terminalCount > 0 ? failed.length / terminalCount : null;
+
+    return {
+      id,
+      name: modelDisplayName(id),
+      configured: Boolean(definition),
+      baseCredits:
+        typeof definition?.pricing?.baseCreditCost === 'number'
+          ? definition.pricing.baseCreditCost
+          : null,
+      calls: terminalCount,
+      averageLatencyMs:
+        latencySamples.length > 0
+          ? Math.round(
+              latencySamples.reduce((total, value) => total + value, 0) /
+                latencySamples.length
+            )
+          : null,
+      errorRate,
+      status: !definition
+        ? 'historico'
+        : errorRate !== null && errorRate > 0.1
+          ? 'degradado'
+          : 'operacional',
+    };
+  });
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = () => {
@@ -46,6 +125,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
     dataSource?: string;
   } | null>(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
+  const [models, setModels] = useState<AdminModelView[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState('');
 
   // Modals State
   const [isPromptRegistryOpen, setIsPromptRegistryOpen] = useState(false);
@@ -69,41 +151,44 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
     loadMetrics();
   }, []);
 
-  const [models] = useState<AIModelConfig[]>([
-    {
-      id: 'm-flash',
-      name: 'Gemini 3.6 Flash',
-      provider: 'Google Gemini',
-      category: 'Raciocínio',
-      costPerOp: 1,
-      speedMs: null,
-      contextWindow: '1,000,000 tokens',
-      status: 'operacional',
-      errorRate: null
-    },
-    {
-      id: 'm-pro',
-      name: 'Gemini 3.1 Pro',
-      provider: 'Google Gemini',
-      category: 'Código',
-      costPerOp: 3,
-      speedMs: null,
-      contextWindow: '2,000,000 tokens',
-      status: 'operacional',
-      errorRate: null
-    },
-    {
-      id: 'm-imagen',
-      name: 'Imagen 3 (Multimídia)',
-      provider: 'Google Gemini',
-      category: 'Imagem',
-      costPerOp: 7,
-      speedMs: 0,
-      contextWindow: 'Prompt visual',
-      status: 'manutencao',
-      errorRate: 'Não homologado'
+  useEffect(() => {
+    if (activeTab !== 'models') return;
+    let active = true;
+    async function loadModels() {
+      setIsLoadingModels(true);
+      setModelsError('');
+      try {
+        const [catalog, history] = await Promise.all([
+          apiClient<{ models: Array<{ id: string; pricing?: { baseCreditCost?: number } }> }>(
+            '/api/admin/ai/models'
+          ),
+          apiClient<{ executions: Array<{
+            selectedModel?: string;
+            attemptedModels?: string[];
+            status?: string;
+            latencyMs?: number | null;
+          }> }>('/api/admin/ai/executions'),
+        ]);
+        if (active) {
+          setModels(buildAdminModelViews(catalog.models || [], history.executions || []));
+        }
+      } catch (error) {
+        if (active) {
+          setModelsError(
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível carregar a saúde real dos modelos.'
+          );
+        }
+      } finally {
+        if (active) setIsLoadingModels(false);
+      }
     }
-  ]);
+    void loadModels();
+    return () => {
+      active = false;
+    };
+  }, [activeTab]);
 
   const auditLogs: AuditLog[] = [];
 
@@ -300,30 +385,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
           <div className="space-y-6">
             <h3 className="text-xl font-bold">Saúde dos Modelos de IA & Roteador de Failover</h3>
 
+            {isLoadingModels && (
+              <div className="flex items-center gap-2 text-sm text-white/55">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Carregando catálogo e execuções reais...
+              </div>
+            )}
+            {modelsError && (
+              <div role="alert" className="rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-200">
+                {modelsError}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {models.map((m) => (
                 <div key={m.id} className="p-6 rounded-[28px] glass-panel border border-white/15 space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold border ${
+                      m.status === 'operacional'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : m.status === 'degradado'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          : 'bg-slate-500/20 text-slate-300 border-slate-500/30'
+                    }`}>
                       {m.status.toUpperCase()}
                     </span>
-                    <span className="text-xs text-white/50 font-mono">{m.provider}</span>
+                    <span className="text-xs text-white/50 font-mono">Google Gemini</span>
                   </div>
 
                   <h4 className="text-xl font-bold text-white">{m.name}</h4>
+                  <p className="break-all font-mono text-[10px] text-white/40">{m.id}</p>
 
                   <div className="space-y-2 text-xs text-white/70 border-t border-white/10 pt-3">
                     <div className="flex justify-between">
                       <span>Custo Base:</span>
-                      <span className="font-bold text-amber-300">{m.costPerOp} Crédito(s)</span>
+                      <span className="font-bold text-amber-300">{m.baseCredits === null ? 'Não configurado' : `${m.baseCredits} Crédito(s)`}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Latência Média:</span>
-                      <span className="font-bold text-white">{m.speedMs === null ? 'Sem dados' : `${m.speedMs} ms`}</span>
+                      <span className="font-bold text-white">{m.averageLatencyMs === null ? 'Sem dados' : `${m.averageLatencyMs.toLocaleString('pt-BR')} ms`}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Taxa de Erro:</span>
-                      <span className="font-bold text-emerald-400">{m.errorRate ?? 'Sem dados'}</span>
+                      <span className="font-bold text-emerald-400">{m.errorRate === null ? 'Sem dados' : `${(m.errorRate * 100).toFixed(1)}%`}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Amostras:</span>
+                      <span className="font-bold text-white">{m.calls}</span>
                     </div>
                   </div>
                 </div>
