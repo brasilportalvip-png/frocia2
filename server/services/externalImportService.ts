@@ -14,6 +14,16 @@ const GITHUB_FETCH_CONCURRENCY = 4;
 
 type ImportType = 'url' | 'github';
 
+export function extractGithubRepositoryUrlFromPrompt(
+  prompt: string
+): string | undefined {
+  const matched = prompt.match(
+    /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:[/?#][^\s]*)?/i
+  )?.[0];
+
+  return matched?.replace(/[.,;:!?)}\]]+$/g, '');
+}
+
 export interface ExternalImportResult {
   type: ImportType;
   sourceUrl: string;

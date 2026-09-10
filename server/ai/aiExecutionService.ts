@@ -27,7 +27,10 @@ import { GeminiFailoverService } from './geminiFailoverService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
-import { ExternalImportService } from '../services/externalImportService.js';
+import {
+  ExternalImportService,
+  extractGithubRepositoryUrlFromPrompt,
+} from '../services/externalImportService.js';
 
 export class AIExecutionService {
   /**
@@ -95,9 +98,7 @@ export class AIExecutionService {
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? sanitizedPrompt.match(
-            /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:[/?#][^\s]*)?/i
-          )?.[0]
+        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {

@@ -5,7 +5,10 @@ import {
   InvalidAIAttachmentError,
   validateAIAttachments
 } from '../server/validators/aiAttachmentValidators.js';
-import { ExternalImportService } from '../server/services/externalImportService.js';
+import {
+  ExternalImportService,
+  extractGithubRepositoryUrlFromPrompt
+} from '../server/services/externalImportService.js';
 import {
   ZipInspectionError,
   ZipInspectionService
@@ -139,10 +142,10 @@ describe('Attachment and Import Security Regression', () => {
       const xlsx = zipSync({
         '[Content_Types].xml': strToU8('<Types/>'),
         'xl/sharedStrings.xml': strToU8(
-          '<sst><si><t>Produto</t></si><si><t>Preço</t></si><si><t>Café</t></si></sst>'
+          '<x:sst xmlns:x="urn:test"><x:si><x:t>Produto</x:t></x:si><x:si><x:t>Preço</x:t></x:si><x:si><x:t>Café</x:t></x:si></x:sst>'
         ),
         'xl/worksheets/sheet1.xml': strToU8(
-          '<worksheet><sheetData><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row><row><c t="s"><v>2</v></c><c><v>12.50</v></c></row></sheetData></worksheet>'
+          '<x:worksheet xmlns:x="urn:test"><x:sheetData><x:row><x:c t="s"><x:v>0</x:v></x:c><x:c t="s"><x:v>1</x:v></x:c></x:row><x:row><x:c t="s"><x:v>2</x:v></x:c><x:c><x:v>12.50</x:v></x:c></x:row></x:sheetData></x:worksheet>'
         )
       });
       const [prepared] = await prepareNativeFiles([
@@ -220,6 +223,14 @@ describe('Attachment and Import Security Regression', () => {
   });
 
   describe('External import SSRF protection', () => {
+    it('removes sentence punctuation after a GitHub repository URL', () => {
+      expect(
+        extractGithubRepositoryUrlFromPrompt(
+          'Analise https://github.com/brasilportalvip-png/frocia2. Informe o package.json.'
+        )
+      ).toBe('https://github.com/brasilportalvip-png/frocia2');
+    });
+
     it('blocks loopback destinations before performing a fetch', async () => {
       await expect(
         ExternalImportService.import({

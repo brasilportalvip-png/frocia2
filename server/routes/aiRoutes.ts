@@ -49,6 +49,7 @@ import {
 import {
   ExternalImportError,
   ExternalImportService,
+  extractGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
 
 export const aiRouter = Router();
@@ -354,9 +355,7 @@ aiRouter.post(
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? sanitizedPrompt.match(
-            /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?(?:[/?#][^\s]*)?/i
-          )?.[0]
+        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {

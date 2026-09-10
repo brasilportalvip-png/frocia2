@@ -202,7 +202,7 @@ function extractXlsxText(bytes: Uint8Array): string {
   const archive = unzipOfficeDocument(bytes);
   const sharedXml = archive['xl/sharedStrings.xml'];
   const sharedStrings = sharedXml
-    ? [...decodeUtf8(sharedXml).matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)]
+    ? [...decodeUtf8(sharedXml).matchAll(/<(?:[A-Za-z_][\w.-]*:)?si\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?si>/g)]
         .map((match) => xmlText(match[1]))
     : [];
   const sheets = Object.entries(archive)
@@ -215,11 +215,12 @@ function extractXlsxText(bytes: Uint8Array): string {
     );
   }
   const output = sheets.map(([path, content], sheetIndex) => {
-    const rows = [...decodeUtf8(content).matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)]
-      .map((row) => [...row[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)]
+    const rows = [...decodeUtf8(content).matchAll(/<(?:[A-Za-z_][\w.-]*:)?row\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?row>/g)]
+      .map((row) => [...row[1].matchAll(/<(?:[A-Za-z_][\w.-]*:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?c>)/g)]
         .map((cell) => {
-          const value = cell[2].match(/<v\b[^>]*>([\s\S]*?)<\/v>/)?.[1]
-            ?? cell[2].match(/<t\b[^>]*>([\s\S]*?)<\/t>/)?.[1]
+          const body = cell[2] ?? '';
+          const value = body.match(/<(?:[A-Za-z_][\w.-]*:)?v\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?v>/)?.[1]
+            ?? body.match(/<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t>/)?.[1]
             ?? '';
           if (/\bt=["']s["']/.test(cell[1])) {
             return sharedStrings[Number(value)] ?? '';
