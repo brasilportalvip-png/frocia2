@@ -5,6 +5,7 @@ import { GeminiProvider } from './providers/geminiProvider.js';
 import { ModelRegistry } from './modelRegistry.js';
 import { SafetyService } from './safetyService.js';
 import { EvaluationResult } from './types/ai.js';
+import { AIModelDefinition } from './types/ai.js';
 import { FeatureFlagService } from '../services/featureFlagService.js';
 
 type EvaluationCategory = EvaluationResult['category'];
@@ -19,7 +20,7 @@ interface EvaluationCase {
 
 export interface RunEvaluationSuiteInput {
   model: string;
-  promptVersion?: string;
+  promptVersionId: string;
   requestedBy: string;
 }
 
@@ -114,6 +115,16 @@ const AUTOMATED_CASES: EvaluationCase[] = [
     }
   }
 ];
+
+export function isAutomatedEvaluationModel(
+  model: AIModelDefinition
+): boolean {
+  return (
+    model.enabled &&
+    model.capabilities.text &&
+    !model.capabilities.embeddings
+  );
+}
 
 function clampScore(score: number): number {
   if (!Number.isFinite(score)) {
@@ -256,7 +267,7 @@ export class EvaluationService {
       (model) => model.id === input.model
     );
 
-    if (!selectedModel) {
+    if (!selectedModel || !isAutomatedEvaluationModel(selectedModel)) {
       throw new Error('evaluation_model_not_allowed');
     }
 
@@ -266,9 +277,42 @@ export class EvaluationService {
       throw new Error('evaluation_requester_required');
     }
 
+    const promptVersionId = input.promptVersionId.trim();
+    if (!promptVersionId) {
+      throw new Error('evaluation_prompt_version_required');
+    }
+    const promptVersionRef = adminDb
+      .collection('prompt_versions')
+      .doc(promptVersionId);
+    const promptVersionSnapshot = await promptVersionRef.get();
+    if (!promptVersionSnapshot.exists) {
+      throw new Error('evaluation_prompt_version_not_found');
+    }
+    const promptVersionData = promptVersionSnapshot.data() ?? {};
+    const promptContent =
+      typeof promptVersionData.content === 'string'
+        ? promptVersionData.content.trim()
+        : '';
+    if (!promptContent) {
+      throw new Error('evaluation_prompt_content_missing');
+    }
+    const compatibleModels = Array.isArray(
+      promptVersionData.compatibleModels
+    )
+      ? promptVersionData.compatibleModels.filter(
+          (value): value is string => typeof value === 'string'
+        )
+      : [];
+    if (
+      compatibleModels.length > 0 &&
+      !compatibleModels.includes(selectedModel.id)
+    ) {
+      throw new Error('evaluation_model_incompatible');
+    }
     const promptVersion =
-      input.promptVersion?.trim().slice(0, 120) ||
-      'benchmark-v1';
+      typeof promptVersionData.version === 'string'
+        ? promptVersionData.version.slice(0, 120)
+        : promptVersionId.slice(0, 120);
     const runRef = adminDb
       .collection('ai_evaluation_runs')
       .doc();
@@ -353,7 +397,7 @@ export class EvaluationService {
           const response = await GeminiProvider.generate({
             model: selectedModel.id,
             systemInstruction:
-              'Você está executando um teste automatizado autorizado da Froc.IA. Siga exatamente o formato solicitado e não acrescente explicações.',
+              `${promptContent}\n\nVocê está executando um teste automatizado autorizado da Froc.IA. Siga exatamente o formato solicitado e não acrescente explicações.`,
             userMessage: evaluationCase.input,
             responseFormat:
               evaluationCase.testName ===
@@ -421,15 +465,25 @@ export class EvaluationService {
         results
       );
 
-      await runRef.update({
-        status: 'completed',
-        passedTests: summary.passedTests,
-        failedTests: summary.failedTests,
-        averageScore: summary.averageScore,
-        totalLatencyMs: summary.totalLatencyMs,
-        totalCostCredits: summary.totalCostCredits,
-        completedAt: FieldValue.serverTimestamp()
-      });
+      await Promise.all([
+        runRef.update({
+          status: 'completed',
+          passedTests: summary.passedTests,
+          failedTests: summary.failedTests,
+          averageScore: summary.averageScore,
+          totalLatencyMs: summary.totalLatencyMs,
+          totalCostCredits: summary.totalCostCredits,
+          promptVersionId,
+          completedAt: FieldValue.serverTimestamp()
+        }),
+        promptVersionRef.update({
+          evalScore: Number((summary.averageScore / 100).toFixed(4)),
+          evaluationRunId: runRef.id,
+          evaluatedModel: selectedModel.id,
+          evaluatedAt: FieldValue.serverTimestamp(),
+          status: summary.averageScore >= 75 ? 'candidate' : 'draft'
+        })
+      ]);
 
       return summary;
     } catch (error) {

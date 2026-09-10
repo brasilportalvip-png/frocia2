@@ -689,6 +689,8 @@ export const PromptRegistryModal: React.FC<
                     }
                     disabled={
                       isSaving ||
+                      selectedVersion.evalScore === null ||
+                      selectedVersion.evalScore < 0.75 ||
                       selectedVersion.id ===
                         selectedPrompt.activeVersionId
                     }
@@ -698,6 +700,9 @@ export const PromptRegistryModal: React.FC<
                     {selectedVersion.id ===
                     selectedPrompt.activeVersionId
                       ? 'Versão em produção'
+                      : selectedVersion.evalScore === null ||
+                          selectedVersion.evalScore < 0.75
+                        ? 'Avaliação mínima: 75%'
                       : 'Ativar esta versão'}
                   </button>
                 </div>

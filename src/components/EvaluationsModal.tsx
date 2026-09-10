@@ -47,6 +47,15 @@ interface EvaluationResult {
 interface ModelDefinition {
   id: string;
   enabled: boolean;
+  capabilities?: { text?: boolean; embeddings?: boolean };
+  pricing?: { baseCreditCost?: number };
+}
+
+interface PromptVersionOption {
+  id: string;
+  version: string;
+  promptName: string;
+  compatibleModels: string[];
 }
 
 interface EvaluationSuiteSummary {
@@ -120,9 +129,9 @@ export const EvaluationsModal: React.FC<
   >([]);
   const [models, setModels] = useState<ModelDefinition[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
-  const [promptVersion, setPromptVersion] = useState(
-    'benchmark-v1'
-  );
+  const [promptVersions, setPromptVersions] = useState<PromptVersionOption[]>([]);
+  const [selectedPromptVersionId, setSelectedPromptVersionId] = useState('');
+  const [costConfirmed, setCostConfirmed] = useState(false);
   const [selectedEvaluation, setSelectedEvaluation] =
     useState<EvaluationResult | null>(null);
   const [lastSummary, setLastSummary] =
@@ -136,13 +145,23 @@ export const EvaluationsModal: React.FC<
     setError('');
 
     try {
-      const [evaluationResponse, modelResponse] =
+      const [evaluationResponse, modelResponse, promptResponse] =
         await Promise.all([
           apiClient<{ evaluations: EvaluationResult[] }>(
             '/api/admin/ai/evaluations'
           ),
           apiClient<{ models: ModelDefinition[] }>(
             '/api/admin/ai/models'
+          ),
+          apiClient<{ prompts: Array<{
+            name: string;
+            versions?: Array<{
+              id: string;
+              version: string;
+              compatibleModels?: string[];
+            }>;
+          }> }>(
+            '/api/admin/ai/prompts'
           )
         ]);
 
@@ -152,11 +171,27 @@ export const EvaluationsModal: React.FC<
         ? evaluationResponse.evaluations
         : [];
       const nextModels = Array.isArray(modelResponse.models)
-        ? modelResponse.models.filter((model) => model.enabled)
+        ? modelResponse.models.filter(
+            (model) =>
+              model.enabled &&
+              model.capabilities?.text === true &&
+              model.capabilities?.embeddings !== true
+          )
+        : [];
+      const nextPromptVersions = Array.isArray(promptResponse.prompts)
+        ? promptResponse.prompts.flatMap((prompt) =>
+            (prompt.versions || []).map((version) => ({
+              id: version.id,
+              version: version.version,
+              promptName: prompt.name,
+              compatibleModels: version.compatibleModels || []
+            }))
+          )
         : [];
 
       setEvaluations(nextEvaluations);
       setModels(nextModels);
+      setPromptVersions(nextPromptVersions);
       setSelectedModel((current) =>
         nextModels.some((model) => model.id === current)
           ? current
@@ -174,6 +209,11 @@ export const EvaluationsModal: React.FC<
 
         return nextEvaluations[0] ?? null;
       });
+      setSelectedPromptVersionId((current) =>
+        nextPromptVersions.some((version) => version.id === current)
+          ? current
+          : nextPromptVersions[0]?.id ?? ''
+      );
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -230,13 +270,13 @@ export const EvaluationsModal: React.FC<
           (sum, evaluation) => sum + evaluation.score,
           0
         ) / total
-      : 0;
+      : null;
     const averageLatency = total
       ? evaluations.reduce(
           (sum, evaluation) => sum + evaluation.latencyMs,
           0
         ) / total
-      : 0;
+      : null;
 
     return {
       total,
@@ -252,8 +292,10 @@ export const EvaluationsModal: React.FC<
   }
 
   const runSuite = async () => {
-    if (!selectedModel) {
-      setError('Nenhum modelo habilitado está disponível.');
+    if (!selectedModel || !selectedPromptVersionId || !costConfirmed) {
+      setError(
+        'Selecione modelo e versão, depois confirme as quatro chamadas reais.'
+      );
       return;
     }
 
@@ -268,13 +310,14 @@ export const EvaluationsModal: React.FC<
         method: 'POST',
         body: JSON.stringify({
           model: selectedModel,
-          promptVersion: promptVersion.trim() || 'benchmark-v1'
+          promptVersionId: selectedPromptVersionId
         })
       });
 
       setLastSummary(response.summary);
       await loadData();
       setSelectedEvaluation(response.summary.results[0] ?? null);
+      setCostConfirmed(false);
     } catch (runError) {
       setError(errorMessage(runError));
     } finally {
@@ -348,9 +391,10 @@ export const EvaluationsModal: React.FC<
                 Modelo habilitado
                 <select
                   value={selectedModel}
-                  onChange={(event) =>
-                    setSelectedModel(event.target.value)
-                  }
+                  onChange={(event) => {
+                    setSelectedModel(event.target.value);
+                    setCostConfirmed(false);
+                  }}
                   disabled={isRunning}
                   className="block min-w-52 rounded-xl border border-white/10 bg-black px-3 py-2.5 text-xs normal-case text-white outline-none focus:border-amber-400/40"
                 >
@@ -366,23 +410,47 @@ export const EvaluationsModal: React.FC<
               </label>
 
               <label className="space-y-1 text-[10px] font-bold uppercase text-white/45">
-                Versão avaliada
-                <input
-                  value={promptVersion}
-                  onChange={(event) =>
-                    setPromptVersion(event.target.value)
-                  }
-                  maxLength={120}
+                Versão real avaliada
+                <select
+                  value={selectedPromptVersionId}
+                  onChange={(event) => {
+                    setSelectedPromptVersionId(event.target.value);
+                    setCostConfirmed(false);
+                  }}
                   disabled={isRunning}
-                  className="block w-40 rounded-xl border border-white/10 bg-black px-3 py-2.5 text-xs normal-case text-white outline-none focus:border-amber-400/40"
+                  className="block min-w-52 rounded-xl border border-white/10 bg-black px-3 py-2.5 text-xs normal-case text-white outline-none focus:border-amber-400/40"
+                >
+                  {promptVersions.length === 0 && (
+                    <option value="">Nenhuma versão cadastrada</option>
+                  )}
+                  {promptVersions.map((version) => (
+                    <option key={version.id} value={version.id}>
+                      {version.promptName} · {version.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex max-w-64 items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] p-2.5 text-[10px] text-white/60">
+                <input
+                  type="checkbox"
+                  checked={costConfirmed}
+                  onChange={(event) => setCostConfirmed(event.target.checked)}
+                  disabled={isRunning}
+                  className="mt-0.5"
                 />
+                Confirmo 4 chamadas reais ao provedor. O custo calculado será registrado na avaliação.
               </label>
 
               <button
                 type="button"
                 onClick={() => void runSuite()}
                 disabled={
-                  isRunning || isLoading || !selectedModel
+                  isRunning ||
+                  isLoading ||
+                  !selectedModel ||
+                  !selectedPromptVersionId ||
+                  !costConfirmed
                 }
                 className="flex items-center justify-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400 px-5 py-2.5 text-xs font-black text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -421,7 +489,7 @@ export const EvaluationsModal: React.FC<
             />
             <MetricCard
               label="Score médio real"
-              value={formatScore(globalMetrics.averageScore)}
+              value={globalMetrics.averageScore === null ? 'Sem dados' : formatScore(globalMetrics.averageScore)}
             />
             <MetricCard
               label="Testes aprovados"
@@ -429,7 +497,7 @@ export const EvaluationsModal: React.FC<
             />
             <MetricCard
               label="Latência média"
-              value={`${Math.round(globalMetrics.averageLatency)} ms`}
+              value={globalMetrics.averageLatency === null ? 'Sem dados' : `${Math.round(globalMetrics.averageLatency)} ms`}
             />
           </section>
 

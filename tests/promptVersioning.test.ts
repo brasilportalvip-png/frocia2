@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { nextPromptVersion } from '../server/routes/adminAiRoutes.js';
+import {
+  canActivatePromptVersion,
+  nextPromptVersion,
+} from '../server/routes/adminAiRoutes.js';
+import { isAutomatedEvaluationModel } from '../server/ai/evaluationService.js';
+import { ModelRegistry } from '../server/ai/modelRegistry.js';
 
 describe('Prompt semantic versioning', () => {
   it('creates v1.1.0 after the immutable v1.0.0 baseline', () => {
@@ -21,5 +26,30 @@ describe('Prompt semantic versioning', () => {
       sequence: 1,
       version: 'v1.1.0',
     });
+  });
+});
+
+describe('Prompt evaluation governance', () => {
+  it('blocks activation without the minimum real score', () => {
+    expect(canActivatePromptVersion(null)).toBe(false);
+    expect(canActivatePromptVersion(0.74)).toBe(false);
+    expect(canActivatePromptVersion(0.75)).toBe(true);
+  });
+
+  it('does not offer an embedding model for text generation tests', () => {
+    expect(
+      isAutomatedEvaluationModel(
+        ModelRegistry.listEnabledModels().find(
+          (model) => model.capabilities.embeddings
+        )!
+      )
+    ).toBe(false);
+    expect(
+      isAutomatedEvaluationModel(
+        ModelRegistry.listEnabledModels().find(
+          (model) => model.capabilities.text && !model.capabilities.embeddings
+        )!
+      )
+    ).toBe(true);
   });
 });
