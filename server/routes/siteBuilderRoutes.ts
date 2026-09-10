@@ -8,6 +8,7 @@ import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featur
 import { getSiteSpecificationService } from '../siteFactory/siteFactoryRuntime.js';
 import { selectOfficialArchitecture } from '../siteFactory/siteArchitectureCatalog.js';
 import { env } from '../config/env.js';
+import { validateGeneratedSiteFunctionality } from '../siteFactory/generatedSiteFunctionalGate.js';
 import {
   configuredGeminiFailoverChain,
   GeminiFailoverService,
@@ -25,7 +26,7 @@ const ALLOWED_SITE_MODELS = new Set(
 const GENERATE_SITE_CREDIT_COST = 200;
 const REFINE_SITE_CREDIT_COST = 50;
 const SITE_GENERATION_TIMEOUT_MS = 180_000;
-const SITE_FORMAT_REPAIR_TIMEOUT_MS = 90_000;
+const SITE_FORMAT_REPAIR_TIMEOUT_MS = 100_000;
 
 function cleanMarkdownAndParseJson(rawText: string): any {
   if (!rawText) throw new Error('A IA não retornou conteúdo.');
@@ -230,14 +231,21 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
   }
 
   try {
-    const systemInstruction = `Você é o Froc.IA Site Engine, especialista em design front-end, HTML5, Tailwind CSS, JavaScript e interfaces web modernas de altíssima conversão.
+    const systemInstruction = `Você é o Froc.IA Site Engine, especialista em engenharia de aplicações web funcionais, design front-end, HTML5, Tailwind CSS e JavaScript.
 Responda ESTRITAMENTE em formato JSON com as chaves:
 - "siteTitle": título curto e atrativo do projeto
 - "description": breve resumo do site
 - "html": o código HTML5 completo do site (incluindo <!DOCTYPE html>, <html>, <head>, <script src="https://cdn.tailwindcss.com"></script>, <body>)
 - "suggestedRefinements": array com 3 sugestões de melhorias/personalizações que o usuário pode pedir a seguir.
 
-IMPORTANTE: O código HTML retornado na chave "html" DEVE ser totalmente completo, autônomo e executável em um iframe seguro. Não omita tags ou seções.`;
+REGRAS OBRIGATÓRIAS:
+- O HTML deve ser completo, autônomo e executável em um iframe seguro.
+- Implemente cada requisito solicitado com JavaScript real. Botões, abas, busca, formulários, filtros, modais e mudanças de status devem funcionar.
+- Quando houver dados cadastráveis, use localStorage para persistir e restaurar os dados após recarregar a página.
+- Não mostre mensagens de sucesso antes de uma ação realmente válida.
+- Inclua validação com mensagens claras e atualização imediata da interface.
+- Não entregue apenas dashboard, protótipo, wireframe ou demonstração visual.
+- Entregue tudo dentro do único HTML retornado; não dependa de arquivos locais ausentes.`;
 
     let userPrompt = `Crie um site completo para: "${prompt.trim()}".
 Categoria: ${category}
@@ -303,7 +311,44 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       parsedData = cleanMarkdownAndParseJson(retryResponse.response.text || '');
     }
 
-    const finalData = GeneratedSiteSchema.parse(parsedData);
+    let finalData = GeneratedSiteSchema.parse(parsedData);
+    let functionalGate = validateGeneratedSiteFunctionality(
+      prompt,
+      finalData.html
+    );
+
+    if (!functionalGate.passed) {
+      const repairResponse = await GeminiFailoverService.generate({
+        model: generation.model,
+        systemInstruction,
+        userMessage: [
+          'O projeto abaixo foi reprovado pelo gate funcional.',
+          'Corrija TODOS os problemas listados e devolva ESTRITAMENTE o JSON completo com siteTitle, description, html e suggestedRefinements.',
+          `Problemas obrigatórios:\n- ${functionalGate.issues.join('\n- ')}`,
+          `Pedido original:\n${prompt.trim()}`,
+          `Projeto reprovado:\n${JSON.stringify(finalData)}`,
+        ].join('\n\n'),
+        responseFormat: 'json',
+        temperature: 0.2,
+        timeoutMs: SITE_FORMAT_REPAIR_TIMEOUT_MS,
+        maxRetries: 0,
+      });
+      finalData = GeneratedSiteSchema.parse(
+        cleanMarkdownAndParseJson(repairResponse.response.text || '')
+      );
+      functionalGate = validateGeneratedSiteFunctionality(
+        prompt,
+        finalData.html
+      );
+    }
+
+    if (!functionalGate.passed) {
+      const error = new Error(
+        `O projeto foi bloqueado pelo gate funcional: ${functionalGate.issues.join(' ')}`
+      );
+      (error as Error & { code?: string }).code = 'site_functionality_gate_failed';
+      throw error;
+    }
 
     await CreditWalletService.confirmConsumption({
       userId: uid,
