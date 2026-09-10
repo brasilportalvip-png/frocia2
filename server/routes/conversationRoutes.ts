@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { orderConversationMessages } from '../utils/conversationMessageOrdering.js';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
@@ -319,10 +320,10 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
     }
     const snap = await messageQuery.limit(pageLimit).get();
 
-    const messages = snap.docs
-      .slice()
-      .reverse()
-      .map((doc) => {
+    const orderedDocs = orderConversationMessages<any>(
+      snap.docs.map((doc) => ({ id: doc.id, ...doc.data(), document: doc }))
+    );
+    const messages = orderedDocs.map(({ document: doc }) => {
       const d = doc.data();
       return {
         id: doc.id,

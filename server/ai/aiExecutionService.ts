@@ -512,6 +512,7 @@ const consumedCredits = CostService.calculateCreditCost(
           content: prompt,
           attachments: attachments || [],
           executionId,
+          messageOrder: 0,
           createdAt: FieldValue.serverTimestamp(),
         });
 
@@ -524,6 +525,7 @@ const consumedCredits = CostService.calculateCreditCost(
           content: aiResponseText,
           citations: citations || [],
           executionId,
+          messageOrder: 1,
           model: modelToUse,
           createdAt: FieldValue.serverTimestamp(),
         });

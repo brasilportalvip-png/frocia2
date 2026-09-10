@@ -920,6 +920,7 @@ export class ResearchJobService {
           role: 'user',
           content: payload.prompt,
           executionId: job.executionId,
+          messageOrder: 0,
           createdAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -934,6 +935,7 @@ export class ResearchJobService {
           content: text,
           citations: cited,
           executionId: job.executionId,
+          messageOrder: 1,
           model: generation.model,
           researchQuality: quality,
           createdAt: FieldValue.serverTimestamp(),
