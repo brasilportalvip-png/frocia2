@@ -687,6 +687,30 @@ function isEligibleGithubTextFile(item: GithubTreeItem): item is Required<Pick<G
   return GITHUB_TEXT_EXTENSIONS.has(githubFileExtension(item.path)) || GITHUB_TEXT_BASENAMES.has(base);
 }
 
+function githubImportPriority(path: string): number {
+  const normalized = path.toLowerCase();
+  const rootPriorities: Record<string, number> = {
+    'package.json': 0,
+    'vercel.json': 1,
+    'vite.config.ts': 2,
+    'vite.config.js': 3,
+    'tsconfig.json': 4,
+    'dockerfile': 5,
+    'compose.yml': 6,
+    'docker-compose.yml': 7,
+  };
+
+  if (normalized in rootPriorities) {
+    return rootPriorities[normalized];
+  }
+  if (normalized.startsWith('.github/workflows/')) return 20;
+  if (!normalized.includes('/')) return 30;
+  if (normalized.startsWith('src/')) return 40;
+  if (normalized.startsWith('server/') || normalized.startsWith('api/')) return 50;
+  if (normalized.startsWith('tests/') || normalized.startsWith('e2e/')) return 70;
+  return 60;
+}
+
 function decodeGithubTextBlob(blob: { content?: string; encoding?: string }, path: string): string | null {
   if (blob.encoding !== 'base64' || typeof blob.content !== 'string') return null;
   const bytes = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
@@ -782,6 +806,10 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
   const candidates = (tree.tree || [])
     .slice(0, MAX_GITHUB_TREE_ITEMS)
     .filter(isEligibleGithubTextFile)
+    .sort((left, right) =>
+      githubImportPriority(left.path) - githubImportPriority(right.path) ||
+      left.path.localeCompare(right.path)
+    )
     .slice(0, MAX_GITHUB_CONTENT_FILES);
   const importedFiles: Array<{ path: string; size: number; content: string }> = [];
   let importedBytes = 0;

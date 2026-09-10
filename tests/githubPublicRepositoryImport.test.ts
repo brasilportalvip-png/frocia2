@@ -106,6 +106,50 @@ describe('public GitHub repository import', () => {
     })).toBe(true);
   });
 
+  it('prioritizes root manifests when the repository exceeds the file-content limit', async () => {
+    const packageSha = 'a'.repeat(40);
+    const filler = Array.from({ length: 45 }, (_, index) => ({
+      path: `docs/file-${String(index).padStart(2, '0')}.md`,
+      type: 'blob',
+      size: 10,
+      sha: index.toString(16).padStart(40, '0'),
+    }));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/repos/openai/large')) {
+        return jsonResponse({
+          full_name: 'openai/large', description: null, default_branch: 'main',
+          language: 'TypeScript', stargazers_count: 0, forks_count: 0,
+          html_url: 'https://github.com/openai/large', private: false,
+          archived: false, topics: [],
+        });
+      }
+      if (url.includes('/git/trees/main')) {
+        return jsonResponse({
+          tree: [...filler, { path: 'package.json', type: 'blob', size: 60, sha: packageSha }],
+        });
+      }
+      if (url.endsWith('/readme')) return jsonResponse({}, 404);
+      if (url.endsWith(`/git/blobs/${packageSha}`)) {
+        return jsonResponse(encoded('{"name":"critical-package"}'));
+      }
+      if (url.includes('/git/blobs/')) return jsonResponse(encoded('filler'));
+      throw new Error(`unexpected request: ${url}`);
+    }));
+
+    const result = await ExternalImportService.import({
+      type: 'github',
+      url: 'https://github.com/openai/large',
+    });
+    const document = JSON.parse(result.content);
+
+    expect(document.contentFilesReturned).toBe(40);
+    expect(document.importedFiles[0]).toMatchObject({
+      path: 'package.json',
+      content: '{"name":"critical-package"}',
+    });
+  });
+
   it('does not return private keys found inside an otherwise eligible text file', async () => {
     const sha = 'a'.repeat(40);
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
