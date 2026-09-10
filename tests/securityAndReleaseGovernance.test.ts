@@ -26,13 +26,15 @@ import {
 
 function securityApp() {
   const app = express();
-  app.use(express.json());
+  app.use('/api/admin/disaster-recovery/validate', express.json({ limit: '14mb' }));
+  app.use(express.json({ limit: '2mb' }));
   app.use((req, _res, next) => {
     (req as typeof req & { correlationId: string }).correlationId = 'corr-security-test';
     next();
   });
   app.use(requestIntegrityMiddleware);
   app.post('/api/change', (_req, res) => res.json({ accepted: true }));
+  app.post('/api/admin/disaster-recovery/validate', (_req, res) => res.json({ accepted: true }));
   return app;
 }
 
@@ -102,6 +104,27 @@ describe('Request integrity and abuse protection', () => {
       safe: false,
       reason: 'payload_too_deep',
     });
+  });
+
+  it('accepts a legitimate large backup only on the recovery validation route', async () => {
+    const documents = Array.from({ length: 700 }, (_, index) => ({
+      id: `doc-${index}`,
+      data: { nested: { settings: { items: Array.from({ length: 20 }, (_item, item) => ({ item, enabled: true })) } } },
+    }));
+    const response = await request(securityApp())
+      .post('/api/admin/disaster-recovery/validate')
+      .send({ backup: { manifest: { format: 'froc-portable-backup-v1' }, data: { projects: documents } } });
+    expect(response.status).toBe(200);
+    expect(response.body.accepted).toBe(true);
+  });
+
+  it('keeps prototype-pollution protection active for recovery payloads', async () => {
+    const response = await request(securityApp())
+      .post('/api/admin/disaster-recovery/validate')
+      .set('Content-Type', 'application/json')
+      .send('{"backup":{"data":{"projects":[{"id":"x","data":{"constructor":{"prototype":{"admin":true}}}}]}}}');
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('unsafe_request_payload');
   });
 
   it('rejects cross-site mutations before the route handler', async () => {

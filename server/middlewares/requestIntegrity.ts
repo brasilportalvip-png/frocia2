@@ -6,6 +6,8 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const MAX_OBJECT_DEPTH = 24;
 const MAX_OBJECT_NODES = 12_000;
+const RECOVERY_MAX_OBJECT_DEPTH = 48;
+const RECOVERY_MAX_OBJECT_NODES = 300_000;
 
 export interface PayloadInspection {
   safe: boolean;
@@ -13,7 +15,12 @@ export interface PayloadInspection {
   path?: string;
 }
 
-export function inspectPayloadIntegrity(value: unknown): PayloadInspection {
+export function inspectPayloadIntegrity(
+  value: unknown,
+  limits: { maxDepth?: number; maxNodes?: number } = {}
+): PayloadInspection {
+  const maxDepth = limits.maxDepth ?? MAX_OBJECT_DEPTH;
+  const maxNodes = limits.maxNodes ?? MAX_OBJECT_NODES;
   let nodes = 0;
   const stack: Array<{ value: unknown; depth: number; path: string }> = [
     { value, depth: 0, path: '$' },
@@ -22,10 +29,10 @@ export function inspectPayloadIntegrity(value: unknown): PayloadInspection {
   while (stack.length > 0) {
     const current = stack.pop()!;
     nodes += 1;
-    if (nodes > MAX_OBJECT_NODES) {
+    if (nodes > maxNodes) {
       return { safe: false, reason: 'payload_too_complex', path: current.path };
     }
-    if (current.depth > MAX_OBJECT_DEPTH) {
+    if (current.depth > maxDepth) {
       return { safe: false, reason: 'payload_too_deep', path: current.path };
     }
     if (!current.value || typeof current.value !== 'object') continue;
@@ -146,7 +153,18 @@ export function requestIntegrityMiddleware(
     );
   }
 
-  const inspection = inspectPayloadIntegrity(req.body);
+  const isPortableRecoveryPayload =
+    req.path === '/api/admin/disaster-recovery/validate' ||
+    req.path === '/api/admin/disaster-recovery/restore';
+  const inspection = inspectPayloadIntegrity(
+    req.body,
+    isPortableRecoveryPayload
+      ? {
+          maxDepth: RECOVERY_MAX_OBJECT_DEPTH,
+          maxNodes: RECOVERY_MAX_OBJECT_NODES,
+        }
+      : undefined
+  );
   if (!inspection.safe) {
     void recordSecurityEventBestEffort({
       category: 'unsafe_payload',
