@@ -3,6 +3,8 @@ import React, {
   useRef,
   useState
 } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Check,
   ChevronDown,
@@ -802,9 +804,26 @@ export const ChatCentral: React.FC<
                             : 'rounded-3xl rounded-tr-md border border-white/10 bg-white/[0.075] px-4 py-3 text-sm leading-relaxed text-white shadow-[0_12px_35px_rgba(0,0,0,0.22)]'
                         }
                       >
-                        <div className="whitespace-pre-wrap break-words">
-                          {message.text}
-                        </div>
+                        {isAi ? (
+                          <div className="break-words [&_a]:text-amber-300 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-amber-300/40 [&_blockquote]:pl-3 [&_code]:rounded [&_code]:bg-black/30 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:font-bold [&_li]:ml-5 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-3 [&_p:last-child]:mb-0 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-black/40 [&_pre]:p-3 [&_table]:my-3 [&_table]:w-full [&_td]:border [&_td]:border-white/10 [&_td]:p-2 [&_th]:border [&_th]:border-white/10 [&_th]:p-2">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                a: ({ href, children }) => (
+                                  <a href={href} target="_blank" rel="noopener noreferrer">
+                                    {children}
+                                  </a>
+                                )
+                              }}
+                            >
+                              {message.text}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <div className="whitespace-pre-wrap break-words">
+                            {message.text}
+                          </div>
+                        )}
                       </div>
 
                       {isAi &&
