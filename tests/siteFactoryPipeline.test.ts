@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolveReviewOwnerUserId } from '../server/routes/siteFactoryRoutes.js';
 import {
   ArchitectureCompatibilityError,
   listOfficialArchitectures,
@@ -23,6 +24,32 @@ const scope = {
   tenantId: 'tenant:acme',
   ownerUserId: 'user-owner',
 };
+
+describe('Site factory tenant authorization', () => {
+  const tenantUser = {
+    uid: 'member-a',
+    email: 'member-a@example.com',
+    role: 'user' as const,
+    tenantId: 'tenant:acme',
+  };
+
+  it('allows a tenant user to review only their own project scope', () => {
+    expect(resolveReviewOwnerUserId(tenantUser, 'member-a')).toBe('member-a');
+    expect(resolveReviewOwnerUserId(tenantUser, undefined)).toBe('member-a');
+  });
+
+  it('rejects an arbitrary owner UID even when the requester has a company tenant', () => {
+    expect(() => resolveReviewOwnerUserId(tenantUser, 'member-b')).toThrow(
+      'Você não tem permissão'
+    );
+  });
+
+  it('keeps explicit cross-owner review restricted to administrators', () => {
+    expect(
+      resolveReviewOwnerUserId({ ...tenantUser, role: 'admin' }, 'member-b')
+    ).toBe('member-b');
+  });
+});
 
 function validSpecification(
   overrides: Partial<SiteSpecificationInput> = {}

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   inspectPayloadIntegrity,
   requestIntegrityMiddleware,
+  trustedOrigins,
 } from '../server/middlewares/requestIntegrity.js';
 import {
   InMemorySecurityEventRepository,
@@ -58,6 +59,30 @@ function evidence(
 }
 
 describe('Request integrity and abuse protection', () => {
+  it('does not trust forged host headers as production origins', () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousAppUrl = process.env.APP_URL;
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.APP_URL = 'https://frocia2.vercel.app';
+      const origins = trustedOrigins({
+        headers: {
+          host: 'attacker.example',
+          'x-forwarded-host': 'attacker.example',
+          'x-forwarded-proto': 'https',
+        },
+        protocol: 'https',
+      } as any);
+
+      expect(origins).toEqual(new Set(['https://frocia2.vercel.app']));
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previousAppUrl;
+    }
+  });
+
   it('accepts a regular bounded JSON payload', () => {
     expect(inspectPayloadIntegrity({ profile: { name: 'Flavio' } })).toEqual({ safe: true });
   });

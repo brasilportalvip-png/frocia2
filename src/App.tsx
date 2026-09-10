@@ -708,6 +708,12 @@ const fetchConversations = async () => {
         timestamp: Date.now()
       }
     ]);
+
+    // Em telas menores o painel lateral de prévia não é exibido. Abra o
+    // resultado em tela cheia para que a criação nunca termine invisível.
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      setIsFullscreen(true);
+    }
   } catch (error: any) {
     if (
       error?.code ===
@@ -1223,7 +1229,7 @@ const handleGeneralChat = async (
   }
 
   return (
-    <div id="froc-app-root" className="froc-app-background h-screen w-screen flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased select-none">
+    <div id="froc-app-root" className="froc-app-background h-screen w-screen flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased">
 
 
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Lock, Mail, User, LogIn, KeyRound, Loader2, AlertCircle, Eye, EyeOff, ShieldCheck, Check, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,6 +19,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   // Password strength logic
   const getPasswordStrength = (pwd: string) => {
@@ -40,13 +42,42 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const strength = getPasswordStrength(password);
 
   useEffect(() => {
+    if (!isOpen) return;
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    window.requestAnimationFrame(() => emailInputRef.current?.focus());
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen && !isSubmitting) {
         handleClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (focusable.length === 0) {
+          e.preventDefault();
+        } else if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
   }, [isOpen, isSubmitting]);
 
   if (!isOpen) return null;
@@ -114,7 +145,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-2xl flex items-center justify-center p-4 select-none animate-in fade-in duration-200"
+      ref={dialogRef}
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-2xl flex items-center justify-center p-4 animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
@@ -142,7 +174,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               referrerPolicy="no-referrer"
               className="h-10 w-auto object-contain filter drop-shadow-[0_0_12px_rgba(251,191,36,0.3)]"
             />
-            <span id="auth-modal-title" className="text-2xl font-black tracking-tight froc-gold-gradient-text">Froc.IA</span>
+            <h2 id="auth-modal-title" className="text-2xl font-black tracking-tight froc-gold-gradient-text">Froc.IA</h2>
           </div>
           <p className="text-xs text-white/60 font-medium">
             {mode === 'register' && 'Crie sua conta na plataforma de IA de última geração'}
@@ -153,14 +185,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
         {/* Alert Messages */}
         {error && (
-          <div className="p-3.5 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2.5 animate-in fade-in">
+          <div role="alert" aria-live="assertive" className="p-3.5 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2.5 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
             <span className="leading-tight">{error}</span>
           </div>
         )}
 
         {infoMessage && (
-          <div className="p-3.5 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2.5 animate-in fade-in">
+          <div role="status" aria-live="polite" className="p-3.5 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2.5 animate-in fade-in">
             <Check className="w-4 h-4 shrink-0 text-emerald-400" />
             <span className="leading-tight">{infoMessage}</span>
           </div>
@@ -170,10 +202,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'register' && (
             <div>
-              <label className="block text-xs font-semibold text-white/80 mb-1.5">Seu Nome</label>
+              <label htmlFor="auth-name" className="block text-xs font-semibold text-white/80 mb-1.5">Seu Nome</label>
               <div className="relative">
                 <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
                 <input
+                  id="auth-name"
                   type="text"
                   required
                   value={name}
@@ -187,10 +220,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-white/80 mb-1.5">E-mail</label>
+            <label htmlFor="auth-email" className="block text-xs font-semibold text-white/80 mb-1.5">E-mail</label>
             <div className="relative">
               <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
               <input
+                id="auth-email"
+                ref={emailInputRef}
                 type="email"
                 required
                 value={email}
@@ -205,7 +240,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           {mode !== 'forgot' && (
             <div>
               <div className="flex justify-between items-center mb-1.5">
-                <label className="text-xs font-semibold text-white/80">Senha</label>
+                <label htmlFor="auth-password" className="text-xs font-semibold text-white/80">Senha</label>
                 {mode === 'login' && (
                   <button
                     type="button"
@@ -219,6 +254,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
                 <input
+                  id="auth-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
@@ -378,4 +414,3 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     </div>
   );
 };
-

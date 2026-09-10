@@ -6,6 +6,11 @@ const MAX_REDIRECTS = 3;
 const MAX_RESPONSE_BYTES = 900_000;
 const MAX_EXTRACTED_CHARACTERS = 700_000;
 const MAX_GITHUB_TREE_ITEMS = 500;
+const MAX_GITHUB_CONTENT_FILES = 40;
+const MAX_GITHUB_FILE_BYTES = 100_000;
+const MAX_GITHUB_CONTENT_BYTES = 350_000;
+const GITHUB_IMPORT_DEADLINE_MS = 25_000;
+const GITHUB_FETCH_CONCURRENCY = 4;
 
 type ImportType = 'url' | 'github';
 
@@ -243,8 +248,6 @@ async function safeFetch(
   let currentUrl = initialUrl;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    await assertPublicHostname(currentUrl.hostname);
-
     if (
       options.allowedHosts &&
       !options.allowedHosts.has(currentUrl.hostname.toLowerCase())
@@ -253,6 +256,21 @@ async function safeFetch(
         'redirect_not_allowed',
         'O serviço tentou redirecionar para um domínio não permitido.'
       );
+    }
+
+    // A allowlist é definida internamente (nunca pelo usuário). Para hosts
+    // oficiais fixos, a correspondência exata + HTTPS elimina destinos SSRF e
+    // evita depender de resolução DNS local. URLs abertas continuam passando
+    // pela validação de todos os endereços resolvidos.
+    if (options.allowedHosts) {
+      if (currentUrl.protocol !== 'https:') {
+        throw new ExternalImportError(
+          'invalid_protocol',
+          'Integrações oficiais exigem HTTPS.'
+        );
+      }
+    } else {
+      await assertPublicHostname(currentUrl.hostname);
     }
 
     let response: Response;
@@ -540,7 +558,7 @@ async function importWebPage(sourceUrl: string, timeoutMs?: number): Promise<Ext
   };
 }
 
-function parseGithubRepositoryUrl(sourceUrl: string): { owner: string; repository: string; normalizedUrl: string } {
+export function parseGithubRepositoryUrl(sourceUrl: string): { owner: string; repository: string; normalizedUrl: string } {
   const parsed = parsePublicHttpUrl(sourceUrl);
   if (!['github.com', 'www.github.com'].includes(parsed.hostname.toLowerCase())) {
     throw new ExternalImportError(
@@ -549,8 +567,15 @@ function parseGithubRepositoryUrl(sourceUrl: string): { owner: string; repositor
     );
   }
 
+  if (parsed.protocol !== 'https:') {
+    throw new ExternalImportError(
+      'invalid_github_protocol',
+      'Repositórios do GitHub devem ser informados por uma URL HTTPS.'
+    );
+  }
+
   const segments = parsed.pathname.split('/').filter(Boolean);
-  if (segments.length < 2) {
+  if (segments.length !== 2 || parsed.search) {
     throw new ExternalImportError(
       'invalid_repository_url',
       'Informe a URL completa de um repositório público do GitHub.'
@@ -571,7 +596,7 @@ function parseGithubRepositoryUrl(sourceUrl: string): { owner: string; repositor
   };
 }
 
-async function githubApiJson<T>(path: string): Promise<T> {
+async function githubApiJson<T>(path: string, timeoutMs: number): Promise<T> {
   const apiUrl = parsePublicHttpUrl(`https://api.github.com${path}`);
   const token = process.env.GITHUB_TOKEN?.trim();
   const { bytes } = await safeFetch(apiUrl, {
@@ -580,7 +605,8 @@ async function githubApiJson<T>(path: string): Promise<T> {
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
+    },
+    timeoutMs
   });
 
   try {
@@ -594,10 +620,91 @@ async function githubApiJson<T>(path: string): Promise<T> {
   }
 }
 
+interface GithubTreeItem {
+  path?: string;
+  type?: string;
+  size?: number;
+  sha?: string;
+}
+
+const GITHUB_TEXT_EXTENSIONS = new Set([
+  '.c', '.cc', '.cpp', '.cs', '.css', '.csv', '.go', '.graphql', '.h',
+  '.html', '.java', '.js', '.jsx', '.json', '.kt', '.md', '.mdx', '.php',
+  '.prisma', '.py', '.rb', '.rs', '.scss', '.sh', '.sql', '.svelte', '.toml',
+  '.ts', '.tsx', '.txt', '.vue', '.xml', '.yaml', '.yml'
+]);
+
+const GITHUB_TEXT_BASENAMES = new Set([
+  'dockerfile', 'gemfile', 'makefile', 'procfile'
+]);
+
+function githubFileExtension(path: string): string {
+  const base = path.toLowerCase().split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  return dot >= 0 ? base.slice(dot) : '';
+}
+
+function isSensitiveRepositoryPath(path: string): boolean {
+  const normalized = path.toLowerCase();
+  const segments = normalized.split('/');
+  const base = segments.at(-1) || '';
+  return (
+    segments.includes('.git') ||
+    segments.includes('node_modules') ||
+    /^\.env(?:\.|$)/.test(base) ||
+    /^(?:id_rsa|id_ed25519)(?:\.|$)/.test(base) ||
+    /\.(?:key|pem|p12|pfx|keystore|jks)$/i.test(base) ||
+    /(?:^|[._-])credentials?(?:[._-]|$)/i.test(base) ||
+    /(?:^|[._-])secrets?(?:[._-]|$)/i.test(base)
+  );
+}
+
+function isEligibleGithubTextFile(item: GithubTreeItem): item is Required<Pick<GithubTreeItem, 'path' | 'sha'>> & GithubTreeItem {
+  if (
+    item.type !== 'blob' ||
+    !item.path ||
+    item.path.length > 260 ||
+    !item.sha ||
+    !/^[a-f0-9]{40}$/i.test(item.sha) ||
+    typeof item.size !== 'number' ||
+    item.size < 0 ||
+    item.size > MAX_GITHUB_FILE_BYTES ||
+    isSensitiveRepositoryPath(item.path)
+  ) {
+    return false;
+  }
+  const base = item.path.toLowerCase().split('/').pop() || '';
+  return GITHUB_TEXT_EXTENSIONS.has(githubFileExtension(item.path)) || GITHUB_TEXT_BASENAMES.has(base);
+}
+
+function decodeGithubTextBlob(blob: { content?: string; encoding?: string }, path: string): string | null {
+  if (blob.encoding !== 'base64' || typeof blob.content !== 'string') return null;
+  const bytes = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
+  if (bytes.length > MAX_GITHUB_FILE_BYTES || bytes.includes(0)) return null;
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  const replacementCount = (text.match(/\uFFFD/g) || []).length;
+  if (replacementCount > Math.max(2, text.length * 0.001)) return null;
+  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(text)) return null;
+  if (/\b(?:github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_]{20,}/.test(text)) return null;
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, MAX_GITHUB_FILE_BYTES);
+}
+
 async function importGithubRepository(sourceUrl: string): Promise<ExternalImportResult> {
+  const deadline = Date.now() + GITHUB_IMPORT_DEADLINE_MS;
+  const remainingTime = () => {
+    const remaining = deadline - Date.now();
+    if (remaining < 500) {
+      throw new ExternalImportError(
+        'github_import_timeout',
+        'A leitura do repositório excedeu o tempo seguro de importação.',
+        504
+      );
+    }
+    return Math.min(FETCH_TIMEOUT_MS, remaining);
+  };
   const { owner, repository, normalizedUrl } = parseGithubRepositoryUrl(sourceUrl);
   const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
-  const metadata = await githubApiJson<{
+  let metadata: {
     full_name: string;
     description: string | null;
     default_branch: string;
@@ -609,7 +716,28 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
     private: boolean;
     archived: boolean;
     license?: { spdx_id?: string } | null;
-  }>(repoPath);
+  };
+  try {
+    metadata = await githubApiJson(repoPath, remainingTime());
+  } catch (error) {
+    if (error instanceof ExternalImportError && error.remoteStatus === 404) {
+      throw new ExternalImportError(
+        'github_repository_not_found',
+        'O repositório público não foi encontrado. Confirme o proprietário e o nome.',
+        404,
+        404
+      );
+    }
+    if (error instanceof ExternalImportError && error.remoteStatus === 403) {
+      throw new ExternalImportError(
+        'github_api_unavailable',
+        'O GitHub recusou temporariamente a leitura pública, possivelmente por limite da API.',
+        503,
+        403
+      );
+    }
+    throw error;
+  }
 
   if (metadata.private) {
     throw new ExternalImportError(
@@ -620,26 +748,53 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
   }
 
   const tree = await githubApiJson<{
-    tree?: Array<{ path?: string; type?: string; size?: number }>;
+    tree?: GithubTreeItem[];
     truncated?: boolean;
-  }>(`${repoPath}/git/trees/${encodeURIComponent(metadata.default_branch)}?recursive=1`);
+  }>(`${repoPath}/git/trees/${encodeURIComponent(metadata.default_branch)}?recursive=1`, remainingTime());
 
   let readmeText = '';
   try {
-    const readme = await githubApiJson<{ content?: string; encoding?: string }>(`${repoPath}/readme`);
+    const readme = await githubApiJson<{ content?: string; encoding?: string }>(`${repoPath}/readme`, remainingTime());
     if (readme.encoding === 'base64' && readme.content) {
       readmeText = Buffer.from(readme.content.replace(/\s/g, ''), 'base64')
         .toString('utf8')
-        .slice(0, 180_000);
+        .slice(0, 80_000);
     }
   } catch (error) {
     if (!(error instanceof ExternalImportError) || error.status !== 404) throw error;
   }
 
   const files = (tree.tree || [])
-    .filter((item) => item.type === 'blob' && item.path)
+    .filter((item) => item.type === 'blob' && item.path && item.path.length <= 260)
     .slice(0, MAX_GITHUB_TREE_ITEMS)
     .map((item) => ({ path: item.path!, size: item.size ?? null }));
+
+  const candidates = (tree.tree || [])
+    .slice(0, MAX_GITHUB_TREE_ITEMS)
+    .filter(isEligibleGithubTextFile)
+    .slice(0, MAX_GITHUB_CONTENT_FILES);
+  const importedFiles: Array<{ path: string; size: number; content: string }> = [];
+  let importedBytes = 0;
+
+  for (let offset = 0; offset < candidates.length; offset += GITHUB_FETCH_CONCURRENCY) {
+    const batch = candidates.slice(offset, offset + GITHUB_FETCH_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        if (importedBytes + (item.size || 0) > MAX_GITHUB_CONTENT_BYTES) return null;
+        const blob = await githubApiJson<{ content?: string; encoding?: string }>(
+          `${repoPath}/git/blobs/${item.sha}`,
+          remainingTime()
+        );
+        const content = decodeGithubTextBlob(blob, item.path);
+        return content === null ? null : { path: item.path, size: Buffer.byteLength(content), content };
+      })
+    );
+    for (const result of results) {
+      if (!result || importedBytes + result.size > MAX_GITHUB_CONTENT_BYTES) continue;
+      importedFiles.push(result);
+      importedBytes += result.size;
+    }
+  }
 
   const document = {
     repository: metadata.full_name,
@@ -655,16 +810,31 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
     treeTruncatedByGithub: Boolean(tree.truncated),
     filesReturned: files.length,
     files,
+    contentFilesReturned: importedFiles.length,
+    contentBytesReturned: importedBytes,
+    contentLimits: {
+      maximumFiles: MAX_GITHUB_CONTENT_FILES,
+      maximumFileBytes: MAX_GITHUB_FILE_BYTES,
+      maximumTotalBytes: MAX_GITHUB_CONTENT_BYTES
+    },
+    importedFiles,
     readme: readmeText || null
   };
-  const content = JSON.stringify(document, null, 2).slice(0, MAX_EXTRACTED_CHARACTERS);
+  const content = JSON.stringify(document, null, 2);
+  if (Buffer.byteLength(content, 'utf8') > MAX_EXTRACTED_CHARACTERS) {
+    throw new ExternalImportError(
+      'github_repository_too_large',
+      'O resumo seguro do repositório excedeu o limite permitido.',
+      413
+    );
+  }
 
   return {
     type: 'github',
     sourceUrl: normalizedUrl,
     finalUrl: metadata.html_url || normalizedUrl,
     title: metadata.full_name,
-    summary: `Repositório público importado com ${files.length} arquivos listados${
+    summary: `Repositório público importado com ${files.length} arquivos listados e conteúdo seguro de ${importedFiles.length} arquivos${
       tree.truncated ? ' (árvore parcial)' : ''
     }.`,
     content,

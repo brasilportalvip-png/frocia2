@@ -3,6 +3,7 @@ import { z, ZodError } from 'zod';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { createRateLimiter } from '../middlewares/rateLimiter.js';
 import { AuthenticatedRequest } from '../types.js';
+import type { AuthenticatedUser } from '../types.js';
 import {
   ArchitectureCompatibilityError,
   listOfficialArchitectures,
@@ -131,22 +132,38 @@ function getScope(req: AuthenticatedRequest): SiteScope {
   };
 }
 
+export class SiteFactoryAuthorizationError extends Error {
+  readonly code = 'site_factory_owner_access_denied';
+  readonly httpStatus = 403;
+
+  constructor() {
+    super('Você não tem permissão para revisar o projeto de outro usuário.');
+    this.name = 'SiteFactoryAuthorizationError';
+  }
+}
+
+export function resolveReviewOwnerUserId(
+  user: AuthenticatedUser,
+  requestedOwner: unknown
+): string {
+  const normalizedOwner =
+    typeof requestedOwner === 'string' &&
+    /^[A-Za-z0-9:_-]{1,160}$/.test(requestedOwner)
+      ? requestedOwner
+      : user.uid;
+
+  if (normalizedOwner !== user.uid && user.role !== 'admin') {
+    throw new SiteFactoryAuthorizationError();
+  }
+
+  return normalizedOwner;
+}
+
 function getReviewScope(req: AuthenticatedRequest): SiteScope {
-  const requestedOwner =
-    typeof req.query.ownerUserId === 'string' &&
-    /^[A-Za-z0-9:_-]{1,160}$/.test(req.query.ownerUserId)
-      ? req.query.ownerUserId
-      : req.user!.uid;
-  const canReviewTenantProject =
-    req.user!.role === 'admin' ||
-    !req.user!.tenantId.startsWith('user:');
   return {
     projectId: projectIdSchema.parse(req.params.projectId),
     tenantId: req.user!.tenantId,
-    ownerUserId:
-      requestedOwner === req.user!.uid || canReviewTenantProject
-        ? requestedOwner
-        : req.user!.uid,
+    ownerUserId: resolveReviewOwnerUserId(req.user!, req.query.ownerUserId),
   };
 }
 
@@ -178,6 +195,15 @@ function sendRouteError(
     error instanceof SiteSpecificationError ||
     error instanceof SiteQualityGateError
   ) {
+    return res.status(error.httpStatus).json({
+      error: {
+        code: error.code,
+        message: error.message,
+        correlationId: req.correlationId,
+      },
+    });
+  }
+  if (error instanceof SiteFactoryAuthorizationError) {
     return res.status(error.httpStatus).json({
       error: {
         code: error.code,
