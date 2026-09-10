@@ -15,19 +15,28 @@ const observabilityLimiter = createRateLimiter({
   keyPrefix: 'observability-admin',
 });
 
-const querySchema = z
-  .object({
-    durationMinutes: z.coerce.number().int().min(1).max(43_200).default(60),
-    tenantId: z.string().trim().regex(/^[A-Za-z0-9:_-]{1,120}$/).optional(),
-    // Vercel's /api/:path* rewrite forwards this internal routing key.
-    // Accept it at the HTTP boundary, but never pass it to the service.
-    __path: z.string().optional(),
-  })
-  .strict()
-  .transform(({ __path: _internalPath, ...query }) => query);
+function firstQueryValue(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] : value;
+}
 
-export function parseObservabilityQuery(query: unknown) {
-  return querySchema.parse(query);
+const querySchema = z.object({
+  durationMinutes: z.preprocess(
+    firstQueryValue,
+    z.coerce.number().int().min(1).max(43_200).optional()
+  ).transform((value) => value ?? 60),
+  tenantId: z.preprocess(
+    firstQueryValue,
+    z.string().trim().regex(/^[A-Za-z0-9:_-]{1,120}$/).optional()
+  ),
+});
+
+export function parseObservabilityQuery(
+  query: unknown
+): { durationMinutes: number; tenantId?: string } {
+  const parsed = querySchema.parse(query);
+  return parsed.tenantId
+    ? { durationMinutes: parsed.durationMinutes ?? 60, tenantId: parsed.tenantId }
+    : { durationMinutes: parsed.durationMinutes ?? 60 };
 }
 
 function sendError(error: unknown, req: AuthenticatedRequest, res: Response) {
