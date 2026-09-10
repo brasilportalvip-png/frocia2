@@ -72,5 +72,27 @@ describe('Admin model health from persisted executions', () => {
 
     expect(views.find((view) => view.id === 'gemini-fallback')?.calls).toBe(1);
     expect(views.find((view) => view.id === 'gemini-primary')?.calls).toBe(0);
+    expect(views.find((view) => view.id === 'gemini-primary')?.status).toBe('sem_dados');
+  });
+
+  it('marks a configured model as degraded when real latency exceeds the SLO', () => {
+    const views = buildAdminModelViews(
+      [{ id: 'gemini-3.7-flash' }],
+      [
+        {
+          selectedModel: 'gemini-3.7-flash',
+          status: 'completed',
+          latencyMs: 3_146,
+        },
+      ]
+    );
+
+    expect(views[0]).toEqual(
+      expect.objectContaining({
+        averageLatencyMs: 3_146,
+        errorRate: 0,
+        status: 'degradado',
+      })
+    );
   });
 });
