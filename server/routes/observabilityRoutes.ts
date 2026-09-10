@@ -19,8 +19,16 @@ const querySchema = z
   .object({
     durationMinutes: z.coerce.number().int().min(1).max(43_200).default(60),
     tenantId: z.string().trim().regex(/^[A-Za-z0-9:_-]{1,120}$/).optional(),
+    // Vercel's /api/:path* rewrite forwards this internal routing key.
+    // Accept it at the HTTP boundary, but never pass it to the service.
+    __path: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .transform(({ __path: _internalPath, ...query }) => query);
+
+export function parseObservabilityQuery(query: unknown) {
+  return querySchema.parse(query);
+}
 
 function sendError(error: unknown, req: AuthenticatedRequest, res: Response) {
   if (error instanceof ZodError) {
@@ -59,7 +67,7 @@ observabilityRouter.use(requireAuth, requireAdmin, observabilityLimiter);
 
 observabilityRouter.get('/snapshot', async (req: AuthenticatedRequest, res) => {
   try {
-    const query = querySchema.parse(req.query);
+    const query = parseObservabilityQuery(req.query);
     const service = getOperationalTelemetryService();
     const snapshot = await service.snapshot(query);
     const alerts = await service.evaluateAndPersistAlerts(snapshot);
@@ -75,7 +83,7 @@ observabilityRouter.get('/snapshot', async (req: AuthenticatedRequest, res) => {
 
 observabilityRouter.get('/alerts', async (req: AuthenticatedRequest, res) => {
   try {
-    const query = querySchema.parse(req.query);
+    const query = parseObservabilityQuery(req.query);
     const alerts = await getOperationalTelemetryService().listAlerts(query);
     return res.json({ alerts, correlationId: req.correlationId });
   } catch (error) {

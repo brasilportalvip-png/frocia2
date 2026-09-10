@@ -3,6 +3,7 @@ import {
   InMemoryOperationalTelemetryRepository,
   OperationalTelemetryService,
 } from '../server/observability/operationalTelemetryService.js';
+import { parseObservabilityQuery } from '../server/routes/observabilityRoutes.js';
 import {
   InMemoryResilienceStateRepository,
   OperationalGuardPolicy,
@@ -12,6 +13,23 @@ import {
 } from '../server/observability/operationalResilienceService.js';
 
 const fixedNow = new Date('2026-08-27T12:00:00.000Z');
+
+describe('Operational observability HTTP query', () => {
+  it('accepts and removes the internal Vercel rewrite parameter', () => {
+    expect(
+      parseObservabilityQuery({
+        durationMinutes: '60',
+        __path: 'admin/observability/snapshot',
+      })
+    ).toEqual({ durationMinutes: 60 });
+  });
+
+  it('continues rejecting unknown public query parameters', () => {
+    expect(() =>
+      parseObservabilityQuery({ durationMinutes: '60', unexpected: 'value' })
+    ).toThrow();
+  });
+});
 
 function telemetryHarness() {
   const repository = new InMemoryOperationalTelemetryRepository();
