@@ -18,7 +18,8 @@ import {
   CommitteePersistenceUnavailableError
 } from '../selfEvolution/committeeGateService.js';
 import {
-  COMMITTEE_ROLES
+  COMMITTEE_ROLES,
+  CommitteeReview
 } from '../selfEvolution/selfEvolutionTypes.js';
 
 export const selfEvolutionRouter = Router();
@@ -120,6 +121,96 @@ selfEvolutionRouter.get('/candidates', requireAuth, requireAdmin, async (_req: A
   const candidates = await ImprovementPlannerService.getCandidates();
   return res.json({ candidates });
 });
+
+// POST /api/admin/self-evolution/committee/simulation
+// Executa somente as regras puras do gate. Não persiste, não chama IA, não
+// consome créditos e não pode iniciar PR, deploy ou release.
+selfEvolutionRouter.post(
+  '/committee/simulation',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const candidateId = `simulation-${Date.now()}`;
+    const commitSha = 'a'.repeat(40);
+    const observedAt = new Date().toISOString();
+    const reviews: CommitteeReview[] = COMMITTEE_ROLES.map((role, index) => ({
+      id: `${candidateId}-${role}`,
+      candidateId,
+      role,
+      actorUid: `simulation-actor-${index + 1}`,
+      commitSha,
+      verdict: 'approved',
+      summary: `Simulação segura do papel ${role}: referências concretas conferidas sem executar alterações.`,
+      fileRefs: ['server/selfEvolution/committeeGateService.ts'],
+      testRefs: ['tests/selfEvolutionEngine.test.ts'],
+      evidenceRefs: ['npm:test:selfEvolutionEngine:16-passed'],
+      risks: ['Simulação somente leitura; não representa aprovação de produção.'],
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    }));
+    const gate = CommitteeGateService.evaluateReviews({
+      candidateId,
+      commitSha,
+      riskLevel: 'R1',
+      reviews,
+    });
+    const withoutVerifier = CommitteeGateService.evaluateReviews({
+      candidateId,
+      commitSha,
+      riskLevel: 'R1',
+      reviews: reviews.filter((review) => review.role !== 'independent_verifier'),
+    });
+
+    await AuditService.logEvent({
+      actor: req.user!.uid,
+      action: 'committee_safe_simulation_executed',
+      resource: candidateId,
+      newState: { gateStatus: gate.status, verifierControlStatus: withoutVerifier.status },
+      riskLevel: 'R0',
+      result: 'success',
+      correlationId: (req as any).correlationId,
+      commitHash: commitSha,
+    });
+
+    return res.json({
+      simulation: true,
+      candidateId,
+      commitSha,
+      reviews,
+      gate,
+      verifierControl: withoutVerifier,
+      sideEffects: { credits: 0, aiCalls: 0, pullRequests: 0, deployments: 0 },
+      observedAt,
+    });
+  }
+);
+
+selfEvolutionRouter.get(
+  '/committee/:id/reviews',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const paramVal = candidateIdSchema.safeParse(req.params);
+    if (!paramVal.success) return res.status(400).json({ error: 'ID de candidato inválido.' });
+    const candidate = await ImprovementPlannerService.getCandidateById(paramVal.data.id);
+    if (!candidate) return res.status(404).json({ error: 'Candidato não encontrado.' });
+    try {
+      const reviews = await CommitteeGateService.listReviews(candidate.id);
+      const gate = CommitteeGateService.evaluateReviews({
+        candidateId: candidate.id,
+        commitSha: candidate.headCommitSha,
+        riskLevel: candidate.riskLevel,
+        reviews,
+      });
+      return res.json({ reviews, gate, commitSha: candidate.headCommitSha || null });
+    } catch (error) {
+      if (error instanceof CommitteePersistenceUnavailableError) {
+        return res.status(503).json({ error: error.message });
+      }
+      throw error;
+    }
+  }
+);
 
 // GET /api/admin/self-evolution/candidates/:id
 selfEvolutionRouter.get('/candidates/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
