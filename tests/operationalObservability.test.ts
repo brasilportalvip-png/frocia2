@@ -15,19 +15,30 @@ import {
 const fixedNow = new Date('2026-08-27T12:00:00.000Z');
 
 describe('Operational observability HTTP query', () => {
-  it('accepts and removes the internal Vercel rewrite parameter', () => {
+  it('accepts and removes internal Vercel rewrite parameters', () => {
     expect(
       parseObservabilityQuery({
         durationMinutes: '60',
         __path: 'admin/observability/snapshot',
+        path: ['admin', 'observability', 'snapshot'],
       })
     ).toEqual({ durationMinutes: 60 });
   });
 
-  it('continues rejecting unknown public query parameters', () => {
-    expect(() =>
+  it('normalizes array-shaped query values supplied by the serverless runtime', () => {
+    expect(
+      parseObservabilityQuery({
+        durationMinutes: ['60'],
+        tenantId: ['tenant-acme'],
+        __path: ['admin/observability/snapshot'],
+      })
+    ).toEqual({ durationMinutes: 60, tenantId: 'tenant-acme' });
+  });
+
+  it('only forwards allowlisted query fields to the telemetry service', () => {
+    expect(
       parseObservabilityQuery({ durationMinutes: '60', unexpected: 'value' })
-    ).toThrow();
+    ).toEqual({ durationMinutes: 60 });
   });
 });
 
