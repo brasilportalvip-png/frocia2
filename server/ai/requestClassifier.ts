@@ -76,12 +76,18 @@ const DOMAIN_PATTERNS: Array<{
   {
     domain: 'research',
     pattern:
-      /\b(pesquis|fontes?|evid[eê]ncia|not[ií]cia|estudo|compare|investigue)\b/i,
+      /\b(pesquis\w*|busqu\w*|fontes?|evid[eê]ncia|not[ií]cias?|estudos?|compar\w*|investigu\w*|internet|web|rede)\b/i,
   },
 ];
 
 const CURRENT_INFORMATION_PATTERN =
-  /\b(hoje|agora|atual(?:mente)?|recente|[uú]ltim[oa]s?|not[ií]cia|pre[çc]o|cota[çc][aã]o|agenda|calend[aá]rio|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento)\b/i;
+  /\b(hoje|agora|atual(?:mente)?|tempo real|ao vivo|recente|[uú]ltim[oa]s?|not[ií]cias?|pre[çc]os?|promo[çc][oõ]es?|cota[çc][aã]o|agenda|calend[aá]rio|hor[aá]rios?|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento|placar|resultado do jogo|classifica[çc][aã]o|campeonato|tr[aâ]nsito|evento|aberto agora)\b/i;
+
+const EXPLICIT_WEB_RESEARCH_PATTERN =
+  /\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b[\s\S]{0,80}\b(?:internet|web|rede|online|fontes?|sites?|google)\b|\b(?:internet|web|rede|online|fontes?|sites?|google)\b[\s\S]{0,80}\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b/i;
+
+const LIVE_INFORMATION_PATTERN =
+  /\b(?:futebol|esportes?|jogos?|placar|tabela|campeonato|not[ií]cias?|mercado|bolsa|d[oó]lar|euro|bitcoin|cripto|pre[çc]os?|produto|restaurante|hotel|viagem|voos?|tempo|clima|tr[aâ]nsito|cinema|eventos?)\b/i;
 
 const ATTACHMENT_ONLY_PATTERN =
   /\b(?:somente|apenas|exclusivamente)\b[\s\S]{0,80}\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b|\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b[\s\S]{0,80}\b(?:somente|apenas|exclusivamente)\b/i;
@@ -142,9 +148,13 @@ export class AIRequestClassifier {
       !attachmentOnly &&
       (input.mode === 'research' ||
         highStakes ||
+        domain === 'research' ||
         requiresSocialSearch ||
         requiresSiteAudit ||
-        CURRENT_INFORMATION_PATTERN.test(prompt));
+        CURRENT_INFORMATION_PATTERN.test(prompt) ||
+        EXPLICIT_WEB_RESEARCH_PATTERN.test(prompt) ||
+        (LIVE_INFORMATION_PATTERN.test(prompt) &&
+          /\b(qual|quais|quanto|onde|quando|como|melhor|recomend|compare|mostre|informe)\b/i.test(prompt)));
     const requiresCode =
       input.mode === 'code' ||
       input.mode === 'site-builder' ||

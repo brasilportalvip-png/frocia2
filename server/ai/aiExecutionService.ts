@@ -478,7 +478,12 @@ const evidence = ResearchEvidenceService.finalize({
     knowledgeBaseIds.length > 0,
   ragChunksUsed,
   minimumSourceDomains:
-    SocialSearchService.requestedLimit(sanitizedPrompt) === 10 ? 2 : 1,
+    mode === 'research' ||
+    mode === 'deep' ||
+    plan.classification.domain === 'research' ||
+    SocialSearchService.requestedLimit(sanitizedPrompt) === 10
+      ? 2
+      : 1,
 });
 
 aiResponseText = evidence.text;

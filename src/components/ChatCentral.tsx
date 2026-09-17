@@ -6,7 +6,7 @@ import React, {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice } from '../services/voicePreferenceService';
-import { normalizeFrocVoiceCommand } from '../services/voiceCommandService';
+import { getFinalFrocVoiceCommand, normalizeFrocVoiceCommand } from '../services/voiceCommandService';
 import {
   Check,
   ChevronDown,
@@ -224,6 +224,7 @@ export const ChatCentral: React.FC<
   const [speakingMsgId, setSpeakingMsgId] =
     useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [voiceCommandToSend, setVoiceCommandToSend] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
@@ -254,9 +255,18 @@ export const ChatCentral: React.FC<
     recognition.interimResults = true;
     recognition.onresult = (event: any) => {
       let transcript = '';
-      for (let index = event.resultIndex; index < event.results.length; index += 1) transcript += event.results[index][0].transcript;
+      let isFinal = false;
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        transcript += event.results[index][0].transcript;
+        isFinal = isFinal || event.results[index].isFinal;
+      }
       const command = normalizeFrocVoiceCommand(transcript);
       if (command) setInputText(command);
+      const finalCommand = getFinalFrocVoiceCommand(transcript, isFinal);
+      if (finalCommand) {
+        setVoiceCommandToSend(finalCommand);
+        recognition.stop();
+      }
     };
     recognition.onerror = () => { setIsListening(false); setAttachmentError('A escuta foi interrompida. Verifique o microfone.'); };
     recognition.onend = () => setIsListening(false);
@@ -591,8 +601,8 @@ export const ChatCentral: React.FC<
     }
   };
 
-  const handleSend = async () => {
-    const normalizedText = inputText.trim();
+  const handleSend = async (voiceText?: string) => {
+    const normalizedText = (voiceText ?? inputText).trim();
 
     if (
       (!normalizedText && attachedFiles.length === 0) ||
@@ -619,6 +629,13 @@ export const ChatCentral: React.FC<
       return;
     }
   };
+
+  useEffect(() => {
+    if (!voiceCommandToSend || isGenerating) return;
+    const command = voiceCommandToSend;
+    setVoiceCommandToSend(null);
+    void handleSend(command);
+  }, [voiceCommandToSend, isGenerating]);
 
   const handleSuggestion = (
     prompt: string,
@@ -876,7 +893,7 @@ export const ChatCentral: React.FC<
                             className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3"
                           >
                             <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-amber-200/75">
-                              <Globe className="h-3.5 w-3.5" />
+                              <Globe aria-hidden="true" className="h-3.5 w-3.5" />
                               Fontes verificáveis
                             </div>
 
@@ -906,6 +923,14 @@ export const ChatCentral: React.FC<
                                             {citation.domain}
                                           </span>
                                         )}
+                                        {citation.retrievedAt && (
+                                          <time
+                                            className="mt-0.5 block text-[9px] text-white/30"
+                                            dateTime={citation.retrievedAt}
+                                          >
+                                            Consultado em {new Date(citation.retrievedAt).toLocaleString('pt-BR')}
+                                          </time>
+                                        )}
                                         {citation.supportedText && (
                                           <span className="mt-1 block line-clamp-2 text-[10px] leading-4 text-white/55">
                                             “{citation.supportedText}”
@@ -913,7 +938,7 @@ export const ChatCentral: React.FC<
                                         )}
                                       </span>
                                       {isPublicWebSource && (
-                                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                                        <ExternalLink aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-white/35" />
                                       )}
                                     </>
                                   );

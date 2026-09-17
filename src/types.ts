@@ -41,6 +41,7 @@ export interface ChatMessage {
     startIndex?: number;
     endIndex?: number;
     supportedText?: string;
+    retrievedAt?: string;
   }>;
 }
 
