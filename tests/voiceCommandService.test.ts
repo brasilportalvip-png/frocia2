@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
+import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, isAndroidChromeVoiceClient, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
 import { normalizeTextForSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
 describe('voice commands',()=>{
  it('remove ativação',()=>{expect(hasFrocWakePhrase('Ok Froc, pesquise receitas')).toBe(true);expect(normalizeFrocVoiceCommand('Ok Froc, pesquise receitas')).toBe('pesquise receitas');});
@@ -22,6 +22,17 @@ describe('voice commands',()=>{
  });
  it('reconhece o comando para desligar a escuta',()=>{
   expect(classifyFrocVoiceTranscript('Froc, pare a escuta',true,true)).toEqual({type:'stop'});
+ });
+ it('no celular envia a frase final após o toque mesmo sem repetir a palavra de ativação',()=>{
+  expect(classifyFrocMobileVoiceTranscript('como está o tempo hoje',true)).toEqual({type:'command',command:'como está o tempo hoje'});
+  expect(classifyFrocMobileVoiceTranscript('Ok Froc como está o tempo hoje',true)).toEqual({type:'command',command:'como está o tempo hoje'});
+ });
+ it('no celular orienta novamente quando a pessoa diz somente a ativação',()=>{
+  expect(classifyFrocMobileVoiceTranscript('Ok Froc',true)).toEqual({type:'wake'});
+ });
+ it('identifica Chrome real no Android sem confundir Edge ou Opera',()=>{
+  expect(isAndroidChromeVoiceClient('Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36')).toBe(true);
+  expect(isAndroidChromeVoiceClient('Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36 EdgA/151.0')).toBe(false);
  });
  it('transforma markdown em fala natural sem ler URLs ou símbolos',()=>{
   expect(normalizeTextForSpeech('## Olá\n- Veja [a fonte](https://example.com) e `npm test`.')).toBe('Olá Veja a fonte e npm test.');

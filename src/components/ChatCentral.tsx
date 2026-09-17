@@ -6,7 +6,7 @@ import React, {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice, splitTextForSpeech } from '../services/voicePreferenceService';
-import { classifyFrocVoiceTranscript } from '../services/voiceCommandService';
+import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import {
   ChevronDown,
   Code2,
@@ -237,6 +237,7 @@ export const ChatCentral: React.FC<
   const lastSpokenMessageRef = useRef<string | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
+  const mobileVoiceModeRef = useRef(false);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -288,7 +289,7 @@ export const ChatCentral: React.FC<
     }
     const recognition = new Recognition();
     recognition.lang = 'pt-BR';
-    recognition.continuous = true;
+    recognition.continuous = !mobileVoiceModeRef.current;
     recognition.interimResults = true;
     recognition.onresult = (event: any) => {
       let transcript = '';
@@ -297,9 +298,20 @@ export const ChatCentral: React.FC<
         transcript += event.results[index][0].transcript;
         isFinal = isFinal || event.results[index].isFinal;
       }
-      const intent = classifyFrocVoiceTranscript(transcript, isFinal, voiceArmedRef.current);
+      const intent = mobileVoiceModeRef.current
+        ? classifyFrocMobileVoiceTranscript(transcript, isFinal)
+        : classifyFrocVoiceTranscript(transcript, isFinal, voiceArmedRef.current);
       if (intent.type === 'preview') setInputText(intent.text);
       if (intent.type === 'wake') {
+        if (mobileVoiceModeRef.current) {
+          voiceEnabledRef.current = false;
+          voiceArmedRef.current = false;
+          setVoiceEnabled(false);
+          setVoicePhase('idle');
+          setInputText('');
+          setAttachmentError('No celular, diga “Ok Froc” e o pedido na mesma frase. Toque no microfone para tentar novamente.');
+          return;
+        }
         voiceArmedRef.current = true;
         setVoicePhase('awake');
         setInputText('');
@@ -321,11 +333,22 @@ export const ChatCentral: React.FC<
         setVoiceEnabled(false);
         setVoicePhase('error');
         setAttachmentError('Permissão de microfone negada. Libere o microfone nas configurações do navegador.');
+      } else if (mobileVoiceModeRef.current) {
+        voiceEnabledRef.current = false;
+        voiceArmedRef.current = false;
+        setVoiceEnabled(false);
+        setVoicePhase('idle');
+        setAttachmentError(
+          event?.error === 'no-speech'
+            ? 'Não ouvi uma frase completa. Toque no microfone e diga “Ok Froc” junto com o pedido.'
+            : 'A escuta foi encerrada pelo Chrome. Toque no microfone para falar novamente.'
+        );
       }
     };
     recognition.onend = () => {
       if (recognitionRef.current === recognition) recognitionRef.current = null;
       if (
+        !mobileVoiceModeRef.current &&
         voiceEnabledRef.current &&
         !isGeneratingRef.current &&
         !voiceAwaitingResponseRef.current &&
@@ -350,6 +373,9 @@ export const ChatCentral: React.FC<
       return;
     }
     voiceEnabledRef.current = true;
+    mobileVoiceModeRef.current =
+      isAndroidChromeVoiceClient(navigator.userAgent) ||
+      window.matchMedia?.('(pointer: coarse)').matches === true;
     voiceArmedRef.current = false;
     setVoiceEnabled(true);
     setVoicePhase('listening');
@@ -485,8 +511,15 @@ export const ChatCentral: React.FC<
       if (speechSession !== speechSessionRef.current) return;
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 300);
+        if (mobileVoiceModeRef.current) {
+          voiceEnabledRef.current = false;
+          voiceArmedRef.current = false;
+          setVoiceEnabled(false);
+          setVoicePhase('idle');
+        } else {
+          setVoicePhase('listening');
+          window.setTimeout(startVoiceRecognition, 300);
+        }
       }
     };
 
@@ -1340,7 +1373,9 @@ export const ChatCentral: React.FC<
                   </span>
                   <span className="block truncate text-[9px] text-white/40">
                     {voicePhase === 'listening'
-                      ? 'Diga “Ok, Froc” e depois faça seu pedido'
+                      ? mobileVoiceModeRef.current
+                        ? 'Diga em uma frase: “Ok Froc” e o seu pedido'
+                        : 'Diga “Ok, Froc” e depois faça seu pedido'
                       : voicePhase === 'awake'
                         ? 'Pode falar naturalmente'
                         : voicePhase === 'speaking'
@@ -1414,7 +1449,7 @@ export const ChatCentral: React.FC<
                 className={`froc-voice-button froc-voice-button--${voicePhase} flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors ${voiceEnabled ? 'text-white' : 'glass-button text-amber-300'}`}
                 title={voiceEnabled ? 'Desativar conversa por voz' : 'Ativar Froc Voz'}
                 aria-pressed={voiceEnabled}
-                aria-label={voiceEnabled ? 'Desativar conversa contínua por voz' : 'Ativar conversa contínua por voz'}
+                aria-label={voiceEnabled ? 'Desativar conversa por voz' : 'Ativar conversa por voz'}
               >
                 <span aria-hidden="true" className="text-base">◉</span>
               </button>
