@@ -20,7 +20,7 @@ import {
 } from '../selfEvolution/promptInjectionDefense.js';
 import { ProjectContinuityService } from './projectContinuityService.js';
 
-const MAX_RECENT_MESSAGES = 6;
+const MAX_RECENT_MESSAGES = 24;
 const MIN_PRESERVED_RECENT_MESSAGES = 4;
 
 const TRUST_AND_PERSONALITY_POLICY = `
@@ -266,7 +266,7 @@ export class ContextBuilder {
       requestPolicy,
       recentMessages = [],
       conversationSummary,
-      maxContextTokens = 16000
+      maxContextTokens = 48000
     } = params;
 
     const baseInstruction =

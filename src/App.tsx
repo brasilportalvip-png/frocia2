@@ -210,6 +210,14 @@ const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
 
   const [currentConversationId, setCurrentConversationId] =
   useState<string | null>(null);
+  // React state is committed asynchronously. Event handlers that create a
+  // conversation and immediately send a message must read the synchronous
+  // ref, otherwise the first turn can be written to a second conversation.
+  const currentConversationIdRef = useRef<string | null>(null);
+  const updateCurrentConversationId = (conversationId: string | null) => {
+    currentConversationIdRef.current = conversationId;
+    setCurrentConversationId(conversationId);
+  };
 
 const handleStopGeneration = () => {
   const controller =
@@ -329,7 +337,7 @@ const fetchConversations = async () => {
     setErrorMsg(null);
 
     if (!isAuthenticated) {
-      setCurrentConversationId(null);
+      updateCurrentConversationId(null);
       // Load guest saved sites if present
       try {
         const stored = localStorage.getItem(savedSitesKey);
@@ -348,14 +356,14 @@ const fetchConversations = async () => {
 
     // Load partition key for active conversation
     const savedConvId = localStorage.getItem(activeConvKey);
-    setCurrentConversationId(savedConvId);
+    updateCurrentConversationId(savedConvId);
 
     fetchConversations();
 
     if (savedConvId) {
       loadMessagesForConversation(savedConvId).then((success) => {
         if (!success) {
-          setCurrentConversationId(null);
+          updateCurrentConversationId(null);
           try {
             localStorage.removeItem(activeConvKey);
           } catch (storageError) {
@@ -488,7 +496,7 @@ const fetchConversations = async () => {
       });
 
       if (res.conversation) {
-        setCurrentConversationId(res.conversation.id);
+        updateCurrentConversationId(res.conversation.id);
         try {
           const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
           localStorage.setItem(activeConvKey, res.conversation.id);
@@ -507,7 +515,7 @@ const fetchConversations = async () => {
   };
 
   const handleSelectConversation = async (convId: string) => {
-    setCurrentConversationId(convId);
+    updateCurrentConversationId(convId);
     const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
     try {
       localStorage.setItem(activeConvKey, convId);
@@ -517,7 +525,7 @@ const fetchConversations = async () => {
 
     const success = await loadMessagesForConversation(convId);
     if (!success) {
-      setCurrentConversationId(null);
+      updateCurrentConversationId(null);
       try {
         localStorage.removeItem(activeConvKey);
       } catch (storageError) {
@@ -533,8 +541,8 @@ const fetchConversations = async () => {
       await apiClient(`/api/conversations/${convId}`, { method: 'DELETE' });
       setConversations((prev) => prev.filter((c) => c.id !== convId));
 
-      if (currentConversationId === convId) {
-        setCurrentConversationId(null);
+      if (currentConversationIdRef.current === convId) {
+        updateCurrentConversationId(null);
         try {
           localStorage.removeItem(activeConvKey);
         } catch (storageError) {
@@ -897,7 +905,7 @@ const handleGeneralChat = async (
 
   try {
     let activeConvId =
-      currentConversationId;
+      currentConversationIdRef.current;
 
     if (!activeConvId) {
       const convRes = await apiClient<{
@@ -917,9 +925,7 @@ const handleGeneralChat = async (
         activeConvId =
           convRes.conversation.id;
 
-        setCurrentConversationId(
-          activeConvId
-        );
+        updateCurrentConversationId(activeConvId);
 
         try {
           localStorage.setItem(
