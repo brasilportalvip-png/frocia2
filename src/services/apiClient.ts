@@ -4,6 +4,21 @@ export interface ApiClientOptions extends RequestInit {
   headers?: Record<string, string>;
 }
 
+function canRetryRequestBody(body: BodyInit | null | undefined): boolean {
+  return !(typeof ReadableStream !== 'undefined' && body instanceof ReadableStream);
+}
+
+async function refreshAuthorizationHeader(headers: Headers): Promise<boolean> {
+  if (!auth?.currentUser) return false;
+  try {
+    const refreshedToken = await auth.currentUser.getIdToken(true);
+    headers.set('Authorization', `Bearer ${refreshedToken}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class ApiClientError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -184,6 +199,25 @@ export async function apiClient<T = any>(
     );
   }
 
+  if (
+    response.status === 401 &&
+    canRetryRequestBody(options.body) &&
+    await refreshAuthorizationHeader(headers)
+  ) {
+    try {
+      response = await fetch(endpoint, {
+        ...options,
+        headers,
+      });
+    } catch {
+      throw new ApiClientError(
+        'Não foi possível reconectar ao servidor após renovar sua sessão.',
+        0,
+        'network_error_after_token_refresh'
+      );
+    }
+  }
+
   const payload = await parseResponseBody(response);
 
   if (!response.ok) {
@@ -262,6 +296,25 @@ export async function apiClientBlob(
       0,
       'network_error'
     );
+  }
+
+  if (
+    response.status === 401 &&
+    canRetryRequestBody(options.body) &&
+    await refreshAuthorizationHeader(headers)
+  ) {
+    try {
+      response = await fetch(endpoint, {
+        ...options,
+        headers,
+      });
+    } catch {
+      throw new ApiClientError(
+        'Não foi possível retomar o download após renovar sua sessão.',
+        0,
+        'network_error_after_token_refresh'
+      );
+    }
   }
 
   if (!response.ok) {
