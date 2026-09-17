@@ -58,3 +58,23 @@ export function splitTextForSpeech(text: string, maxLength = 220): string[] {
   push();
   return chunks;
 }
+
+/**
+ * Keeps the opening phrase intentionally short so neural playback can begin
+ * quickly, then uses larger chunks that can be prepared while audio is playing.
+ */
+export function splitTextForProgressiveSpeech(
+  text: string,
+  firstChunkLength = 150,
+  followingChunkLength = 380
+): string[] {
+  const firstPass = splitTextForSpeech(text, firstChunkLength);
+  if (firstPass.length <= 1) return firstPass;
+
+  const [first, ...remaining] = firstPass;
+  const following = splitTextForSpeech(
+    remaining.join(' '),
+    followingChunkLength
+  );
+  return [first, ...following];
+}

@@ -5,12 +5,16 @@ interface NeuralSpeechResponse {
   mimeType: string;
 }
 
-export async function createNeuralSpeechAudio(text: string): Promise<{
+export async function createNeuralSpeechAudio(
+  text: string,
+  signal?: AbortSignal
+): Promise<{
   audio: HTMLAudioElement;
   objectUrl: string;
 }> {
   const result = await apiClient<NeuralSpeechResponse>('/api/ai/speech', {
     method: 'POST',
+    signal,
     body: JSON.stringify({ text }),
   });
   const binary = atob(result.audioBase64);
