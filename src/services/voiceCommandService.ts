@@ -45,3 +45,23 @@ export function classifyFrocVoiceTranscript(
   if ((hasWake || armed) && command) return { type: 'command', command };
   return { type: 'none' };
 }
+
+/**
+ * Mobile browsers already require an explicit tap before opening the microphone.
+ * After that user gesture, accepting a direct final sentence avoids forcing a
+ * second wake-word round-trip that Chrome for Android frequently closes between
+ * utterances.
+ */
+export function classifyFrocMobileVoiceTranscript(
+  transcript: string,
+  isFinal: boolean
+): FrocVoiceIntent {
+  const intent = classifyFrocVoiceTranscript(transcript, isFinal, false);
+  if (!isFinal || intent.type !== 'none') return intent;
+  const command = normalizeFrocVoiceCommand(transcript);
+  return command ? { type: 'command', command } : { type: 'none' };
+}
+
+export function isAndroidChromeVoiceClient(userAgent: string): boolean {
+  return /Android/i.test(userAgent) && /Chrome\//i.test(userAgent) && !/(?:EdgA|OPR)\//i.test(userAgent);
+}
