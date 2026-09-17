@@ -27,6 +27,7 @@ import { GeminiFailoverService } from './geminiFailoverService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
+import { ResearchLinkIntegrityService } from './researchLinkIntegrityService.js';
 import {
   ExternalImportService,
   extractGithubRepositoryUrlFromPrompt,
@@ -447,7 +448,9 @@ aiResponseText = resolvedCitationPayload.text;
 citations.splice(
   0,
   citations.length,
-  ...resolvedCitationPayload.citations
+  ...CitationService.filterDirectWebCitations(
+    resolvedCitationPayload.citations
+  )
 );
 
 const mergedCitations = CitationService.mergeCitations(
@@ -487,6 +490,13 @@ const evidence = ResearchEvidenceService.finalize({
 });
 
 aiResponseText = evidence.text;
+
+if (enableSearchGrounding) {
+  aiResponseText = ResearchLinkIntegrityService.enforce(
+    aiResponseText,
+    citations
+  ).text;
+}
 
 if (executionId) {
   ExecutionAbortRegistry.clear(executionId);

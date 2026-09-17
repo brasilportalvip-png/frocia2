@@ -22,6 +22,7 @@ import {
   GeminiProviderError,
 } from './providers/geminiProvider.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
+import { ResearchLinkIntegrityService } from './researchLinkIntegrityService.js';
 import {
   ResearchAction,
   ResearchQualityAssessment,
@@ -778,10 +779,9 @@ export class ResearchJobService {
       text: response.text,
       citations: extracted,
     });
-    const citations = CitationService.mergeCitations(resolved.citations).slice(
-      0,
-      MAX_CITATIONS
-    );
+    const citations = CitationService.filterDirectWebCitations(
+      CitationService.mergeCitations(resolved.citations)
+    ).slice(0, MAX_CITATIONS);
     const finding: ResearchFinding = {
       query,
       text: resolved.text.slice(0, 24_000),
@@ -826,9 +826,11 @@ export class ResearchJobService {
   ): Promise<ResearchJobView> {
     if (!adminDb) throw new ResearchJobUnavailableError('Banco indisponível.');
     const payload = decodePayload(job);
-    const citations = CitationService.mergeCitations(
-      job.citations || [],
-      ...(job.findings || []).map((finding) => finding.citations)
+    const citations = CitationService.filterDirectWebCitations(
+      CitationService.mergeCitations(
+        job.citations || [],
+        ...(job.findings || []).map((finding) => finding.citations)
+      )
     ).slice(0, MAX_CITATIONS);
     const sourceList = citations
       .map(
@@ -886,7 +888,10 @@ export class ResearchJobService {
         : `\n\n**Limitações verificadas:**\n${quality.limitations
             .map((item) => `- ${item}`)
             .join('\n')}`;
-    const text = `${evidence.text}${qualityNote}`.trim();
+    const text = ResearchLinkIntegrityService.enforce(
+      `${evidence.text}${qualityNote}`.trim(),
+      cited
+    ).text;
     const totalInputTokens = (job.inputTokens || 0) + response.inputTokens;
     const totalOutputTokens = (job.outputTokens || 0) + response.outputTokens;
     const consumedCredits = Math.min(

@@ -8,12 +8,9 @@ import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice } from '../services/voicePreferenceService';
 import { getFinalFrocVoiceCommand, normalizeFrocVoiceCommand } from '../services/voiceCommandService';
 import {
-  Check,
   ChevronDown,
   Code2,
-  Copy,
   Eye,
-  ExternalLink,
   FileCode2,
   Globe,
   Image as ImageIcon,
@@ -26,11 +23,7 @@ import {
   Send,
   Sparkles,
   Square,
-  ThumbsDown,
-  ThumbsUp,
   Video,
-  Volume2,
-  VolumeX,
   X,
   Zap
 } from 'lucide-react';
@@ -740,7 +733,7 @@ export const ChatCentral: React.FC<
                       </span>
 
                       {isSelected && (
-                        <Check className="h-3.5 w-3.5 text-amber-300" />
+                        <span aria-hidden="true" className="text-amber-300">✓</span>
                       )}
                     </button>
                   );
@@ -893,7 +886,7 @@ export const ChatCentral: React.FC<
                             className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3"
                           >
                             <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-amber-200/75">
-                              <Globe aria-hidden="true" className="h-3.5 w-3.5" />
+                              <span aria-hidden="true" className="text-amber-300">●</span>
                               Fontes verificáveis
                             </div>
 
@@ -938,7 +931,7 @@ export const ChatCentral: React.FC<
                                         )}
                                       </span>
                                       {isPublicWebSource && (
-                                        <ExternalLink aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                                        <span aria-hidden="true" className="shrink-0 text-xs text-white/35">↗</span>
                                       )}
                                     </>
                                   );
@@ -983,9 +976,9 @@ export const ChatCentral: React.FC<
                             title="Copiar resposta"
                           >
                             {copiedId === message.id ? (
-                              <Check className="h-3.5 w-3.5 text-amber-300" />
+                              <span aria-hidden="true" className="text-amber-300">✓</span>
                             ) : (
-                              <Copy className="h-3.5 w-3.5" />
+                              <span aria-hidden="true">⧉</span>
                             )}
                           </button>
 
@@ -1005,9 +998,9 @@ export const ChatCentral: React.FC<
                             }
                           >
                             {speakingMsgId === message.id ? (
-                              <VolumeX className="h-3.5 w-3.5 text-amber-300" />
+                              <span aria-hidden="true" className="text-amber-300">■</span>
                             ) : (
-                              <Volume2 className="h-3.5 w-3.5" />
+                              <span aria-hidden="true">♪</span>
                             )}
                           </button>
 
@@ -1021,7 +1014,7 @@ export const ChatCentral: React.FC<
                             }`}
                             title="Gostei da resposta"
                           >
-                            <ThumbsUp className="h-3.5 w-3.5" />
+                            <span aria-hidden="true">＋</span>
                           </button>
 
                           <button
@@ -1034,7 +1027,7 @@ export const ChatCentral: React.FC<
                             }`}
                             title="Não gostei da resposta"
                           >
-                            <ThumbsDown className="h-3.5 w-3.5" />
+                            <span aria-hidden="true">−</span>
                           </button>
 
                           {message.isHtmlUpdate && (

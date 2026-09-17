@@ -8,6 +8,9 @@ import { SiteAuditReport } from '../services/siteAuditService.js';
 
 const MAX_TITLE_LENGTH = 240;
 const MAX_SNIPPET_LENGTH = 500;
+const GENERIC_SECTION_SLUGS = new Set([
+  'blog', 'news', 'noticias', 'technology', 'tecnologia', 'tech', 'latest',
+]);
 
 function cleanText(
   value: unknown,
@@ -143,6 +146,19 @@ function sourceDomain(url: URL): string {
     .toLowerCase();
 }
 
+export function isLikelyDirectSourceUrl(value: unknown): boolean {
+  const url = normalizePublicHttpsUrl(value);
+  if (!url) return false;
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length === 0 && !url.search) return false;
+  if (
+    segments.length === 1 &&
+    GENERIC_SECTION_SLUGS.has(segments[0].toLowerCase()) &&
+    !url.search
+  ) return false;
+  return true;
+}
+
 function numberCitations(
   citations: MessageCitation[]
 ): MessageCitation[] {
@@ -253,13 +269,33 @@ export class CitationService {
     const citations: MessageCitation[] = [];
     const seen = new Set<string>();
 
-    for (const chunk of chunks) {
+    const supports =
+      groundingMetadata &&
+      typeof groundingMetadata === 'object' &&
+      Array.isArray((groundingMetadata as any).groundingSupports)
+        ? (groundingMetadata as any).groundingSupports
+        : [];
+
+    for (const [chunkIndex, chunk] of chunks.entries()) {
       const url = normalizePublicHttpsUrl(
         chunk?.web?.uri
       );
 
       if (!url || seen.has(url.href)) continue;
       seen.add(url.href);
+
+      const matchingSupports = supports.filter((support: any) =>
+        Array.isArray(support?.groundingChunkIndices) &&
+        support.groundingChunkIndices.includes(chunkIndex)
+      );
+      const firstSegment = matchingSupports[0]?.segment;
+      const supportedText = cleanText(
+        matchingSupports
+          .map((support: any) => support?.segment?.text)
+          .filter((text: unknown) => typeof text === 'string')
+          .join(' '),
+        MAX_SNIPPET_LENGTH
+      );
 
       citations.push({
         title:
@@ -275,10 +311,31 @@ export class CitationService {
         sourceType: 'web',
         domain: sourceDomain(url),
         retrievedAt: new Date().toISOString(),
+        startIndex:
+          typeof firstSegment?.startIndex === 'number'
+            ? firstSegment.startIndex
+            : undefined,
+        endIndex:
+          typeof firstSegment?.endIndex === 'number'
+            ? firstSegment.endIndex
+            : undefined,
+        supportedText: supportedText || undefined,
       });
     }
 
     return numberCitations(citations);
+  }
+
+  static filterDirectWebCitations(
+    citations: MessageCitation[]
+  ): MessageCitation[] {
+    return numberCitations(
+      citations.filter(
+        (citation) =>
+          citation.sourceType !== 'web' ||
+          isLikelyDirectSourceUrl(citation.uri)
+      )
+    );
   }
 
   static mergeCitations(
