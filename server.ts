@@ -70,6 +70,7 @@ import { featureFlagRouter } from './server/routes/featureFlagRoutes.js';
 import { externalImportRouter } from './server/routes/externalImportRoutes.js';
 import { portableRecoveryRouter } from './server/routes/portableRecoveryRoutes.js';
 import { toolRouter } from './server/routes/toolRoutes.js';
+import { githubAppRouter } from './server/routes/githubAppRoutes.js';
 import { AIExecutionService } from './server/ai/aiExecutionService.js';
 
 
@@ -188,6 +189,7 @@ export async function createApp() {
   app.use('/api/site-audits', siteAuditRouter);
   app.use('/api/social-search', socialSearchRouter);
   app.use('/api/tools', toolRouter);
+  app.use('/api/github', githubAppRouter);
   app.use(
     '/api/ai',
     requireFeatureFlag('ai_chat'),
@@ -1410,6 +1412,7 @@ try {
     if (
   process.env.NODE_ENV !== 'production' &&
   process.env.NODE_ENV !== 'test' &&
+  process.env.DISABLE_HMR !== 'true' &&
   !process.env.VERCEL
 ) {
     const require = createRequire(import.meta.url);

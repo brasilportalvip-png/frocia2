@@ -24,7 +24,10 @@ function evidence(nonce: string): EngineeringSandboxEvidence {
     id,
     command: id === 'install' ? 'npm ci'
       : id === 'typecheck' ? 'npm run typecheck'
+        : id === 'lint' ? 'npm run lint'
         : id === 'test' ? 'npm test'
+          : id === 'e2e' ? 'npm run test:e2e'
+            : id === 'security-audit' ? 'npm audit --omit=dev --audit-level=moderate'
           : id === 'production-integrity' ? 'npm run validate:production-integrity'
             : id === 'build' ? 'npm run build' : 'git diff --check',
     exitCode: 0, startedAt, completedAt, durationMs: 1000,
@@ -56,7 +59,7 @@ describe('EngineeringSandboxEvidenceService', () => {
       now: new Date('2026-09-17T10:00:03.000Z'),
     });
     expect(result.valid).toBe(true);
-    expect(result.evidence?.commands).toHaveLength(6);
+    expect(result.evidence?.commands).toHaveLength(9);
   });
 
   it('rejeita corpo alterado depois da assinatura', () => {
