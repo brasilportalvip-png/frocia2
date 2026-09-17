@@ -1,8 +1,12 @@
+const FROC_NAME_PATTERN = '(?:froc|frock|frog|rock|froke|fr[oó]qui)';
+const WAKE_PREFIX_PATTERN = '(?:ok(?:ay)?|ol[aá]|ei)';
+const WAKE_PATTERN = new RegExp(`^\\s*${WAKE_PREFIX_PATTERN}\\s+${FROC_NAME_PATTERN}\\b`, 'i');
+
 export function normalizeFrocVoiceCommand(transcript: string): string {
-  return transcript.replace(/^\s*(?:ok|ol[aá]|ei)\s+froc(?:\s*,?\s*)?/i, '').replace(/\s+/g, ' ').trim();
+  return transcript.replace(WAKE_PATTERN, '').replace(/^\s*,?\s*/, '').replace(/\s+/g, ' ').trim();
 }
 export function hasFrocWakePhrase(transcript: string): boolean {
-  return /^\s*(?:ok|ol[aá]|ei)\s+froc\b/i.test(transcript);
+  return WAKE_PATTERN.test(transcript);
 }
 
 export function getFinalFrocVoiceCommand(
@@ -20,7 +24,10 @@ export type FrocVoiceIntent =
   | { type: 'command'; command: string }
   | { type: 'stop' };
 
-const STOP_PATTERN = /^(?:froc\s*,?\s*)?(?:pare|parar|desligue|desativar)(?:\s+(?:a\s+)?escuta)?[.!]?$/i;
+const STOP_PATTERN = new RegExp(
+  `^(?:${FROC_NAME_PATTERN}\\s*,?\\s*)?(?:pare|parar|desligue|desativar)(?:\\s+(?:a\\s+)?escuta)?[.!]?$`,
+  'i'
+);
 
 export function classifyFrocVoiceTranscript(
   transcript: string,

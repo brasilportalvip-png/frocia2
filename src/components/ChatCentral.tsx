@@ -351,6 +351,14 @@ export const ChatCentral: React.FC<
     voiceArmedRef.current = false;
     setVoiceEnabled(true);
     setVoicePhase('listening');
+    // Desbloqueia a saída de áudio dentro do gesto do usuário. Chrome e
+    // Edge podem bloquear a primeira fala automática sem esta ativação.
+    if ('speechSynthesis' in window) {
+      const unlockUtterance = new SpeechSynthesisUtterance(' ');
+      unlockUtterance.volume = 0;
+      window.speechSynthesis.speak(unlockUtterance);
+      window.speechSynthesis.cancel();
+    }
     startVoiceRecognition();
   };
 
@@ -482,12 +490,14 @@ export const ChatCentral: React.FC<
 
     utterance.onerror = () => {
       setSpeakingMsgId(null);
+      setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
       if (voiceEnabledRef.current) {
         setVoicePhase('listening');
         window.setTimeout(startVoiceRecognition, 300);
       }
     };
 
+    window.speechSynthesis.resume();
     window.speechSynthesis.speak(utterance);
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
