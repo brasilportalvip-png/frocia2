@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice, splitTextForSpeech } from '../services/voicePreferenceService';
 import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { createNeuralSpeechAudio } from '../services/neuralSpeechService';
 import {
   ChevronDown,
   Code2,
@@ -238,6 +239,8 @@ export const ChatCentral: React.FC<
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
   const mobileVoiceModeRef = useRef(false);
+  const neuralAudioRef = useRef<HTMLAudioElement | null>(null);
+  const neuralAudioUrlRef = useRef<string | null>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -260,6 +263,15 @@ export const ChatCentral: React.FC<
     try { recognition?.stop(); } catch { /* sessão já encerrada */ }
   };
 
+  const stopNeuralAudio = () => {
+    neuralAudioRef.current?.pause();
+    neuralAudioRef.current = null;
+    if (neuralAudioUrlRef.current) {
+      URL.revokeObjectURL(neuralAudioUrlRef.current);
+      neuralAudioUrlRef.current = null;
+    }
+  };
+
   const disableVoiceConversation = () => {
     speechSessionRef.current += 1;
     voiceEnabledRef.current = false;
@@ -268,6 +280,7 @@ export const ChatCentral: React.FC<
     setVoiceEnabled(false);
     setVoicePhase('idle');
     stopVoiceRecognition();
+    stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     setSpeakingMsgId(null);
   };
@@ -459,6 +472,7 @@ export const ChatCentral: React.FC<
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
+      stopNeuralAudio();
     };
   }, []);
 
@@ -482,13 +496,10 @@ export const ChatCentral: React.FC<
     messageId: string,
     text: string
   ) => {
-    if (!('speechSynthesis' in window)) {
-      return;
-    }
-
     if (speakingMsgId === messageId) {
       speechSessionRef.current += 1;
-      window.speechSynthesis.cancel();
+      stopNeuralAudio();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
         setVoicePhase('listening');
@@ -499,7 +510,8 @@ export const ChatCentral: React.FC<
 
     stopVoiceRecognition();
     const speechSession = ++speechSessionRef.current;
-    window.speechSynthesis.cancel();
+    stopNeuralAudio();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 
     const chunks = splitTextForSpeech(text);
     if (chunks.length === 0) {
@@ -509,6 +521,7 @@ export const ChatCentral: React.FC<
 
     const finishSpeaking = () => {
       if (speechSession !== speechSessionRef.current) return;
+      stopNeuralAudio();
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
         if (mobileVoiceModeRef.current) {
@@ -525,7 +538,8 @@ export const ChatCentral: React.FC<
 
     const failSpeaking = () => {
       if (speechSession !== speechSessionRef.current) return;
-      window.speechSynthesis.cancel();
+      stopNeuralAudio();
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       setSpeakingMsgId(null);
       setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
       if (voiceEnabledRef.current) {
@@ -534,10 +548,14 @@ export const ChatCentral: React.FC<
       }
     };
 
-    const speakChunk = (index: number) => {
+    const speakBrowserChunk = (index: number) => {
       if (speechSession !== speechSessionRef.current) return;
       if (index >= chunks.length) {
         finishSpeaking();
+        return;
+      }
+      if (!('speechSynthesis' in window)) {
+        failSpeaking();
         return;
       }
       const utterance = new SpeechSynthesisUtterance(chunks[index]);
@@ -548,18 +566,47 @@ export const ChatCentral: React.FC<
       if (preferredVoice) utterance.voice = preferredVoice;
       utterance.rate = 0.96;
       utterance.pitch = 0.88;
-      utterance.onend = () => speakChunk(index + 1);
+      utterance.onend = () => speakBrowserChunk(index + 1);
       utterance.onerror = failSpeaking;
       window.speechSynthesis.speak(utterance);
     };
 
-    window.speechSynthesis.resume();
-    // Chromium can discard an utterance queued in the same tick as cancel().
-    window.setTimeout(() => {
-      if (speechSession === speechSessionRef.current) speakChunk(0);
-    }, 60);
+    const speakWithBrowserFallback = () => {
+      if (speechSession !== speechSessionRef.current) return;
+      if (!('speechSynthesis' in window)) {
+        failSpeaking();
+        return;
+      }
+      window.speechSynthesis.resume();
+      window.setTimeout(() => {
+        if (speechSession === speechSessionRef.current) speakBrowserChunk(0);
+      }, 60);
+    };
+
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
+    void createNeuralSpeechAudio(chunks.join(' '))
+      .then(async ({ audio, objectUrl }) => {
+        if (speechSession !== speechSessionRef.current) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        neuralAudioRef.current = audio;
+        neuralAudioUrlRef.current = objectUrl;
+        audio.onended = finishSpeaking;
+        audio.onerror = () => {
+          stopNeuralAudio();
+          speakWithBrowserFallback();
+        };
+        try {
+          await audio.play();
+          setAttachmentError(null);
+        } catch {
+          stopNeuralAudio();
+          speakWithBrowserFallback();
+        }
+      })
+      .catch(() => speakWithBrowserFallback());
   };
 
   useEffect(() => {

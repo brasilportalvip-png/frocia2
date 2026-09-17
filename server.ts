@@ -71,6 +71,7 @@ import { externalImportRouter } from './server/routes/externalImportRoutes.js';
 import { portableRecoveryRouter } from './server/routes/portableRecoveryRoutes.js';
 import { toolRouter } from './server/routes/toolRoutes.js';
 import { githubAppRouter } from './server/routes/githubAppRoutes.js';
+import { speechRouter } from './server/routes/speechRoutes.js';
 import { AIExecutionService } from './server/ai/aiExecutionService.js';
 
 
@@ -190,6 +191,11 @@ export async function createApp() {
   app.use('/api/social-search', socialSearchRouter);
   app.use('/api/tools', toolRouter);
   app.use('/api/github', githubAppRouter);
+  app.use(
+    '/api/ai/speech',
+    requireFeatureFlag('ai_chat'),
+    speechRouter
+  );
   app.use(
     '/api/ai',
     requireFeatureFlag('ai_chat'),
