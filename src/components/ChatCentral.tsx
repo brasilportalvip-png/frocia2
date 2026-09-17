@@ -5,7 +5,7 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { selectPreferredMalePortugueseVoice } from '../services/voicePreferenceService';
+import { selectPreferredMalePortugueseVoice, splitTextForSpeech } from '../services/voicePreferenceService';
 import { classifyFrocVoiceTranscript } from '../services/voiceCommandService';
 import {
   ChevronDown,
@@ -236,6 +236,7 @@ export const ChatCentral: React.FC<
   const voiceAwaitingResponseRef = useRef(false);
   const lastSpokenMessageRef = useRef<string | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
+  const speechSessionRef = useRef(0);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -259,6 +260,7 @@ export const ChatCentral: React.FC<
   };
 
   const disableVoiceConversation = () => {
+    speechSessionRef.current += 1;
     voiceEnabledRef.current = false;
     voiceArmedRef.current = false;
     voiceAwaitingResponseRef.current = false;
@@ -459,6 +461,7 @@ export const ChatCentral: React.FC<
     }
 
     if (speakingMsgId === messageId) {
+      speechSessionRef.current += 1;
       window.speechSynthesis.cancel();
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
@@ -469,18 +472,17 @@ export const ChatCentral: React.FC<
     }
 
     stopVoiceRecognition();
+    const speechSession = ++speechSessionRef.current;
     window.speechSynthesis.cancel();
 
-    const utterance =
-      new SpeechSynthesisUtterance(text);
+    const chunks = splitTextForSpeech(text);
+    if (chunks.length === 0) {
+      setAttachmentError('Esta resposta não possui texto disponível para leitura.');
+      return;
+    }
 
-    utterance.lang = 'pt-BR';
-    const preferredVoice = selectPreferredMalePortugueseVoice(window.speechSynthesis.getVoices());
-    if (preferredVoice) utterance.voice = preferredVoice;
-    utterance.rate = 0.96;
-    utterance.pitch = 0.88;
-
-    utterance.onend = () => {
+    const finishSpeaking = () => {
+      if (speechSession !== speechSessionRef.current) return;
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
         setVoicePhase('listening');
@@ -488,7 +490,9 @@ export const ChatCentral: React.FC<
       }
     };
 
-    utterance.onerror = () => {
+    const failSpeaking = () => {
+      if (speechSession !== speechSessionRef.current) return;
+      window.speechSynthesis.cancel();
       setSpeakingMsgId(null);
       setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
       if (voiceEnabledRef.current) {
@@ -497,8 +501,30 @@ export const ChatCentral: React.FC<
       }
     };
 
+    const speakChunk = (index: number) => {
+      if (speechSession !== speechSessionRef.current) return;
+      if (index >= chunks.length) {
+        finishSpeaking();
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      utterance.lang = 'pt-BR';
+      const preferredVoice = selectPreferredMalePortugueseVoice(
+        window.speechSynthesis.getVoices()
+      );
+      if (preferredVoice) utterance.voice = preferredVoice;
+      utterance.rate = 0.96;
+      utterance.pitch = 0.88;
+      utterance.onend = () => speakChunk(index + 1);
+      utterance.onerror = failSpeaking;
+      window.speechSynthesis.speak(utterance);
+    };
+
     window.speechSynthesis.resume();
-    window.speechSynthesis.speak(utterance);
+    // Chromium can discard an utterance queued in the same tick as cancel().
+    window.setTimeout(() => {
+      if (speechSession === speechSessionRef.current) speakChunk(0);
+    }, 60);
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
   };

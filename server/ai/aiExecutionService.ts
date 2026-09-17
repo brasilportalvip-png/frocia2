@@ -357,9 +357,12 @@ if (params.abortSignal?.aborted) {
       }
 
       let weatherContext = '';
-      const weatherInput = `${assembled.userMessage}\n${sanitizedPrompt}`;
-      if (WeatherService.shouldFetch(weatherInput)) {
-        const location = WeatherService.extractLocation(weatherInput);
+      // Tool activation must be scoped to the current user turn. `assembled.userMessage`
+      // also contains conversation history, so inspecting it here could reactivate a
+      // weather request from an older message and attach a stale citation to an
+      // unrelated answer (for example, a later programming question).
+      if (WeatherService.shouldFetch(sanitizedPrompt)) {
+        const location = WeatherService.extractLocation(sanitizedPrompt);
         if (location) {
           try {
             const weather = await WeatherService.current(location);
