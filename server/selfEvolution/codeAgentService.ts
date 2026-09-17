@@ -10,7 +10,19 @@ import {
 const MAX_GENERATED_FILES = 25;
 const MAX_FILE_CONTENT_BYTES = 1_000_000;
 const MAX_TOTAL_CONTENT_BYTES = 2_500_000;
-const WORKER_TIMEOUT_MS = 60_000;
+const DEFAULT_WORKER_TIMEOUT_MS = 15 * 60_000;
+const MIN_WORKER_TIMEOUT_MS = 60_000;
+const MAX_WORKER_TIMEOUT_MS = 30 * 60_000;
+
+function workerTimeoutMs(): number {
+  const configured = Number(process.env.SELF_EVOLUTION_WORKER_TIMEOUT_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_WORKER_TIMEOUT_MS;
+  return Math.max(MIN_WORKER_TIMEOUT_MS, Math.min(MAX_WORKER_TIMEOUT_MS, Math.trunc(configured)));
+}
+
+function isProtectedGeneratedPath(value: string): boolean {
+  return /(?:^|\/)(?:\.git|\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(value);
+}
 
 export interface GeneratedFileChange {
   path: string;
@@ -199,7 +211,9 @@ implements ICodeAgentAdapter {
             executionPolicy: {
               schemaVersion: 'engineering-sandbox-v1',
               networkPolicy: 'restricted',
-              allowedPaths: candidate.probableFiles,
+              allowedPaths: candidate.probableFiles
+                .map(normalizeRepositoryPath)
+                .filter((path) => isSafeRepositoryPath(path) && !isProtectedGeneratedPath(path)),
               requiredCommands: REQUIRED_ENGINEERING_COMMANDS,
               requireRollbackVerification: true,
               maximumFiles: MAX_GENERATED_FILES,
@@ -207,7 +221,7 @@ implements ICodeAgentAdapter {
             }
           }),
           signal: AbortSignal.timeout(
-            WORKER_TIMEOUT_MS
+            workerTimeoutMs()
           )
         }
       );
@@ -260,9 +274,9 @@ implements ICodeAgentAdapter {
       }
 
       const allowedCandidatePaths = new Set(
-        candidate.probableFiles.map(
-          normalizeRepositoryPath
-        )
+        candidate.probableFiles
+          .map(normalizeRepositoryPath)
+          .filter((path) => isSafeRepositoryPath(path) && !isProtectedGeneratedPath(path))
       );
       let engineeringPlanDigest: string | undefined;
       if (data.engineeringContext && typeof data.engineeringContext === 'object' && !Array.isArray(data.engineeringContext)) {
@@ -272,7 +286,7 @@ implements ICodeAgentAdapter {
           for (const rawPath of context.editablePaths) {
             if (typeof rawPath !== 'string') continue;
             const normalized = normalizeRepositoryPath(rawPath);
-            if (isSafeRepositoryPath(normalized) && !/(?:^|\/)(?:\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(normalized)) {
+            if (isSafeRepositoryPath(normalized) && !isProtectedGeneratedPath(normalized)) {
               allowedCandidatePaths.add(normalized);
             }
           }
@@ -320,7 +334,7 @@ implements ICodeAgentAdapter {
         if (
           !isSafeRepositoryPath(
             normalizedPath
-          )
+          ) || isProtectedGeneratedPath(normalizedPath)
         ) {
           return createFailureResult(
             `Caminho inseguro retornado pelo worker: ${normalizedPath || '(vazio)'}.`
