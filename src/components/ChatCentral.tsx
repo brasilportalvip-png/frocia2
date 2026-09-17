@@ -6,7 +6,7 @@ import React, {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice } from '../services/voicePreferenceService';
-import { getFinalFrocVoiceCommand, normalizeFrocVoiceCommand } from '../services/voiceCommandService';
+import { classifyFrocVoiceTranscript } from '../services/voiceCommandService';
 import {
   ChevronDown,
   Code2,
@@ -15,7 +15,6 @@ import {
   Globe,
   Image as ImageIcon,
   Layout,
-  Mic,
   Paperclip,
   Plus,
   RefreshCw,
@@ -76,6 +75,17 @@ interface ChatCentralProps {
     onConfirmAction: () => void
   ) => void;
 }
+
+type VoicePhase = 'idle' | 'listening' | 'awake' | 'thinking' | 'speaking' | 'error';
+
+const VOICE_PHASE_LABELS: Record<VoicePhase, string> = {
+  idle: 'Voz desativada',
+  listening: 'Aguardando “Ok, Froc”',
+  awake: 'Estou ouvindo seu pedido',
+  thinking: 'Pensando na resposta',
+  speaking: 'Conversando com você',
+  error: 'Verifique o microfone',
+};
 
 interface ModeDefinition {
   name: ChatMode;
@@ -216,9 +226,16 @@ export const ChatCentral: React.FC<
     useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] =
     useState<string | null>(null);
-  const [isListening, setIsListening] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [voiceCommandToSend, setVoiceCommandToSend] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const voiceEnabledRef = useRef(false);
+  const voiceArmedRef = useRef(false);
+  const isGeneratingRef = useRef(isGenerating);
+  const voiceAwaitingResponseRef = useRef(false);
+  const lastSpokenMessageRef = useRef<string | null>(null);
+  const restartVoiceTimerRef = useRef<number | null>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -231,15 +248,40 @@ export const ChatCentral: React.FC<
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
 
-  const toggleVoiceListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
+  const stopVoiceRecognition = () => {
+    if (restartVoiceTimerRef.current) {
+      window.clearTimeout(restartVoiceTimerRef.current);
+      restartVoiceTimerRef.current = null;
     }
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try { recognition?.stop(); } catch { /* sessão já encerrada */ }
+  };
+
+  const disableVoiceConversation = () => {
+    voiceEnabledRef.current = false;
+    voiceArmedRef.current = false;
+    voiceAwaitingResponseRef.current = false;
+    setVoiceEnabled(false);
+    setVoicePhase('idle');
+    stopVoiceRecognition();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    setSpeakingMsgId(null);
+  };
+
+  const startVoiceRecognition = () => {
+    if (
+      !voiceEnabledRef.current ||
+      recognitionRef.current ||
+      isGeneratingRef.current ||
+      ('speechSynthesis' in window && window.speechSynthesis.speaking)
+    ) return;
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!Recognition) {
       setAttachmentError('Reconhecimento de voz indisponível. Use Chrome ou Edge atualizado.');
+      voiceEnabledRef.current = false;
+      setVoiceEnabled(false);
+      setVoicePhase('error');
       return;
     }
     const recognition = new Recognition();
@@ -253,24 +295,80 @@ export const ChatCentral: React.FC<
         transcript += event.results[index][0].transcript;
         isFinal = isFinal || event.results[index].isFinal;
       }
-      const command = normalizeFrocVoiceCommand(transcript);
-      if (command) setInputText(command);
-      const finalCommand = getFinalFrocVoiceCommand(transcript, isFinal);
-      if (finalCommand) {
-        setVoiceCommandToSend(finalCommand);
-        recognition.stop();
+      const intent = classifyFrocVoiceTranscript(transcript, isFinal, voiceArmedRef.current);
+      if (intent.type === 'preview') setInputText(intent.text);
+      if (intent.type === 'wake') {
+        voiceArmedRef.current = true;
+        setVoicePhase('awake');
+        setInputText('');
+      }
+      if (intent.type === 'command') {
+        voiceArmedRef.current = false;
+        voiceAwaitingResponseRef.current = true;
+        setVoicePhase('thinking');
+        setInputText(intent.command);
+        setVoiceCommandToSend(intent.command);
+        stopVoiceRecognition();
+      }
+      if (intent.type === 'stop') disableVoiceConversation();
+    };
+    recognition.onerror = (event: any) => {
+      recognitionRef.current = null;
+      if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+        voiceEnabledRef.current = false;
+        setVoiceEnabled(false);
+        setVoicePhase('error');
+        setAttachmentError('Permissão de microfone negada. Libere o microfone nas configurações do navegador.');
       }
     };
-    recognition.onerror = () => { setIsListening(false); setAttachmentError('A escuta foi interrompida. Verifique o microfone.'); };
-    recognition.onend = () => setIsListening(false);
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      if (
+        voiceEnabledRef.current &&
+        !isGeneratingRef.current &&
+        !voiceAwaitingResponseRef.current &&
+        !window.speechSynthesis?.speaking
+      ) {
+        restartVoiceTimerRef.current = window.setTimeout(startVoiceRecognition, 350);
+      }
+    };
     recognitionRef.current = recognition;
-    recognition.start();
-    setAttachmentError(null);
-    setIsListening(true);
+    try {
+      recognition.start();
+      setAttachmentError(null);
+      setVoicePhase(voiceArmedRef.current ? 'awake' : 'listening');
+    } catch {
+      recognitionRef.current = null;
+    }
   };
 
+  const toggleVoiceListening = () => {
+    if (voiceEnabledRef.current) {
+      disableVoiceConversation();
+      return;
+    }
+    voiceEnabledRef.current = true;
+    voiceArmedRef.current = false;
+    setVoiceEnabled(true);
+    setVoicePhase('listening');
+    startVoiceRecognition();
+  };
+
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+    if (!voiceEnabledRef.current) return;
+    if (isGenerating) {
+      setVoicePhase('thinking');
+      stopVoiceRecognition();
+    } else if (!voiceAwaitingResponseRef.current && !window.speechSynthesis?.speaking) {
+      startVoiceRecognition();
+    }
+  }, [isGenerating]);
+
   useEffect(() => () => {
-    recognitionRef.current?.stop();
+    voiceEnabledRef.current = false;
+    stopVoiceRecognition();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   }, []);
 
   const currentMode =
@@ -355,9 +453,14 @@ export const ChatCentral: React.FC<
     if (speakingMsgId === messageId) {
       window.speechSynthesis.cancel();
       setSpeakingMsgId(null);
+      if (voiceEnabledRef.current) {
+        setVoicePhase('listening');
+        window.setTimeout(startVoiceRecognition, 250);
+      }
       return;
     }
 
+    stopVoiceRecognition();
     window.speechSynthesis.cancel();
 
     const utterance =
@@ -371,15 +474,42 @@ export const ChatCentral: React.FC<
 
     utterance.onend = () => {
       setSpeakingMsgId(null);
+      if (voiceEnabledRef.current) {
+        setVoicePhase('listening');
+        window.setTimeout(startVoiceRecognition, 300);
+      }
     };
 
     utterance.onerror = () => {
       setSpeakingMsgId(null);
+      if (voiceEnabledRef.current) {
+        setVoicePhase('listening');
+        window.setTimeout(startVoiceRecognition, 300);
+      }
     };
 
     window.speechSynthesis.speak(utterance);
     setSpeakingMsgId(messageId);
+    setVoicePhase('speaking');
   };
+
+  useEffect(() => {
+    if (
+      !voiceEnabled ||
+      !voiceAwaitingResponseRef.current ||
+      isGenerating
+    ) return;
+    const latestAiMessage = [...messages]
+      .reverse()
+      .find((message) => message.sender === 'ai');
+    if (
+      !latestAiMessage ||
+      latestAiMessage.id === lastSpokenMessageRef.current
+    ) return;
+    voiceAwaitingResponseRef.current = false;
+    lastSpokenMessageRef.current = latestAiMessage.id;
+    handleSpeak(latestAiMessage.id, latestAiMessage.text);
+  }, [messages, isGenerating, voiceEnabled]);
 
   const appendAttachment = (file: UploadedFile) => {
     if (
@@ -619,6 +749,11 @@ export const ChatCentral: React.FC<
       setAttachedFiles([]);
       setIsAttachmentMenuOpen(false);
     } catch {
+      if (voiceText && voiceEnabledRef.current) {
+        voiceAwaitingResponseRef.current = false;
+        setVoicePhase('listening');
+        window.setTimeout(startVoiceRecognition, 300);
+      }
       return;
     }
   };
@@ -1152,6 +1287,36 @@ export const ChatCentral: React.FC<
           )}
 
           <div className="relative rounded-[26px] border border-white/12 bg-[#111111]/96 p-2 shadow-[0_20px_60px_rgba(0,0,0,0.48),0_0_28px_rgba(245,196,81,0.05)] backdrop-blur-2xl transition-all focus-within:border-amber-300/35 focus-within:shadow-[0_20px_60px_rgba(0,0,0,0.5),0_0_30px_rgba(245,196,81,0.09)]">
+            {voiceEnabled && (
+              <div
+                className={`froc-voice-status froc-voice-status--${voicePhase} mb-2 flex items-center gap-3 rounded-2xl px-3 py-2`}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="froc-voice-orb" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[11px] font-black text-white/85">
+                    {VOICE_PHASE_LABELS[voicePhase]}
+                  </span>
+                  <span className="block truncate text-[9px] text-white/40">
+                    {voicePhase === 'listening'
+                      ? 'Diga “Ok, Froc” e depois faça seu pedido'
+                      : voicePhase === 'awake'
+                        ? 'Pode falar naturalmente'
+                        : voicePhase === 'speaking'
+                          ? 'Você pode interromper pelo botão de voz'
+                          : 'A conversa continuará automaticamente'}
+                  </span>
+                </span>
+                <span className="froc-voice-wave" aria-hidden="true">
+                  <i /><i /><i /><i />
+                </span>
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <button
                 type="button"
@@ -1207,18 +1372,16 @@ export const ChatCentral: React.FC<
                 className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/28 focus:outline-none disabled:opacity-60"
               />
 
-              {!isGenerating && (
-                <button
-                  type="button"
-                  onClick={toggleVoiceListening}
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'glass-button text-amber-300'}`}
-                  title={isListening ? 'Parar escuta' : 'Diga Ok Froc e faça seu pedido'}
-                  aria-pressed={isListening}
-                  aria-label={isListening ? 'Parar escuta por voz' : 'Iniciar comando de voz'}
-                >
-                  <Mic className="h-4 w-4" />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={toggleVoiceListening}
+                className={`froc-voice-button froc-voice-button--${voicePhase} flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors ${voiceEnabled ? 'text-white' : 'glass-button text-amber-300'}`}
+                title={voiceEnabled ? 'Desativar conversa por voz' : 'Ativar Froc Voz'}
+                aria-pressed={voiceEnabled}
+                aria-label={voiceEnabled ? 'Desativar conversa contínua por voz' : 'Ativar conversa contínua por voz'}
+              >
+                <span aria-hidden="true" className="text-base">◉</span>
+              </button>
 
               {isGenerating ? (
                 <button
