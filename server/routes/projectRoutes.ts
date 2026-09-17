@@ -4,6 +4,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { FieldValue } from 'firebase-admin/firestore';
+import { ProjectContinuityService } from '../ai/projectContinuityService.js';
 
 export const projectRouter = Router();
 
@@ -29,6 +30,58 @@ const updateProjectSchema = z.object({
   html: z.string().max(5000000).optional(),
   isFavorite: z.boolean().optional(),
   suggestedRefinements: z.array(z.string().max(200)).max(20).optional(),
+});
+
+const continuitySchema = z.object({
+  kind: z.enum([
+    'architecture', 'requirement', 'decision', 'constraint', 'artifact',
+    'defect', 'fix', 'branch', 'commit', 'pull_request', 'test',
+    'pending_action', 'deployment',
+  ]),
+  title: z.string().trim().min(1).max(160),
+  content: z.string().trim().min(1).max(4000),
+  sourceRefs: z.array(z.string().trim().min(1).max(300)).max(30).default([]),
+  confidence: z.number().min(0).max(1).default(1),
+  validUntil: z.string().datetime().nullable().optional(),
+  supersedesId: z.string().trim().min(1).max(160).nullable().optional(),
+  userConfirmed: z.literal(true),
+}).strict();
+
+projectRouter.get('/:id/continuity', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const entries = await ProjectContinuityService.listActive(
+      req.user!.uid, req.user!.tenantId, req.params.id, 100
+    );
+    return res.json({ entries });
+  } catch (error) {
+    const denied = error instanceof Error && error.message === 'project_continuity_access_denied';
+    return res.status(denied ? 404 : 503).json({
+      error: {
+        code: denied ? 'project_not_found' : 'project_continuity_unavailable',
+        message: denied ? 'Projeto não encontrado ou sem acesso.' : 'Memória estruturada do projeto indisponível.',
+        correlationId: req.correlationId,
+      },
+    });
+  }
+});
+
+projectRouter.post('/:id/continuity', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const parsed = continuitySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({
+    error: { code: 'invalid_project_continuity', message: parsed.error.issues[0].message, correlationId: req.correlationId },
+  });
+  try {
+    const { userConfirmed: _confirmed, ...input } = parsed.data;
+    const entry = await ProjectContinuityService.append(
+      req.user!.uid, req.user!.tenantId, req.params.id, input
+    );
+    return res.status(201).json({ entry });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'project_continuity_failed';
+    return res.status(code.includes('access_denied') ? 404 : code.includes('supersedes') ? 409 : 503).json({
+      error: { code, message: 'Não foi possível atualizar a continuidade do projeto.', correlationId: req.correlationId },
+    });
+  }
 });
 
 // GET /api/projects - List user projects
@@ -126,6 +179,7 @@ projectRouter.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
 
     await ref.set({
       userId: uid,
+      tenantId: req.user!.tenantId,
       title,
       description,
       prompt,

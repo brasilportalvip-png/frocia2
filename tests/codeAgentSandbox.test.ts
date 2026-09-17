@@ -36,7 +36,10 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
         id,
         command: id === 'install' ? 'npm ci'
           : id === 'typecheck' ? 'npm run typecheck'
+            : id === 'lint' ? 'npm run lint'
             : id === 'test' ? 'npm test'
+              : id === 'e2e' ? 'npm run test:e2e'
+                : id === 'security-audit' ? 'npm audit --omit=dev --audit-level=moderate'
               : id === 'production-integrity' ? 'npm run validate:production-integrity'
                 : id === 'build' ? 'npm run build' : 'git diff --check',
         exitCode: 0, startedAt, completedAt, durationMs: 0,

@@ -21,6 +21,11 @@ import {
   COMMITTEE_ROLES,
   CommitteeReview
 } from '../selfEvolution/selfEvolutionTypes.js';
+import { SpecialistCommitteeExecutionService } from '../selfEvolution/specialistCommitteeExecutionService.js';
+import {
+  CAPABILITY_CATEGORIES,
+  ContinuousCapabilityEvaluationService,
+} from '../ai/continuousCapabilityEvaluationService.js';
 
 export const selfEvolutionRouter = Router();
 
@@ -84,6 +89,23 @@ const committeeReviewSchema = z.object({
     .default([])
 }).strict();
 
+const capabilityRunSchema = z.object({
+  version: z.string().min(1).max(100),
+  commitSha: z.string().regex(/^[a-f0-9]{40}$/i),
+  createdAt: z.string().datetime(),
+  scores: z.array(z.object({
+    category: z.enum(CAPABILITY_CATEGORIES),
+    passed: z.number().int().nonnegative(), total: z.number().int().positive(),
+    score: z.number().min(0).max(1),
+    evidenceRefs: z.array(z.string().min(1).max(500)).min(1).max(100),
+  }).strict()).length(CAPABILITY_CATEGORIES.length),
+}).strict();
+
+const capabilityComparisonSchema = z.object({
+  baseline: capabilityRunSchema,
+  candidate: capabilityRunSchema,
+}).strict();
+
 // GET /api/admin/self-evolution/status
 selfEvolutionRouter.get(
   '/status',
@@ -113,6 +135,54 @@ selfEvolutionRouter.get(
       candidatesCount: candidates.length,
       timestamp: new Date().toISOString()
     });
+  }
+);
+
+selfEvolutionRouter.post(
+  '/evaluations/compare',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = capabilityComparisonSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Avaliação comparativa inválida.' });
+    try {
+      const comparison = await ContinuousCapabilityEvaluationService.compareAndPersist(
+        parsed.data.baseline, parsed.data.candidate
+      );
+      return res.status(comparison.passed ? 200 : 409).json({ comparison });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Avaliação inválida.' });
+    }
+  }
+);
+
+selfEvolutionRouter.post(
+  '/committee/:id/execute-specialists',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = candidateIdSchema.safeParse(req.params);
+    if (!parsed.success) return res.status(400).json({ error: 'ID de candidato inválido.' });
+    const candidate = await ImprovementPlannerService.getCandidateById(parsed.data.id);
+    if (!candidate) return res.status(404).json({ error: 'Candidato não encontrado.' });
+    try {
+      const reviews = await SpecialistCommitteeExecutionService.execute(candidate);
+      const gate = CommitteeGateService.evaluateReviews({
+        candidateId: candidate.id, commitSha: candidate.headCommitSha,
+        riskLevel: candidate.riskLevel, reviews,
+      });
+      await AuditService.logEvent({
+        actor: req.user!.uid, action: 'specialist_committee_executed', resource: candidate.id,
+        riskLevel: candidate.riskLevel, result: gate.approved ? 'success' : 'rejected',
+        commitHash: candidate.headCommitSha, correlationId: req.correlationId,
+        reason: gate.reason,
+      });
+      return res.json({ reviews, gate });
+    } catch (error) {
+      return res.status(503).json({
+        error: { code: 'specialist_committee_unavailable', message: error instanceof Error ? error.message : 'Comitê indisponível.' },
+      });
+    }
   }
 );
 

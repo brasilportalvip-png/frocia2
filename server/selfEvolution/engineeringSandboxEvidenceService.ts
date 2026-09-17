@@ -4,7 +4,10 @@ import { ImprovementCandidate } from './selfEvolutionTypes.js';
 export const REQUIRED_ENGINEERING_COMMANDS = [
   'install',
   'typecheck',
+  'lint',
   'test',
+  'e2e',
+  'security-audit',
   'production-integrity',
   'build',
   'diff-check',
@@ -16,7 +19,10 @@ export type EngineeringCommandId =
 const COMMAND_CONTRACT: Record<EngineeringCommandId, string[]> = {
   install: ['npm ci'],
   typecheck: ['npm run typecheck', 'npm run lint'],
+  lint: ['npm run lint', 'npm run typecheck'],
   test: ['npm test'],
+  e2e: ['npm run test:e2e'],
+  'security-audit': ['npm audit --omit=dev --audit-level=moderate'],
   'production-integrity': ['npm run validate:production-integrity'],
   build: ['npm run build'],
   'diff-check': ['git diff --check'],

@@ -1,0 +1,22 @@
+services:
+  frocia-worker:
+    build: .
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=2g
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env.worker

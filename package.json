@@ -50,6 +50,7 @@
     "react-dom": "^19.0.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "typescript": "~5.8.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -67,7 +68,6 @@
     "supertest": "^7.2.2",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vitest": "^4.1.10"
   },

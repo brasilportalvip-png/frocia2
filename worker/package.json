@@ -1,0 +1,14 @@
+{
+  "name": "frocia-engineering-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@google/genai": "^2.4.0",
+    "express": "^4.21.2",
+    "playwright": "^1.62.1"
+  }
+}
