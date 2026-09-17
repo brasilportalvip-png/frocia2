@@ -4,6 +4,7 @@ import type {
 import {
   ImprovementCandidate
 } from './selfEvolutionTypes.js';
+import { EngineeringSandboxEvidenceService } from './engineeringSandboxEvidenceService.js';
 
 const GITHUB_API_URL =
   'https://api.github.com';
@@ -189,6 +190,16 @@ export class GithubAutomationService {
     ) {
       return this.createFailure(
         'O patch não contém arquivos para gerar um commit.'
+      );
+    }
+
+    if (!EngineeringSandboxEvidenceService.isCompleteEvidence(
+      patch.executionEvidence,
+      candidate.id,
+      patch.baseSha
+    )) {
+      return this.createFailure(
+        'O patch não possui atestado completo e verificável da sandbox de engenharia.'
       );
     }
 

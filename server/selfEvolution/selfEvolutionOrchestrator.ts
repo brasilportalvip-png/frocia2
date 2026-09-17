@@ -84,6 +84,20 @@ export class SelfEvolutionOrchestrator {
           };
         }
 
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'tests_passed');
+        await AuditService.logEvent({
+          actor: 'engineering-sandbox',
+          action: 'verify_isolated_patch_execution',
+          resource: candidateId,
+          riskLevel: candidate.riskLevel,
+          result: 'success',
+          commitHash: patch.baseSha,
+          reason:
+            `Sandbox ${patch.executionEvidence?.sandboxId || '(desconhecida)'} ` +
+            `executou ${patch.executionEvidence?.commands.length || 0} comandos obrigatórios; ` +
+            `diff ${patch.executionEvidence?.diffSha256 || '(sem hash)'}.`,
+        });
+
         await ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
 
         // GitHub PR
@@ -114,7 +128,7 @@ export class SelfEvolutionOrchestrator {
         await ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
 
         // CI Check
-        const ci = await CIGateService.runCIGate(candidate.branchName);
+        const ci = await CIGateService.runCIGate(pr.commitSha);
         if (ci.status === 'not_configured' || ci.status === 'pending') {
           return {
             state: candidate.state,

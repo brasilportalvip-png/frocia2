@@ -63,7 +63,10 @@ export class CapabilityRegistryService {
       MercadoPagoService.isConfigured();
 
     const selfEvolutionOk =
-      SelfEvolutionPolicyEngine.isSelfEvolutionEnabled();
+      SelfEvolutionPolicyEngine.isSelfEvolutionEnabled() &&
+      Boolean(process.env.SELF_EVOLUTION_WORKER_URL?.trim()) &&
+      Boolean(process.env.SELF_EVOLUTION_WORKER_TOKEN?.trim()) &&
+      (process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET?.trim().length || 0) >= 32;
 
     const imageGenerationAvailable =
       mediaGeminiOk &&
@@ -409,6 +412,7 @@ export class CapabilityRegistryService {
           'SELF_EVOLUTION_ENABLED=true',
           'SELF_EVOLUTION_WORKER_URL',
           'SELF_EVOLUTION_WORKER_TOKEN',
+          'SELF_EVOLUTION_WORKER_SIGNING_SECRET (mínimo 32 caracteres)',
         ],
         checkedAt: now,
         lastVerifiedAt: null,
