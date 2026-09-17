@@ -34,6 +34,10 @@ import {
 } from '../services/externalImportService.js';
 import { CalculatorService } from './calculatorService.js';
 import { WeatherService } from './weatherService.js';
+import {
+  GithubResearchReport,
+  GithubResearchService,
+} from './githubResearchService.js';
 
 export class AIExecutionService {
   /**
@@ -177,6 +181,7 @@ export class AIExecutionService {
     let ragChunksUsed: KnowledgeChunk[] = [];
     let socialSearchReport: SocialSearchReport | null = null;
     let siteAuditReport: SiteAuditReport | null = null;
+    let githubResearchReport: GithubResearchReport | null = null;
     let contextTruncated = false;
     let omittedHistoryCount = 0;
     let longTermSegmentsUsed = 0;
@@ -328,6 +333,29 @@ if (params.abortSignal?.aborted) {
         );
       }
 
+      if (plan.tools.some((tool) => tool.name === 'github_repository_research')) {
+        githubResearchReport = await GithubResearchService.research(sanitizedPrompt);
+        const githubItems = [
+          ...githubResearchReport.commits,
+          ...githubResearchReport.issues,
+          ...githubResearchReport.pullRequests,
+          ...githubResearchReport.releases,
+          ...githubResearchReport.workflows,
+        ].slice(0, 30);
+        citations.push(
+          ...githubItems.map((item) => ({
+            title: item.title,
+            uri: item.url,
+            snippet: item.sha
+              ? `Commit ${item.sha.slice(0, 12)}`
+              : item.state || 'GitHub',
+            sourceType: 'web' as const,
+            domain: 'github.com',
+            retrievedAt: githubResearchReport!.fetchedAt,
+          }))
+        );
+      }
+
       let weatherContext = '';
       const weatherInput = `${assembled.userMessage}\n${sanitizedPrompt}`;
       if (WeatherService.shouldFetch(weatherInput)) {
@@ -357,6 +385,7 @@ if (params.abortSignal?.aborted) {
         assembled.userMessage,
         siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
         socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : '',
+        githubResearchReport ? GithubResearchService.toGroundingContext(githubResearchReport) : '',
         calculatorContext,
         weatherContext,
       ].join('');

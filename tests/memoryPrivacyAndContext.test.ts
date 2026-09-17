@@ -228,7 +228,7 @@ describe('Conversation continuity and explicit context limits', () => {
     expect(result.summary).toContain('[msg:m9]');
   });
 
-  it('reduces oversized history and reports the omission explicitly', async () => {
+  it('reduces oversized history while preserving at least four recent messages', async () => {
     vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
     vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);
     vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue('Responda com precisão.');
@@ -240,15 +240,87 @@ describe('Conversation continuity and explicit context limits', () => {
       recentMessages: Array.from({ length: 6 }, (_, index) => ({
         id: `m${index}`,
         role: index % 2 ? 'assistant' : 'user',
-        content: `Mensagem ${index} ${'contexto '.repeat(900)}`,
+        content: `Mensagem ${index} ${'contexto '.repeat(75)}`,
       })),
-      maxContextTokens: 2500,
+      maxContextTokens: 2100,
     });
 
     expect(assembled.contextTruncated).toBe(true);
-    expect(assembled.omittedHistoryCount).toBeGreaterThan(0);
-    expect(assembled.tokenCountEstimate).toBeLessThanOrEqual(2500);
+    expect(assembled.omittedHistoryCount).toBe(1);
+    expect(assembled.userMessage).not.toContain('[msg:m0]');
+    expect(assembled.userMessage).toContain('[msg:m1]');
+    expect(assembled.userMessage).toContain('[msg:m2]');
+    expect(assembled.userMessage).toContain('[msg:m5]');
+    expect(assembled.tokenCountEstimate).toBeLessThanOrEqual(2100);
     expect(assembled.systemInstruction).toContain('[LIMITE DE CONTEXTO]');
+  });
+
+  it('descarta contexto menos prioritário antes do histórico recente', async () => {
+    vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([
+      {
+        id: 'memory-1',
+        userId: 'user-1',
+        tenantId: 'user:user-1',
+        scope: 'user',
+        scopeId: null,
+        category: 'contexto antigo',
+        content: 'memória antiga '.repeat(300),
+        source: 'user_manual',
+        confidence: 1,
+        purpose: 'personalization',
+        sensitivity: 'standard',
+        retentionDays: 365,
+        consentVersion: 'memory-consent-v1',
+        consentedAt: '2026-09-17T00:00:00.000Z',
+        sourceMessageIds: [],
+        validFrom: '2026-09-17T00:00:00.000Z',
+        validUntil: '2027-09-17T00:00:00.000Z',
+        status: 'active',
+        userApproved: true,
+        createdAt: '2026-09-17T00:00:00.000Z',
+        updatedAt: '2026-09-17T00:00:00.000Z',
+      },
+    ]);
+    vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);
+    vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue('Responda com precisão.');
+
+    const assembled = await ContextBuilder.assemble({
+      userId: 'user-1',
+      mode: 'smart',
+      prompt: 'Continue a conversa.',
+      recentMessages: Array.from({ length: 6 }, (_, index) => ({
+        id: `recent-${index}`,
+        role: index % 2 ? 'assistant' : 'user',
+        content: `Mensagem recente ${index}.`,
+      })),
+      maxContextTokens: 1550,
+    });
+
+    expect(assembled.contextTruncated).toBe(true);
+    expect(assembled.memoriesUsed).toHaveLength(0);
+    expect(assembled.omittedHistoryCount).toBe(0);
+    expect(assembled.userMessage).toContain('[msg:recent-0]');
+    expect(assembled.userMessage).toContain('[msg:recent-5]');
+  });
+
+  it('falha fechada em vez de remover as quatro mensagens mais recentes', async () => {
+    vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
+    vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);
+    vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue('Base');
+
+    await expect(
+      ContextBuilder.assemble({
+        userId: 'user-1',
+        mode: 'smart',
+        prompt: 'Continue.',
+        recentMessages: Array.from({ length: 4 }, (_, index) => ({
+          id: `protected-${index}`,
+          role: index % 2 ? 'assistant' : 'user',
+          content: `Contexto indispensável ${index} ${'detalhe '.repeat(300)}`,
+        })),
+        maxContextTokens: 500,
+      })
+    ).rejects.toBeInstanceOf(ContextLimitExceededError);
   });
 
   it('fails closed when even the current request cannot fit safely', async () => {

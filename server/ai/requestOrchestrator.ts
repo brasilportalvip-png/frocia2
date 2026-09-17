@@ -8,6 +8,7 @@ import {
   ToolDeclaration,
 } from './types/ai.js';
 import { SocialSearchService } from './socialSearchService.js';
+import { shouldResearchGithub } from './githubResearchService.js';
 
 export class UnknownAIToolError extends Error {
   constructor(readonly toolName: string) {
@@ -117,6 +118,10 @@ export class AIRequestOrchestrator {
 
     if (classification.siteAuditUrl) {
       automaticTools.push('site_audit');
+    }
+
+    if (shouldResearchGithub(input.prompt)) {
+      automaticTools.push('github_repository_research');
     }
 
     if (input.knowledgeBaseIds?.length) {

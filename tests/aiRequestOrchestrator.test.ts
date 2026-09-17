@@ -74,6 +74,19 @@ describe('AI request classification and orchestration', () => {
     expect(plan.systemPolicy).toContain('Você TEM acesso à pesquisa Google');
   });
 
+  it('ativa pesquisa GitHub somente leitura para auditoria de repositório', () => {
+    const plan = AIRequestOrchestrator.plan({
+      mode: 'code',
+      prompt: 'Analise a arquitetura, issues e commits de https://github.com/openai/example',
+    });
+    expect(plan.tools.map((tool) => tool.name)).toContain(
+      'github_repository_research'
+    );
+    expect(
+      plan.tools.find((tool) => tool.name === 'github_repository_research')
+    ).toMatchObject({ mutatesState: false, requiresConfirmation: false });
+  });
+
   it.each([
     'Usando somente a planilha Excel anexada, informe o valor atual registrado.',
     'Analise apenas o CSV anexado e preserve os valores exatamente.',
