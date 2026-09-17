@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
+import { normalizeTextForSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
 describe('voice commands',()=>{
  it('remove ativação',()=>{expect(hasFrocWakePhrase('Ok Froc, pesquise receitas')).toBe(true);expect(normalizeFrocVoiceCommand('Ok Froc, pesquise receitas')).toBe('pesquise receitas');});
  it('aceita fala direta',()=>{expect(normalizeFrocVoiceCommand('monte um orçamento')).toBe('monte um orçamento');});
@@ -21,5 +22,15 @@ describe('voice commands',()=>{
  });
  it('reconhece o comando para desligar a escuta',()=>{
   expect(classifyFrocVoiceTranscript('Froc, pare a escuta',true,true)).toEqual({type:'stop'});
+ });
+ it('transforma markdown em fala natural sem ler URLs ou símbolos',()=>{
+  expect(normalizeTextForSpeech('## Olá\n- Veja [a fonte](https://example.com) e `npm test`.')).toBe('Olá Veja a fonte e npm test.');
+ });
+ it('divide respostas longas em trechos seguros sem perder o conteúdo',()=>{
+  const original='Primeira frase curta. Segunda frase um pouco maior para validar a fila de reprodução. Terceira frase final.';
+  const chunks=splitTextForSpeech(original,55);
+  expect(chunks.length).toBeGreaterThan(1);
+  expect(chunks.join(' ')).toBe(original);
+  expect(chunks.every((chunk)=>chunk.length<=55)).toBe(true);
  });
 });
