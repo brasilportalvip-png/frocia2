@@ -120,7 +120,10 @@ export class AIRequestOrchestrator {
       );
     }
 
-    if (classification.domain === 'finance') {
+    if (
+      classification.domain === 'finance' ||
+      /\b(calcul[ea]|quanto (?:é|e)|resultado de)\b/i.test(input.prompt)
+    ) {
       automaticTools.push('execute_calculator');
     }
 

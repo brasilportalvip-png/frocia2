@@ -117,6 +117,15 @@ describe('AI request classification and orchestration', () => {
     );
   });
 
+  it('ativa a calculadora para pedidos matemáticos fora do domínio financeiro', () => {
+    const plan = AIRequestOrchestrator.plan({
+      mode: 'smart',
+      prompt: 'Calcule (25 + 5) * 2 para mim.',
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toContain('execute_calculator');
+  });
+
   it('rejects a requested tool that is not registered', () => {
     expect(() =>
       AIRequestOrchestrator.plan({

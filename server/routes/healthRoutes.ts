@@ -44,6 +44,13 @@ async function withReadinessTimeout<T>(promise: Promise<T>): Promise<T> {
 
 export const healthRouter = Router();
 
+healthRouter.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // GET /live - Minimal liveness probe (Public)
 healthRouter.get(['/live', '/api/live'], (req: AuthenticatedRequest, res) => {
   return res.status(200).json({

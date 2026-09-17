@@ -31,6 +31,7 @@ import {
   ExternalImportService,
   extractGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
+import { CalculatorService } from './calculatorService.js';
 
 export class AIExecutionService {
   /**
@@ -325,10 +326,18 @@ if (params.abortSignal?.aborted) {
         );
       }
 
+      const calculatorExpression = plan.tools.some((tool) => tool.name === 'execute_calculator')
+        ? CalculatorService.extractExpression(sanitizedPrompt)
+        : null;
+      const calculatorContext = calculatorExpression
+        ? `\n\n[RESULTADO DETERMINÍSTICO DA CALCULADORA]\nExpressão: ${calculatorExpression}\nResultado: ${CalculatorService.evaluate(calculatorExpression)}\nUse este resultado; não recalcule nem altere o valor.\n[/RESULTADO DETERMINÍSTICO DA CALCULADORA]`
+        : '';
+
       const modelUserMessage = [
         assembled.userMessage,
         siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
-        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : ''
+        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : '',
+        calculatorContext,
       ].join('');
 
       startTime = Date.now();

@@ -69,6 +69,7 @@ import { aiRouter } from './server/routes/aiRoutes.js';
 import { featureFlagRouter } from './server/routes/featureFlagRoutes.js';
 import { externalImportRouter } from './server/routes/externalImportRoutes.js';
 import { portableRecoveryRouter } from './server/routes/portableRecoveryRoutes.js';
+import { toolRouter } from './server/routes/toolRoutes.js';
 import { AIExecutionService } from './server/ai/aiExecutionService.js';
 
 
@@ -186,6 +187,7 @@ export async function createApp() {
   app.use('/api/imports', externalImportRouter);
   app.use('/api/site-audits', siteAuditRouter);
   app.use('/api/social-search', socialSearchRouter);
+  app.use('/api/tools', toolRouter);
   app.use(
     '/api/ai',
     requireFeatureFlag('ai_chat'),
