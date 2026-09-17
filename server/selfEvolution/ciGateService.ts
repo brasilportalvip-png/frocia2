@@ -42,6 +42,14 @@ export class CIGateService {
       };
     }
 
+    if (!/^[a-f0-9]{7,40}$/i.test(refOrSha)) {
+      return {
+        status: 'failed', passed: false, typecheckPassed: false,
+        unitTestsPassed: false, securityAuditPassed: false,
+        details: 'O CI Gate exige o SHA imutável do commit, não uma branch ou referência mutável.',
+      };
+    }
+
     try {
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${refOrSha}/check-runs`, {
         headers: {
@@ -49,6 +57,7 @@ export class CIGateService {
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'FrocIA-SelfEvolution',
         },
+        signal: AbortSignal.timeout(20_000),
       });
 
       if (!response.ok) {
@@ -87,6 +96,19 @@ export class CIGateService {
         }
         const name = (run.name || '').toLowerCase();
         const conclusion = run.conclusion;
+        const trustedGithubActions =
+          run.app?.slug === 'github-actions' || run.app?.name === 'GitHub Actions';
+
+        // O workflow oficial executa typecheck, todas as suites e auditoria
+        // dentro de um único job agregado chamado "Build & Verify".
+        if (trustedGithubActions && name === 'build & verify' && conclusion === 'success') {
+          typecheckPassed = true;
+          unitTestsPassed = true;
+          securityAuditPassed = true;
+          continue;
+        }
+
+        if (!trustedGithubActions) continue;
 
         if (name.includes('lint') || name.includes('typecheck')) {
           if (conclusion === 'success') typecheckPassed = true;
@@ -134,4 +156,3 @@ export class CIGateService {
     }
   }
 }
-

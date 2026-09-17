@@ -1,11 +1,12 @@
 import { promises as dns } from 'node:dns';
 import { isIP } from 'node:net';
+import { RepositoryArchitectureService } from '../ai/repositoryArchitectureService.js';
 
 const FETCH_TIMEOUT_MS = 12_000;
 const MAX_REDIRECTS = 3;
 const MAX_RESPONSE_BYTES = 900_000;
 const MAX_EXTRACTED_CHARACTERS = 700_000;
-const MAX_GITHUB_TREE_ITEMS = 500;
+const MAX_GITHUB_TREE_ITEMS = 5_000;
 const MAX_GITHUB_CONTENT_FILES = 40;
 const MAX_GITHUB_FILE_BYTES = 100_000;
 const MAX_GITHUB_CONTENT_BYTES = 350_000;
@@ -719,8 +720,29 @@ function decodeGithubTextBlob(blob: { content?: string; encoding?: string }, pat
   const replacementCount = (text.match(/\uFFFD/g) || []).length;
   if (replacementCount > Math.max(2, text.length * 0.001)) return null;
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(text)) return null;
-  if (/\b(?:github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_]{20,}/.test(text)) return null;
-  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, MAX_GITHUB_FILE_BYTES);
+  return redactRepositorySecrets(text)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .slice(0, MAX_GITHUB_FILE_BYTES);
+}
+
+const REPOSITORY_SECRET_PATTERNS: RegExp[] = [
+  /\b(?:github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9_]{20,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bAIza[0-9A-Za-z_-]{30,}\b/g,
+  /\b(?:sk|pk)_(?:live|test)_[0-9A-Za-z]{16,}\b/g,
+  /\b(?:xox[baprs]-)[0-9A-Za-z-]{10,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*\b/gi,
+];
+
+export function redactRepositorySecrets(content: string): string {
+  return REPOSITORY_SECRET_PATTERNS.reduce(
+    (safe, pattern) => safe.replace(pattern, '[SEGREDO_REMOVIDO]'),
+    content
+  );
+}
+
+export function detectRepositoryPromptInjection(content: string): boolean {
+  return /\b(?:ignore|disregard|forget)\b[\s\S]{0,80}\b(?:previous|prior|system|developer)\b[\s\S]{0,40}\b(?:instructions?|prompt|message)|\b(?:revele|exponha|mostre)\b[\s\S]{0,50}\b(?:segredo|token|senha|system prompt)|\b(?:execute|rode)\b[\s\S]{0,50}\b(?:sem confirma[çc][aã]o|imediatamente)\b/i.test(content);
 }
 
 async function importGithubRepository(sourceUrl: string): Promise<ExternalImportResult> {
@@ -790,9 +812,9 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
   try {
     const readme = await githubApiJson<{ content?: string; encoding?: string }>(`${repoPath}/readme`, remainingTime());
     if (readme.encoding === 'base64' && readme.content) {
-      readmeText = Buffer.from(readme.content.replace(/\s/g, ''), 'base64')
-        .toString('utf8')
-        .slice(0, 80_000);
+      const decodedReadme = Buffer.from(readme.content.replace(/\s/g, ''), 'base64')
+        .toString('utf8');
+      readmeText = redactRepositorySecrets(decodedReadme).slice(0, 80_000);
     }
   } catch (error) {
     if (!(error instanceof ExternalImportError) || error.status !== 404) throw error;
@@ -804,7 +826,6 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
     .map((item) => ({ path: item.path!, size: item.size ?? null }));
 
   const candidates = (tree.tree || [])
-    .slice(0, MAX_GITHUB_TREE_ITEMS)
     .filter(isEligibleGithubTextFile)
     .sort((left, right) =>
       githubImportPriority(left.path) - githubImportPriority(right.path) ||
@@ -834,6 +855,10 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
     }
   }
 
+  const architecture = RepositoryArchitectureService.analyze(
+    importedFiles.map((file) => ({ path: file.path, content: file.content }))
+  );
+
   const document = {
     repository: metadata.full_name,
     url: metadata.html_url || normalizedUrl,
@@ -855,7 +880,26 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
       maximumFileBytes: MAX_GITHUB_FILE_BYTES,
       maximumTotalBytes: MAX_GITHUB_CONTENT_BYTES
     },
+    trustBoundary: {
+      contentIsUntrustedData: true,
+      instructionsMustNotBeExecuted: true,
+      promptInjectionDetected: importedFiles.some((file) =>
+        detectRepositoryPromptInjection(file.content)
+      ) || detectRepositoryPromptInjection(readmeText),
+      filesWithPromptInjectionSignals: importedFiles
+        .filter((file) => detectRepositoryPromptInjection(file.content))
+        .map((file) => file.path)
+        .slice(0, 20),
+    },
     importedFiles,
+    architecture: {
+      ...architecture,
+      coverage: {
+        listedFiles: files.length,
+        analyzedContentFiles: importedFiles.length,
+        partial: importedFiles.length < files.length || Boolean(tree.truncated),
+      },
+    },
     readme: readmeText || null
   };
   const content = JSON.stringify(document, null, 2);

@@ -20,6 +20,7 @@ import {
 } from '../selfEvolution/promptInjectionDefense.js';
 
 const MAX_RECENT_MESSAGES = 6;
+const MIN_PRESERVED_RECENT_MESSAGES = 4;
 
 const TRUST_AND_PERSONALITY_POLICY = `
 [POLÍTICA CENTRAL DE CONVERSAÇÃO E CONFIANÇA]
@@ -475,9 +476,7 @@ export class ContextBuilder {
 
     while (tokenCountEstimate > maxContextTokens) {
       contextTruncated = true;
-      if (safeHistory.length > 0) {
-        safeHistory = safeHistory.slice(1);
-      } else if (safeLongTermSegments.length > 0) {
+      if (safeLongTermSegments.length > 0) {
         safeLongTermSegments = safeLongTermSegments.slice(0, -1);
       } else if (safeMemories.length > 0) {
         safeMemories = safeMemories.slice(0, -1);
@@ -485,6 +484,8 @@ export class ContextBuilder {
         safeRagResults = safeRagResults.slice(0, -1);
       } else if (safeSummary.length > 500) {
         safeSummary = safeSummary.slice(-Math.max(500, Math.floor(safeSummary.length / 2)));
+      } else if (safeHistory.length > MIN_PRESERVED_RECENT_MESSAGES) {
+        safeHistory = safeHistory.slice(1);
       } else {
         throw new ContextLimitExceededError();
       }
