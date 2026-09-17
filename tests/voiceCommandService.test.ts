@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, isAndroidChromeVoiceClient, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
-import { normalizeTextForSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
+import { normalizeTextForSpeech, splitTextForProgressiveSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
 describe('voice commands',()=>{
  it('remove ativação',()=>{expect(hasFrocWakePhrase('Ok Froc, pesquise receitas')).toBe(true);expect(normalizeFrocVoiceCommand('Ok Froc, pesquise receitas')).toBe('pesquise receitas');});
  it('aceita fala direta',()=>{expect(normalizeFrocVoiceCommand('monte um orçamento')).toBe('monte um orçamento');});
@@ -43,5 +43,13 @@ describe('voice commands',()=>{
   expect(chunks.length).toBeGreaterThan(1);
   expect(chunks.join(' ')).toBe(original);
   expect(chunks.every((chunk)=>chunk.length<=55)).toBe(true);
+ });
+ it('usa uma abertura curta e blocos maiores para voz neural progressiva',()=>{
+  const original='Esta é a primeira frase que deve começar rapidamente. '.repeat(4)+'Agora vem a continuação mais longa da resposta. '.repeat(12);
+  const chunks=splitTextForProgressiveSpeech(original,90,240);
+  expect(chunks.length).toBeGreaterThan(2);
+  expect(chunks[0].length).toBeLessThanOrEqual(90);
+  expect(chunks.slice(1).every((chunk)=>chunk.length<=240)).toBe(true);
+  expect(chunks.join(' ')).toBe(normalizeTextForSpeech(original));
  });
 });

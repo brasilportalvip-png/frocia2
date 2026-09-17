@@ -5,7 +5,7 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { selectPreferredMalePortugueseVoice, splitTextForSpeech } from '../services/voicePreferenceService';
+import { selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
 import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { createNeuralSpeechAudio } from '../services/neuralSpeechService';
 import {
@@ -241,6 +241,7 @@ export const ChatCentral: React.FC<
   const mobileVoiceModeRef = useRef(false);
   const neuralAudioRef = useRef<HTMLAudioElement | null>(null);
   const neuralAudioUrlRef = useRef<string | null>(null);
+  const neuralSpeechControllersRef = useRef<Set<AbortController>>(new Set());
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -264,6 +265,10 @@ export const ChatCentral: React.FC<
   };
 
   const stopNeuralAudio = () => {
+    for (const controller of neuralSpeechControllersRef.current) {
+      controller.abort();
+    }
+    neuralSpeechControllersRef.current.clear();
     neuralAudioRef.current?.pause();
     neuralAudioRef.current = null;
     if (neuralAudioUrlRef.current) {
@@ -513,7 +518,7 @@ export const ChatCentral: React.FC<
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 
-    const chunks = splitTextForSpeech(text);
+    const chunks = splitTextForProgressiveSpeech(text);
     if (chunks.length === 0) {
       setAttachmentError('Esta resposta não possui texto disponível para leitura.');
       return;
@@ -583,30 +588,64 @@ export const ChatCentral: React.FC<
       }, 60);
     };
 
-    setSpeakingMsgId(messageId);
-    setVoicePhase('speaking');
-    void createNeuralSpeechAudio(chunks.join(' '))
-      .then(async ({ audio, objectUrl }) => {
+    const pendingAudio = new Map<
+      number,
+      ReturnType<typeof createNeuralSpeechAudio>
+    >();
+
+    const prepareChunk = (index: number) => {
+      if (index >= chunks.length || pendingAudio.has(index)) return;
+      const controller = new AbortController();
+      neuralSpeechControllersRef.current.add(controller);
+      const pending = createNeuralSpeechAudio(chunks[index], controller.signal)
+        .finally(() => neuralSpeechControllersRef.current.delete(controller));
+      pendingAudio.set(index, pending);
+    };
+
+    const playNeuralChunk = async (index: number): Promise<void> => {
+      if (speechSession !== speechSessionRef.current) return;
+      if (index >= chunks.length) {
+        finishSpeaking();
+        return;
+      }
+
+      prepareChunk(index);
+      try {
+        const { audio, objectUrl } = await pendingAudio.get(index)!;
+        pendingAudio.delete(index);
         if (speechSession !== speechSessionRef.current) {
           URL.revokeObjectURL(objectUrl);
           return;
         }
+
         neuralAudioRef.current = audio;
         neuralAudioUrlRef.current = objectUrl;
-        audio.onended = finishSpeaking;
+        audio.onended = () => {
+          if (neuralAudioRef.current === audio) neuralAudioRef.current = null;
+          if (neuralAudioUrlRef.current === objectUrl) neuralAudioUrlRef.current = null;
+          URL.revokeObjectURL(objectUrl);
+          void playNeuralChunk(index + 1);
+        };
         audio.onerror = () => {
           stopNeuralAudio();
-          speakWithBrowserFallback();
+          speakBrowserChunk(index);
         };
-        try {
-          await audio.play();
-          setAttachmentError(null);
-        } catch {
+        await audio.play();
+        setAttachmentError(null);
+        // Generate the next portion while the user is hearing this one.
+        prepareChunk(index + 1);
+      } catch {
+        if (speechSession === speechSessionRef.current) {
           stopNeuralAudio();
-          speakWithBrowserFallback();
+          speakBrowserChunk(index);
         }
-      })
-      .catch(() => speakWithBrowserFallback());
+      }
+    };
+
+    setSpeakingMsgId(messageId);
+    setVoicePhase('speaking');
+    prepareChunk(0);
+    void playNeuralChunk(0);
   };
 
   useEffect(() => {
