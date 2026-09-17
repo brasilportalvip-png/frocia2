@@ -32,6 +32,7 @@ import {
   extractGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
 import { CalculatorService } from './calculatorService.js';
+import { WeatherService } from './weatherService.js';
 
 export class AIExecutionService {
   /**
@@ -326,6 +327,24 @@ if (params.abortSignal?.aborted) {
         );
       }
 
+      let weatherContext = '';
+      const weatherInput = `${assembled.userMessage}\n${sanitizedPrompt}`;
+      if (WeatherService.shouldFetch(weatherInput)) {
+        const location = WeatherService.extractLocation(weatherInput);
+        if (location) {
+          try {
+            const weather = await WeatherService.current(location);
+            weatherContext = WeatherService.toGroundingContext(weather);
+            citations.push({ title: `Open-Meteo — ${weather.location}`, uri: weather.sourceUrl, snippet: `Temperatura ${weather.temperatureC} °C em ${weather.observedAt}.`, sourceType: 'web', domain: 'open-meteo.com', retrievedAt: weather.retrievedAt });
+          } catch (error) {
+            console.warn('Consulta meteorológica indisponível; seguindo sem derrubar o chat.', {
+              location,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
+
       const calculatorExpression = plan.tools.some((tool) => tool.name === 'execute_calculator')
         ? CalculatorService.extractExpression(sanitizedPrompt)
         : null;
@@ -338,6 +357,7 @@ if (params.abortSignal?.aborted) {
         siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
         socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : '',
         calculatorContext,
+        weatherContext,
       ].join('');
 
       startTime = Date.now();
