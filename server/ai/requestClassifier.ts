@@ -89,6 +89,9 @@ const EXPLICIT_WEB_RESEARCH_PATTERN =
 const LIVE_INFORMATION_PATTERN =
   /\b(?:futebol|esportes?|jogos?|placar|tabela|campeonato|not[ií]cias?|mercado|bolsa|d[oó]lar|euro|bitcoin|cripto|pre[çc]os?|produto|restaurante|hotel|viagem|voos?|tempo|clima|tr[aâ]nsito|cinema|eventos?)\b/i;
 
+const CONVERSATIONAL_CHECK_IN_PATTERN =
+  /^\s*(?:oi|ol[aá]|bom dia|boa tarde|boa noite|tudo bem|como (?:voc[eê]|c[eê]) (?:est[aá]|vai)|(?:est[aá] )?tudo bem com (?:voc[eê]|c[eê])|como (?:voc[eê]|c[eê]) se sente|(?:voc[eê]|c[eê]) est[aá] bem)(?=\s|[?!.,]|$)/i;
+
 const ATTACHMENT_ONLY_PATTERN =
   /\b(?:somente|apenas|exclusivamente)\b[\s\S]{0,80}\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b|\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b[\s\S]{0,80}\b(?:somente|apenas|exclusivamente)\b/i;
 
@@ -144,6 +147,8 @@ export class AIRequestClassifier {
     const siteAuditUrl = requiresSiteAudit
       ? SiteAuditService.extractRequestedUrl(prompt)
       : null;
+    const conversationalCheckIn =
+      CONVERSATIONAL_CHECK_IN_PATTERN.test(prompt);
     const requiresSearch =
       !attachmentOnly &&
       (input.mode === 'research' ||
@@ -151,7 +156,7 @@ export class AIRequestClassifier {
         domain === 'research' ||
         requiresSocialSearch ||
         requiresSiteAudit ||
-        CURRENT_INFORMATION_PATTERN.test(prompt) ||
+        (!conversationalCheckIn && CURRENT_INFORMATION_PATTERN.test(prompt)) ||
         EXPLICIT_WEB_RESEARCH_PATTERN.test(prompt) ||
         (LIVE_INFORMATION_PATTERN.test(prompt) &&
           /\b(qual|quais|quanto|onde|quando|como|melhor|recomend|compare|mostre|informe)\b/i.test(prompt)));

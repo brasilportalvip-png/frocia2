@@ -52,6 +52,16 @@ describe('AI request classification and orchestration', () => {
   });
 
   it.each([
+    'Como você está hoje?',
+    'Está tudo bem com você hoje?',
+    'Oi, como você vai hoje?',
+  ])('não exige pesquisa para conversa social: %s', (prompt) => {
+    const plan = AIRequestOrchestrator.plan({ mode: 'smart', prompt });
+    expect(plan.classification.requiresSearch).toBe(false);
+    expect(plan.tools.map((tool) => tool.name)).not.toContain('web_search');
+  });
+
+  it.each([
     'Busque na rede restaurantes abertos agora em Araraquara.',
     'Pesquise na internet as principais notícias de tecnologia.',
     'Qual foi o placar do jogo de hoje?',

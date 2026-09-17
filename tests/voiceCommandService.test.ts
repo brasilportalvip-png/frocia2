@@ -12,6 +12,13 @@ describe('voice commands',()=>{
   expect(classifyFrocVoiceTranscript('Ok Froc',true,false)).toEqual({type:'wake'});
   expect(classifyFrocVoiceTranscript('procure uma receita',true,true)).toEqual({type:'command',command:'procure uma receita'});
  });
+ it.each(['Ok Rock','Ok Frog','Okay Frock','Olá Fróqui'])(
+  'aceita a variação fonética produzida pelo navegador: %s',
+  (wake)=>expect(classifyFrocVoiceTranscript(wake,true,false)).toEqual({type:'wake'})
+ );
+ it('envia o comando quando o navegador entende Ok Froc como Ok Rock',()=>{
+  expect(classifyFrocVoiceTranscript('Ok Rock como você está hoje',true,false)).toEqual({type:'command',command:'como você está hoje'});
+ });
  it('reconhece o comando para desligar a escuta',()=>{
   expect(classifyFrocVoiceTranscript('Froc, pare a escuta',true,true)).toEqual({type:'stop'});
  });
