@@ -29,4 +29,31 @@ describe('ResearchLinkIntegrityService', () => {
     expect(result.text).toBe('Segundo o Veículo, houve anúncio.');
     expect(result.removedLinks).toBe(1);
   });
+
+  it('interpreta URLs aprovadas com parênteses sem deixar pontuação quebrada', () => {
+    const complexCitation: MessageCitation = {
+      ...citation,
+      uri: 'https://example.com/article?context=(sc.Default)',
+    };
+    const result = ResearchLinkIntegrityService.enforce(
+      'Fonte: [Westlaw](https://example.com/article?context=(sc.Default)).',
+      [complexCitation]
+    );
+    expect(result.text).toBe(
+      'Fonte: [Westlaw](https://example.com/article?context=(sc.Default)).'
+    );
+    expect(result.removedLinks).toBe(0);
+  });
+
+  it('anexa uma lista determinística composta somente por fontes aprovadas', () => {
+    const result = ResearchLinkIntegrityService.enforce(
+      'Conclusão verificada.',
+      [citation],
+      { appendVerifiedSources: true }
+    );
+    expect(result.text).toContain('**Links diretos verificados**');
+    expect(result.text).toContain(
+      '- [Matéria comprovada](https://example.com/noticias/fato-confirmado)'
+    );
+  });
 });

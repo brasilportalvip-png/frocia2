@@ -62,6 +62,7 @@ import {
 import {
   ContextBuilder,
   ContextLimitExceededError,
+  sanitizeConversationHistoryContent,
 } from '../server/ai/contextBuilder.js';
 import { RAGService } from '../server/ai/ragService.js';
 import { PromptRegistry } from '../server/ai/promptRegistry.js';
@@ -76,6 +77,29 @@ beforeEach(() => {
 });
 
 describe('Memory privacy policy', () => {
+  it('preserva códigos comuns de homologação no histórico autenticado', async () => {
+    vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
+    vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);
+    vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue('Responda com precisão.');
+
+    const priorTurn = 'Guarde nesta conversa o código de homologação JACARANDÁ-47.';
+    expect(sanitizeConversationHistoryContent(priorTurn)).toBe(priorTurn);
+
+    const assembled = await ContextBuilder.assemble({
+      userId: 'user-1',
+      mode: 'smart',
+      prompt: 'Qual foi o código informado?',
+      recentMessages: [
+        { id: 'm1', role: 'user', content: priorTurn },
+        { id: 'm2', role: 'assistant', content: 'Código confirmado.' },
+      ],
+    });
+
+    expect(assembled.userMessage).toContain('JACARANDÁ-47');
+    expect(assembled.userMessage).toContain('<historico_nao_confiavel>');
+    expect(assembled.userMessage).toContain('[NOVA MENSAGEM DO USUÁRIO]');
+  });
+
   it('blocks credentials, tokens, private keys and complete card data', () => {
     const forbidden = [
       'senha: minha-senha-super-secreta',
@@ -242,7 +266,7 @@ describe('Conversation continuity and explicit context limits', () => {
         role: index % 2 ? 'assistant' : 'user',
         content: `Mensagem ${index} ${'contexto '.repeat(75)}`,
       })),
-      maxContextTokens: 2100,
+      maxContextTokens: 2200,
     });
 
     expect(assembled.contextTruncated).toBe(true);
@@ -251,7 +275,7 @@ describe('Conversation continuity and explicit context limits', () => {
     expect(assembled.userMessage).toContain('[msg:m1]');
     expect(assembled.userMessage).toContain('[msg:m2]');
     expect(assembled.userMessage).toContain('[msg:m5]');
-    expect(assembled.tokenCountEstimate).toBeLessThanOrEqual(2100);
+    expect(assembled.tokenCountEstimate).toBeLessThanOrEqual(2200);
     expect(assembled.systemInstruction).toContain('[LIMITE DE CONTEXTO]');
   });
 

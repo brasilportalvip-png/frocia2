@@ -890,7 +890,8 @@ export class ResearchJobService {
             .join('\n')}`;
     const text = ResearchLinkIntegrityService.enforce(
       `${evidence.text}${qualityNote}`.trim(),
-      cited
+      cited,
+      { appendVerifiedSources: true }
     ).text;
     const totalInputTokens = (job.inputTokens || 0) + response.inputTokens;
     const totalOutputTokens = (job.outputTokens || 0) + response.outputTokens;

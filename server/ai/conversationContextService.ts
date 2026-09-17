@@ -4,6 +4,7 @@ import {
   LongTermConversationMemoryService,
   LongTermConversationSegment,
 } from './longTermConversationMemoryService.js';
+import { orderConversationMessages } from '../utils/conversationMessageOrdering.js';
 
 const RECENT_MESSAGE_LIMIT = 8;
 const QUERY_LIMIT = 80;
@@ -133,13 +134,14 @@ export class ConversationContextService {
       .orderBy('createdAt', 'desc')
       .limit(QUERY_LIMIT)
       .get();
-    const messages = messageSnap.docs
-      .slice()
-      .reverse()
+    const orderedDocuments = orderConversationMessages(
+      messageSnap.docs.map((doc) => ({ id: doc.id, ...doc.data(), document: doc }))
+    );
+    const messages = orderedDocuments
       .map((doc) => {
-        const data = doc.data();
+        const data = doc.document.data();
         return {
-          id: doc.id,
+          id: doc.document.id,
           role: data.role === 'assistant' ? 'assistant' : 'user',
           content: normalizeMessageContent(data.content),
           createdAt: data.createdAt
