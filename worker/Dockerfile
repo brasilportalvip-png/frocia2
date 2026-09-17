@@ -9,7 +9,7 @@ RUN apt-get update \
 WORKDIR /worker
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npx playwright install --with-deps chromium
-COPY server.mjs ./
+COPY *.mjs ./
 
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080

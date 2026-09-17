@@ -32,6 +32,7 @@ export interface PatchResult {
   commitMessage?: string;
   baseSha?: string;
   executionEvidence?: EngineeringSandboxEvidence;
+  engineeringPlanDigest?: string;
   errorMessage?: string;
 }
 
@@ -240,6 +241,7 @@ implements ICodeAgentAdapter {
         commitMessage?: unknown;
         baseSha?: unknown;
         executionEvidence?: unknown;
+        engineeringContext?: unknown;
       };
 
       if (!Array.isArray(data.files)) {
@@ -262,6 +264,20 @@ implements ICodeAgentAdapter {
           normalizeRepositoryPath
         )
       );
+      let engineeringPlanDigest: string | undefined;
+      if (data.engineeringContext && typeof data.engineeringContext === 'object' && !Array.isArray(data.engineeringContext)) {
+        const context = data.engineeringContext as Record<string, unknown>;
+        if (typeof context.digest === 'string' && /^[a-f0-9]{64}$/i.test(context.digest)) engineeringPlanDigest = context.digest;
+        if (Array.isArray(context.editablePaths)) {
+          for (const rawPath of context.editablePaths) {
+            if (typeof rawPath !== 'string') continue;
+            const normalized = normalizeRepositoryPath(rawPath);
+            if (isSafeRepositoryPath(normalized) && !/(?:^|\/)(?:\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(normalized)) {
+              allowedCandidatePaths.add(normalized);
+            }
+          }
+        }
+      }
 
       const generatedFiles:
         GeneratedFileChange[] = [];
@@ -453,6 +469,7 @@ implements ICodeAgentAdapter {
         commitMessage,
         baseSha,
         executionEvidence: verification.evidence,
+        engineeringPlanDigest,
       };
     } catch (error: any) {
       const timedOut =

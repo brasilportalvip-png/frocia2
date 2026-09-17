@@ -14,6 +14,10 @@ homologar previews. Ele não deve ser implantado dentro do processo da Vercel.
 - `git reset`, limpeza e verificação de rollback;
 - Playwright em desktop, tablet e celular, teclado, Axe, links internos, console, rede e sessão;
 - diretório temporário removido ao final.
+- descoberta automática de arquivos, imports, dependentes e testes relacionados;
+- TypeScript Language Service real para definições, referências e diagnósticos;
+- histórico Git dos arquivos selecionados incorporado ao plano de engenharia;
+- digest SHA-256 do contexto técnico usado para decidir a alteração.
 
 ## Implantação obrigatória
 
