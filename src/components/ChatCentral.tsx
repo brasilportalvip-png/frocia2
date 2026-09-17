@@ -5,6 +5,8 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { selectPreferredMalePortugueseVoice } from '../services/voicePreferenceService';
+import { normalizeFrocVoiceCommand } from '../services/voiceCommandService';
 import {
   Check,
   ChevronDown,
@@ -16,6 +18,7 @@ import {
   Globe,
   Image as ImageIcon,
   Layout,
+  Mic,
   Paperclip,
   Plus,
   RefreshCw,
@@ -220,6 +223,8 @@ export const ChatCentral: React.FC<
     useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] =
     useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -231,6 +236,39 @@ export const ChatCentral: React.FC<
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
+
+  const toggleVoiceListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!Recognition) {
+      setAttachmentError('Reconhecimento de voz indisponível. Use Chrome ou Edge atualizado.');
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = 'pt-BR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event: any) => {
+      let transcript = '';
+      for (let index = event.resultIndex; index < event.results.length; index += 1) transcript += event.results[index][0].transcript;
+      const command = normalizeFrocVoiceCommand(transcript);
+      if (command) setInputText(command);
+    };
+    recognition.onerror = () => { setIsListening(false); setAttachmentError('A escuta foi interrompida. Verifique o microfone.'); };
+    recognition.onend = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setAttachmentError(null);
+    setIsListening(true);
+  };
+
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+  }, []);
 
   const currentMode =
     CHAT_MODES.find(
@@ -323,6 +361,10 @@ export const ChatCentral: React.FC<
       new SpeechSynthesisUtterance(text);
 
     utterance.lang = 'pt-BR';
+    const preferredVoice = selectPreferredMalePortugueseVoice(window.speechSynthesis.getVoices());
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.rate = 0.96;
+    utterance.pitch = 0.88;
 
     utterance.onend = () => {
       setSpeakingMsgId(null);
@@ -1146,6 +1188,19 @@ export const ChatCentral: React.FC<
                 placeholder={`Mensagem para Froc.IA — ${selectedMode}`}
                 className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/28 focus:outline-none disabled:opacity-60"
               />
+
+              {!isGenerating && (
+                <button
+                  type="button"
+                  onClick={toggleVoiceListening}
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl transition-colors ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'glass-button text-amber-300'}`}
+                  title={isListening ? 'Parar escuta' : 'Diga Ok Froc e faça seu pedido'}
+                  aria-pressed={isListening}
+                  aria-label={isListening ? 'Parar escuta por voz' : 'Iniciar comando de voz'}
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+              )}
 
               {isGenerating ? (
                 <button
