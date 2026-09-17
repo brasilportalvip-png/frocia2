@@ -52,6 +52,19 @@ describe('AI request classification and orchestration', () => {
   });
 
   it.each([
+    'Busque na rede restaurantes abertos agora em Araraquara.',
+    'Pesquise na internet as principais notícias de tecnologia.',
+    'Qual foi o placar do jogo de hoje?',
+    'Compare online os preços deste produto.',
+    'Quais são os eventos locais deste fim de semana?',
+  ])('ativa pesquisa real para pedidos universais: %s', (prompt) => {
+    const plan = AIRequestOrchestrator.plan({ mode: 'smart', prompt });
+    expect(plan.classification.requiresSearch).toBe(true);
+    expect(plan.tools.map((tool) => tool.name)).toContain('web_search');
+    expect(plan.systemPolicy).toContain('Você TEM acesso à pesquisa Google');
+  });
+
+  it.each([
     'Usando somente a planilha Excel anexada, informe o valor atual registrado.',
     'Analise apenas o CSV anexado e preserve os valores exatamente.',
     'Use exclusivamente o documento Word anexado e informe a versão.',

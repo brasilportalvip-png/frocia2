@@ -4,3 +4,11 @@ export function normalizeFrocVoiceCommand(transcript: string): string {
 export function hasFrocWakePhrase(transcript: string): boolean {
   return /^\s*(?:ok|ol[aá]|ei)\s+froc\b/i.test(transcript);
 }
+
+export function getFinalFrocVoiceCommand(
+  transcript: string,
+  isFinal: boolean
+): string | null {
+  if (!isFinal || !hasFrocWakePhrase(transcript)) return null;
+  return normalizeFrocVoiceCommand(transcript) || null;
+}
