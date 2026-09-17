@@ -9,6 +9,7 @@ import { chromium } from 'playwright';
 import AxeBuilder from '@axe-core/playwright';
 import { buildEngineeringContext } from './engineering-context.mjs';
 import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
+import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -119,7 +120,7 @@ async function repositoryContext(body, cwd) {
   return context;
 }
 
-async function generatePatch(body, cwd, allowed, engineeringContext) {
+async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedback = null) {
   const ai = new GoogleGenAI({ apiKey: required('GEMINI_API_KEY') });
   const sourceFiles = [];
   for (const relative of allowed) {
@@ -130,7 +131,7 @@ async function generatePatch(body, cwd, allowed, engineeringContext) {
     model: process.env.ENGINEERING_MODEL || 'gemini-3.1-pro-preview',
     contents: [{ text: JSON.stringify({
       task: { title: body.title, summary: body.summary, hypothesis: body.hypothesis, expectedBehavior: body.expectedBehavior, testPlan: body.testPlan },
-      allowedPaths: [...allowed], sourceFiles, engineeringContext,
+      allowedPaths: [...allowed], sourceFiles, engineeringContext, repairFeedback,
     }) }],
     config: {
       temperature: 0.1, responseMimeType: 'application/json',
@@ -161,29 +162,51 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const engineeringContext = await repositoryContext(body, cwd);
     const allowed = new Set([...(body.probableFiles || []), ...engineeringContext.editablePaths].map(safeRepoPath).filter(Boolean));
     if (!allowed.size) throw new Error('allowed_paths_required');
-    const generated = await generatePatch(body, cwd, allowed, engineeringContext);
-    const outputFiles = [];
-    for (const file of generated.files) {
-      const relative = safeRepoPath(file.path);
-      const isTest = relative && /^tests\/[A-Za-z0-9._/-]+\.test\.(?:ts|tsx)$/.test(relative);
-      if (!relative || (!allowed.has(relative) && !isTest) || typeof file.content !== 'string' || Buffer.byteLength(file.content) > 1_000_000) throw new Error('generated_file_out_of_scope');
-      const target = path.join(cwd, relative); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, file.content, 'utf8');
-      outputFiles.push({ path: relative, content: file.content });
-    }
-    const ownership = await run('chown', ['-R', '10001:10001', cwd], temp, 30_000);
-    if (ownership.exitCode !== 0) throw new Error('sandbox_ownership_failed');
-    const pkg = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf8'));
-    commands.push(await mustRun('install', 'npm', ['ci'], 'npm ci', cwd));
-    if (pkg.scripts?.typecheck) commands.push(await mustRun('typecheck', 'npm', ['run', 'typecheck'], 'npm run typecheck', cwd));
-    else commands.push(await mustRun('typecheck', 'npm', ['run', 'lint'], 'npm run lint', cwd));
-    if (pkg.scripts?.lint) commands.push(await mustRun('lint', 'npm', ['run', 'lint'], 'npm run lint', cwd));
-    else commands.push(await mustRun('lint', 'npm', ['run', 'typecheck'], 'npm run typecheck', cwd));
-    commands.push(await mustRun('test', 'npm', ['test'], 'npm test', cwd));
-    commands.push(await mustRun('e2e', 'npm', ['run', 'test:e2e'], 'npm run test:e2e', cwd, 15 * 60_000));
-    commands.push(await mustRun('security-audit', 'npm', ['audit', '--omit=dev', '--audit-level=moderate'], 'npm audit --omit=dev --audit-level=moderate', cwd));
-    commands.push(await mustRun('production-integrity', 'npm', ['run', 'validate:production-integrity'], 'npm run validate:production-integrity', cwd));
-    commands.push(await mustRun('build', 'npm', ['run', 'build'], 'npm run build', cwd));
-    commands.push(await mustRun('diff-check', 'git', ['diff', '--check'], 'git diff --check', cwd));
+    let outputFiles = [];
+    const repairCycle = await executeAutonomousRepairCycle({
+      maximumAttempts: Number(process.env.ENGINEERING_MAX_REPAIR_ATTEMPTS || 3),
+      restoreBaseline: async () => {
+        const reset = await run('git', ['reset', '--hard', baseSha], cwd, 30_000);
+        const clean = await run('git', ['clean', '-fd'], cwd, 30_000);
+        if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
+      },
+      generate: async ({ feedback }) => generatePatch(body, cwd, allowed, engineeringContext, feedback),
+      apply: async (patch) => {
+        const nextFiles = [];
+        for (const file of patch.files) {
+          const relative = safeRepoPath(file.path);
+          const isTest = relative && /^tests\/[A-Za-z0-9._/-]+\.test\.(?:ts|tsx)$/.test(relative);
+          if (!relative || (!allowed.has(relative) && !isTest) || typeof file.content !== 'string' || Buffer.byteLength(file.content) > 1_000_000) throw new Error('generated_file_out_of_scope');
+          const target = path.join(cwd, relative); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, file.content, 'utf8');
+          nextFiles.push({ path: relative, content: file.content });
+        }
+        outputFiles = nextFiles;
+        const ownership = await run('chown', ['-R', '10001:10001', cwd], temp, 30_000);
+        if (ownership.exitCode !== 0) throw new Error('sandbox_ownership_failed');
+      },
+      certify: async () => {
+        const attemptCommands = [];
+        try {
+          const pkg = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf8'));
+          attemptCommands.push(await mustRun('install', 'npm', ['ci'], 'npm ci', cwd));
+          attemptCommands.push(pkg.scripts?.typecheck ? await mustRun('typecheck', 'npm', ['run', 'typecheck'], 'npm run typecheck', cwd) : await mustRun('typecheck', 'npm', ['run', 'lint'], 'npm run lint', cwd));
+          attemptCommands.push(pkg.scripts?.lint ? await mustRun('lint', 'npm', ['run', 'lint'], 'npm run lint', cwd) : await mustRun('lint', 'npm', ['run', 'typecheck'], 'npm run typecheck', cwd));
+          attemptCommands.push(await mustRun('test', 'npm', ['test'], 'npm test', cwd));
+          attemptCommands.push(await mustRun('e2e', 'npm', ['run', 'test:e2e'], 'npm run test:e2e', cwd, 15 * 60_000));
+          attemptCommands.push(await mustRun('security-audit', 'npm', ['audit', '--omit=dev', '--audit-level=moderate'], 'npm audit --omit=dev --audit-level=moderate', cwd));
+          attemptCommands.push(await mustRun('production-integrity', 'npm', ['run', 'validate:production-integrity'], 'npm run validate:production-integrity', cwd));
+          attemptCommands.push(await mustRun('build', 'npm', ['run', 'build'], 'npm run build', cwd));
+          attemptCommands.push(await mustRun('diff-check', 'git', ['diff', '--check'], 'git diff --check', cwd));
+          commands.splice(0, commands.length, ...attemptCommands);
+          return { passed: true, evidenceRefs: attemptCommands.map((item) => `${item.id}:${item.stdoutSha256}`) };
+        } catch (error) {
+          const evidence = error?.evidence;
+          return { passed: false, failure: { stage: evidence?.id || 'certification', exitCode: evidence?.exitCode || 1, stdoutSha256: evidence?.stdoutSha256, stderrSha256: evidence?.stderrSha256, summary: error instanceof Error ? error.message : 'certification_failed' } };
+        }
+      },
+    });
+    if (!repairCycle.passed || !repairCycle.patch) throw new Error('autonomous_repair_exhausted');
+    const generated = repairCycle.patch;
     if (!REQUIRED_COMMANDS.every((id) => commands.some((command) => command.id === id))) throw new Error('required_commands_missing');
     const diff = await run('git', ['diff', '--binary', '--no-ext-diff'], cwd, 30_000);
     const after = await workspaceDigest(cwd);
@@ -199,7 +222,11 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const rollbackVerified = status.exitCode === 0 && status.stdout.length === 0 && (await workspaceDigest(cwd)) === before;
     if (!rollbackVerified) throw new Error('rollback_verification_failed');
     return sendSigned(res, {
-      files: outputFiles, linesAdded, linesRemoved, engineeringContext: {
+      files: outputFiles, linesAdded, linesRemoved,
+      repairCycle: {
+        schemaVersion: repairCycle.schemaVersion, selectedAttempt: repairCycle.selectedAttempt,
+        attempts: repairCycle.attempts, digest: repairCycle.digest,
+      }, engineeringContext: {
         schemaVersion: engineeringContext.schemaVersion, digest: engineeringContext.digest,
         selectedFiles: engineeringContext.selectedFiles, editablePaths: engineeringContext.editablePaths,
         relatedTests: engineeringContext.relatedTests, rootCauseQuestions: engineeringContext.rootCauseQuestions,
