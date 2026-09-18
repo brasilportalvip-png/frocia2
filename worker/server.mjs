@@ -162,12 +162,14 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const engineeringContext = await repositoryContext(body, cwd);
     const allowed = new Set([...(body.probableFiles || []), ...engineeringContext.editablePaths].map(safeRepoPath).filter(Boolean));
     if (!allowed.size) throw new Error('allowed_paths_required');
+    const initialOwnership = await run('chown', ['-R', '10001:10001', cwd], temp, 30_000);
+    if (initialOwnership.exitCode !== 0) throw new Error('sandbox_initial_ownership_failed');
     let outputFiles = [];
     const repairCycle = await executeAutonomousRepairCycle({
       maximumAttempts: Number(process.env.ENGINEERING_MAX_REPAIR_ATTEMPTS || 3),
       restoreBaseline: async () => {
-        const reset = await run('git', ['reset', '--hard', baseSha], cwd, 30_000);
-        const clean = await run('git', ['clean', '-fd'], cwd, 30_000);
+        const reset = await run('git', ['reset', '--hard', baseSha], cwd, 30_000, {}, true);
+        const clean = await run('git', ['clean', '-fd'], cwd, 30_000, {}, true);
         if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
       },
       generate: async ({ feedback }) => generatePatch(body, cwd, allowed, engineeringContext, feedback),
