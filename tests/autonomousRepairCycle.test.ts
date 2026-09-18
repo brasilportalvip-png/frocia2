@@ -1,7 +1,19 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { executeAutonomousRepairCycle } from '../worker/autonomous-repair-cycle.mjs';
 
 describe('autonomous repair cycle', () => {
+  it('restaura o Git com o mesmo usuário isolado proprietário da sandbox', () => {
+    const worker = readFileSync(new URL('../worker/server.mjs', import.meta.url), 'utf8');
+    const ownership = worker.indexOf("const initialOwnership = await run('chown'");
+    const cycle = worker.indexOf('const repairCycle = await executeAutonomousRepairCycle');
+
+    expect(ownership).toBeGreaterThan(-1);
+    expect(ownership).toBeLessThan(cycle);
+    expect(worker).toContain("run('git', ['reset', '--hard', baseSha], cwd, 30_000, {}, true)");
+    expect(worker).toContain("run('git', ['clean', '-fd'], cwd, 30_000, {}, true)");
+  });
+
   it('usa a falha comprovada para reparar e escolhe apenas tentativa certificada', async () => {
     const generate = vi.fn(async ({ attempt, feedback }) => ({ files: [{ path: 'src/fix.ts', content: `${attempt}:${feedback?.stage || 'initial'}` }] }));
     const restoreBaseline = vi.fn(async () => undefined);
