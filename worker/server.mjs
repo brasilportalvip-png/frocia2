@@ -162,7 +162,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const engineeringContext = await repositoryContext(body, cwd);
     const allowed = new Set([...(body.probableFiles || []), ...engineeringContext.editablePaths].map(safeRepoPath).filter(Boolean));
     if (!allowed.size) throw new Error('allowed_paths_required');
-    const initialOwnership = await run('chown', ['-R', '10001:10001', cwd], temp, 30_000);
+    const initialOwnership = await run('chown', ['-R', '10001:10001', temp], temp, 30_000);
     if (initialOwnership.exitCode !== 0) throw new Error('sandbox_initial_ownership_failed');
     let outputFiles = [];
     const repairCycle = await executeAutonomousRepairCycle({
