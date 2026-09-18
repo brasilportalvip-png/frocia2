@@ -10,6 +10,7 @@ describe('autonomous repair cycle', () => {
 
     expect(ownership).toBeGreaterThan(-1);
     expect(ownership).toBeLessThan(cycle);
+    expect(worker).toContain("run('chown', ['-R', '10001:10001', temp], temp, 30_000)");
     expect(worker).toContain("run('git', ['reset', '--hard', baseSha], cwd, 30_000, {}, true)");
     expect(worker).toContain("run('git', ['clean', '-fd'], cwd, 30_000, {}, true)");
   });
