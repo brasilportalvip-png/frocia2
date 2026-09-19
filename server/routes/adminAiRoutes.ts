@@ -77,6 +77,10 @@ export function nextPromptVersion(sequence: unknown): {
   return { sequence: next, version: `v1.${next}.0` };
 }
 
+export function canActivatePromptVersion(evalScore: unknown): boolean {
+  return typeof evalScore === 'number' && evalScore >= 0.75;
+}
+
 function serializeDocument(
   document: FirebaseFirestore.DocumentSnapshot
 ): Record<string, unknown> & { id: string } {
@@ -270,7 +274,7 @@ adminAiRouter.post(
     res
   ) => {
     try {
-      const { model, promptVersion } = req.body ?? {};
+      const { model, promptVersionId } = req.body ?? {};
 
       if (!isNonEmptyString(model, 160)) {
         return res.status(400).json({
@@ -283,16 +287,12 @@ adminAiRouter.post(
         });
       }
 
-      if (
-        promptVersion !== undefined &&
-        promptVersion !== null &&
-        !isNonEmptyString(promptVersion, 120)
-      ) {
+      if (!isNonEmptyString(promptVersionId, 200)) {
         return res.status(400).json({
           error: {
-            code: 'invalid_prompt_version',
+            code: 'invalid_prompt_version_id',
             message:
-              'A versão do prompt informada é inválida.',
+              'Selecione uma versão real do registro de prompts.',
             correlationId: req.correlationId
           }
         });
@@ -301,10 +301,7 @@ adminAiRouter.post(
       const summary =
         await EvaluationService.runAutomatedSuite({
           model: model.trim(),
-          promptVersion:
-            typeof promptVersion === 'string'
-              ? promptVersion.trim()
-              : undefined,
+          promptVersionId: promptVersionId.trim(),
           requestedBy: req.user?.uid ?? 'unknown'
         });
 
@@ -331,6 +328,10 @@ adminAiRouter.post(
         error instanceof Error &&
         [
           'evaluation_model_not_allowed',
+          'evaluation_prompt_version_required',
+          'evaluation_prompt_version_not_found',
+          'evaluation_prompt_content_missing',
+          'evaluation_model_incompatible',
           'evaluation_requester_required'
         ].includes(error.message)
       ) {
@@ -740,6 +741,10 @@ adminAiRouter.post(
             );
           }
 
+          if (!canActivatePromptVersion(versionData?.evalScore)) {
+            throw new Error('prompt_version_not_approved');
+          }
+
           const previousActiveVersionId =
             definitionSnapshot.data()
               ?.activeVersionId;
@@ -782,6 +787,20 @@ adminAiRouter.post(
         correlationId: req.correlationId
       });
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'prompt_version_not_approved'
+      ) {
+        return res.status(409).json({
+          error: {
+            code: 'prompt_version_not_approved',
+            message:
+              'A versão precisa atingir pelo menos 75% na avaliação antes da ativação.',
+            correlationId: req.correlationId
+          }
+        });
+      }
+
       if (
         error instanceof Error &&
         [

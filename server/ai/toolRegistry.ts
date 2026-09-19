@@ -246,6 +246,47 @@ export class ToolRegistry {
         verificationStrategy: 'deterministic'
       }
     ],
+    [
+      'github_repository_research',
+      {
+        name: 'github_repository_research',
+        description:
+          'Pesquisa somente leitura em repositório público do GitHub: SHA principal, commits, issues, pull requests, releases e workflows.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            repositoryUrl: {
+              type: 'STRING',
+              description: 'URL canônica https://github.com/proprietario/repositorio',
+            },
+          },
+          required: ['repositoryUrl'],
+        },
+        outputSchema: {
+          type: 'OBJECT',
+          properties: {
+            repository: { type: 'OBJECT' },
+            commits: { type: 'ARRAY' },
+            issues: { type: 'ARRAY' },
+            pullRequests: { type: 'ARRAY' },
+            releases: { type: 'ARRAY' },
+            workflows: { type: 'ARRAY' },
+          },
+        },
+        authScopes: ['user'],
+        riskLevel: 'medium',
+        mutatesState: false,
+        requiresConfirmation: false,
+        idempotencyRequired: false,
+        timeoutMs: 30_000,
+        maxRetries: 1,
+        retryBackoffMs: 1_000,
+        costLimitCredits: 10,
+        rateLimit: { windowMs: 60_000, maxRequests: 10 },
+        redactFields: ['authorization', 'token'],
+        verificationStrategy: 'provider_receipt',
+      },
+    ],
   ]);
 
   static getTool(name: string): ToolDeclaration | undefined {

@@ -96,6 +96,8 @@ describe('Phase 3 AI Engine Certification', () => {
       });
 
       expect(assembled.systemInstruction).toBeDefined();
+      expect(assembled.systemInstruction).toContain('https://frocia2.vercel.app/');
+      expect(assembled.systemInstruction).toContain('aplicativo web Froc.IA');
       expect(assembled.userMessage).toContain('landing page');
       expect(assembled.tokenCountEstimate).toBeGreaterThan(0);
     });

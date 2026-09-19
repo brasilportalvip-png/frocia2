@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CitationService,
+  isLikelyDirectSourceUrl,
   normalizePublicHttpsUrl,
 } from '../server/ai/citationService.js';
 import { ContextBuilder } from '../server/ai/contextBuilder.js';
@@ -93,6 +94,32 @@ describe('Pesquisa real e evidência verificável', () => {
       uri: 'https://example.com/fato',
       domain: 'example.com',
     });
+  });
+
+  it('liga cada fonte ao trecho exato sustentado pelo grounding', () => {
+    const citations = CitationService.extractSearchGroundingCitations({
+      groundingChunks: [
+        { web: { uri: 'https://example.com/noticia/fato', title: 'Fonte' } },
+      ],
+      groundingSupports: [
+        {
+          segment: { startIndex: 10, endIndex: 42, text: 'A empresa anunciou o produto.' },
+          groundingChunkIndices: [0],
+        },
+      ],
+    });
+
+    expect(citations[0]).toMatchObject({
+      startIndex: 10,
+      endIndex: 42,
+      supportedText: 'A empresa anunciou o produto.',
+    });
+  });
+
+  it('rejeita páginas iniciais e seções genéricas como prova específica', () => {
+    expect(isLikelyDirectSourceUrl('https://example.com/')).toBe(false);
+    expect(isLikelyDirectSourceUrl('https://example.com/technology/')).toBe(false);
+    expect(isLikelyDirectSourceUrl('https://example.com/noticias/fato-confirmado')).toBe(true);
   });
 
   it('usa a ferramenta real de Google Search grounding', () => {

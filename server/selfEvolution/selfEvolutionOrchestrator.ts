@@ -8,9 +8,11 @@ import { GithubAutomationService } from './githubAutomationService.js';
 import { CIGateService } from './ciGateService.js';
 import { PreviewDeploymentService } from './previewDeploymentService.js';
 import { ReleaseDecisionService } from './releaseDecisionService.js';
+import { ContinuousCapabilityEvaluationService } from '../ai/continuousCapabilityEvaluationService.js';
 import { RollbackService } from './rollbackService.js';
 import { CandidateState } from './selfEvolutionTypes.js';
 import { CommitteeGateService } from './committeeGateService.js';
+import { AutonomousBrowserValidationService } from './autonomousBrowserValidationService.js';
 
 export class SelfEvolutionOrchestrator {
   static async processCandidateLifecycle(candidateId: string, actor: string = 'system'): Promise<{
@@ -84,6 +86,20 @@ export class SelfEvolutionOrchestrator {
           };
         }
 
+        await ImprovementPlannerService.updateCandidateState(candidateId, 'tests_passed');
+        await AuditService.logEvent({
+          actor: 'engineering-sandbox',
+          action: 'verify_isolated_patch_execution',
+          resource: candidateId,
+          riskLevel: candidate.riskLevel,
+          result: 'success',
+          commitHash: patch.baseSha,
+          reason:
+            `Sandbox ${patch.executionEvidence?.sandboxId || '(desconhecida)'} ` +
+            `executou ${patch.executionEvidence?.commands.length || 0} comandos obrigatórios; ` +
+            `diff ${patch.executionEvidence?.diffSha256 || '(sem hash)'}.`,
+        });
+
         await ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
 
         // GitHub PR
@@ -114,7 +130,7 @@ export class SelfEvolutionOrchestrator {
         await ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
 
         // CI Check
-        const ci = await CIGateService.runCIGate(candidate.branchName);
+        const ci = await CIGateService.runCIGate(pr.commitSha);
         if (ci.status === 'not_configured' || ci.status === 'pending') {
           return {
             state: candidate.state,
@@ -147,6 +163,29 @@ export class SelfEvolutionOrchestrator {
         );
         await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_deployed');
 
+        try {
+          const browserReport = await AutonomousBrowserValidationService.validate({
+            previewUrl: preview.previewUrl!, commitSha: pr.commitSha!, candidateId,
+          });
+          await AuditService.logEvent({
+            actor: 'autonomous-browser', action: 'validate_preview_end_to_end',
+            resource: candidateId, riskLevel: candidate.riskLevel,
+            result: browserReport.passed ? 'success' : 'failure',
+            commitHash: pr.commitSha, deployUrl: preview.previewUrl,
+            reason: `${browserReport.scenarios.length} cenários; sandbox ${browserReport.sandboxId}.`,
+          });
+          if (!browserReport.passed) {
+            await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_failed');
+            return { state: 'preview_failed', message: 'Homologação autônoma do navegador encontrou falhas.' };
+          }
+        } catch (error) {
+          await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_failed');
+          return {
+            state: 'preview_failed',
+            message: `Homologação autônoma indisponível: ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+          };
+        }
+
         if (candidate.riskLevel === 'R2' || candidate.riskLevel === 'R3') {
           await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_release_approval');
           return {
@@ -168,6 +207,10 @@ export class SelfEvolutionOrchestrator {
   static async approveRelease(candidateId: string, adminUid: string): Promise<{ success: boolean; message: string }> {
     const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) return { success: false, message: 'Candidato não encontrado.' };
+
+    if (!candidate.headCommitSha || !(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
+      return { success: false, message: 'Release bloqueada: falta comparação de capacidades aprovada para o commit exato.' };
+    }
 
     const committeeGate =
       await CommitteeGateService.evaluateCandidate(

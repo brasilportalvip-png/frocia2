@@ -18,6 +18,7 @@ import { ModelRegistry } from '../ai/modelRegistry.js';
 import { CitationService } from '../ai/citationService.js';
 import { CitationUrlResolver } from '../ai/citationUrlResolver.js';
 import { ResearchEvidenceService } from '../ai/researchEvidenceService.js';
+import { ResearchLinkIntegrityService } from '../ai/researchLinkIntegrityService.js';
 import { CostService } from '../ai/costService.js';
 import {
   InvalidAIAttachmentError,
@@ -49,7 +50,7 @@ import {
 import {
   ExternalImportError,
   ExternalImportService,
-  extractGithubRepositoryUrlFromPrompt,
+  resolveGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
 
 export const aiRouter = Router();
@@ -355,7 +356,7 @@ aiRouter.post(
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
+        ? await resolveGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {
@@ -786,7 +787,9 @@ aiRouter.post(
 
       fullOutput = resolvedCitationPayload.text;
       streamCitations =
-        resolvedCitationPayload.citations;
+        CitationService.filterDirectWebCitations(
+          resolvedCitationPayload.citations
+        );
 
       streamCitations =
         CitationService.mergeCitations(
@@ -820,6 +823,13 @@ aiRouter.post(
         });
 
       fullOutput = evidence.text;
+
+      if (enableSearchGrounding) {
+        fullOutput = ResearchLinkIntegrityService.enforce(
+          fullOutput,
+          streamCitations
+        ).text;
+      }
 
       if (bufferForEvidence) {
         sendEvent('token', {

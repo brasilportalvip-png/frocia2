@@ -12,9 +12,9 @@ import { EmbeddingService } from './embeddingService.js';
 const SEGMENT_MESSAGE_LIMIT = 12;
 const MESSAGE_CHARACTER_LIMIT = 1_200;
 const SEGMENT_CHARACTER_LIMIT = 14_000;
-const RETRIEVAL_CANDIDATE_LIMIT = 250;
-const RETRIEVAL_RESULT_LIMIT = 6;
-const STATS_DOCUMENT_LIMIT = 5_000;
+const RETRIEVAL_CANDIDATE_LIMIT = 1_000;
+const RETRIEVAL_RESULT_LIMIT = 12;
+const STATS_DOCUMENT_LIMIT = 20_000;
 
 export interface LongTermSourceMessage {
   id: string;

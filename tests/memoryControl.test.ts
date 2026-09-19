@@ -118,7 +118,7 @@ describe('Controlled AI memory', () => {
       'Quero um site para restaurantes veganos.'
     );
 
-    expect(memories).toHaveLength(12);
+    expect(memories).toHaveLength(13);
     expect(memories[0].id).toBe('relevant');
   });
 
@@ -138,7 +138,7 @@ describe('Controlled AI memory', () => {
       id: 'paused',
       userApproved: false,
     });
-    expect(firestore.query.limit).toHaveBeenCalledWith(200);
+    expect(firestore.query.limit).toHaveBeenCalledWith(1000);
   });
 
   it('never mixes memories across tenants and permits only the authenticated organization', async () => {

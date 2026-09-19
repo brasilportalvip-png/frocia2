@@ -27,10 +27,17 @@ import { GeminiFailoverService } from './geminiFailoverService.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
+import { ResearchLinkIntegrityService } from './researchLinkIntegrityService.js';
 import {
   ExternalImportService,
-  extractGithubRepositoryUrlFromPrompt,
+  resolveGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
+import { CalculatorService } from './calculatorService.js';
+import { WeatherService } from './weatherService.js';
+import {
+  GithubResearchReport,
+  GithubResearchService,
+} from './githubResearchService.js';
 
 export class AIExecutionService {
   /**
@@ -98,7 +105,7 @@ export class AIExecutionService {
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
+        ? await resolveGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {
@@ -174,6 +181,7 @@ export class AIExecutionService {
     let ragChunksUsed: KnowledgeChunk[] = [];
     let socialSearchReport: SocialSearchReport | null = null;
     let siteAuditReport: SiteAuditReport | null = null;
+    let githubResearchReport: GithubResearchReport | null = null;
     let contextTruncated = false;
     let omittedHistoryCount = 0;
     let longTermSegmentsUsed = 0;
@@ -325,10 +333,64 @@ if (params.abortSignal?.aborted) {
         );
       }
 
+      if (plan.tools.some((tool) => tool.name === 'github_repository_research')) {
+        githubResearchReport = await GithubResearchService.research(sanitizedPrompt);
+        const githubItems = [
+          ...githubResearchReport.commits,
+          ...githubResearchReport.issues,
+          ...githubResearchReport.pullRequests,
+          ...githubResearchReport.releases,
+          ...githubResearchReport.workflows,
+        ].slice(0, 30);
+        citations.push(
+          ...githubItems.map((item) => ({
+            title: item.title,
+            uri: item.url,
+            snippet: item.sha
+              ? `Commit ${item.sha.slice(0, 12)}`
+              : item.state || 'GitHub',
+            sourceType: 'web' as const,
+            domain: 'github.com',
+            retrievedAt: githubResearchReport!.fetchedAt,
+          }))
+        );
+      }
+
+      let weatherContext = '';
+      // Tool activation must be scoped to the current user turn. `assembled.userMessage`
+      // also contains conversation history, so inspecting it here could reactivate a
+      // weather request from an older message and attach a stale citation to an
+      // unrelated answer (for example, a later programming question).
+      if (WeatherService.shouldFetch(sanitizedPrompt)) {
+        const location = WeatherService.extractLocation(sanitizedPrompt);
+        if (location) {
+          try {
+            const weather = await WeatherService.current(location);
+            weatherContext = WeatherService.toGroundingContext(weather);
+            citations.push({ title: `Open-Meteo — ${weather.location}`, uri: weather.sourceUrl, snippet: `Temperatura ${weather.temperatureC} °C em ${weather.observedAt}.`, sourceType: 'web', domain: 'open-meteo.com', retrievedAt: weather.retrievedAt });
+          } catch (error) {
+            console.warn('Consulta meteorológica indisponível; seguindo sem derrubar o chat.', {
+              location,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
+
+      const calculatorExpression = plan.tools.some((tool) => tool.name === 'execute_calculator')
+        ? CalculatorService.extractExpression(sanitizedPrompt)
+        : null;
+      const calculatorContext = calculatorExpression
+        ? `\n\n[RESULTADO DETERMINÍSTICO DA CALCULADORA]\nExpressão: ${calculatorExpression}\nResultado: ${CalculatorService.evaluate(calculatorExpression)}\nUse este resultado; não recalcule nem altere o valor.\n[/RESULTADO DETERMINÍSTICO DA CALCULADORA]`
+        : '';
+
       const modelUserMessage = [
         assembled.userMessage,
         siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
-        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : ''
+        socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : '',
+        githubResearchReport ? GithubResearchService.toGroundingContext(githubResearchReport) : '',
+        calculatorContext,
+        weatherContext,
       ].join('');
 
       startTime = Date.now();
@@ -418,7 +480,9 @@ aiResponseText = resolvedCitationPayload.text;
 citations.splice(
   0,
   citations.length,
-  ...resolvedCitationPayload.citations
+  ...CitationService.filterDirectWebCitations(
+    resolvedCitationPayload.citations
+  )
 );
 
 const mergedCitations = CitationService.mergeCitations(
@@ -449,10 +513,22 @@ const evidence = ResearchEvidenceService.finalize({
     knowledgeBaseIds.length > 0,
   ragChunksUsed,
   minimumSourceDomains:
-    SocialSearchService.requestedLimit(sanitizedPrompt) === 10 ? 2 : 1,
+    mode === 'research' ||
+    mode === 'deep' ||
+    plan.classification.domain === 'research' ||
+    SocialSearchService.requestedLimit(sanitizedPrompt) === 10
+      ? 2
+      : 1,
 });
 
 aiResponseText = evidence.text;
+
+if (enableSearchGrounding) {
+  aiResponseText = ResearchLinkIntegrityService.enforce(
+    aiResponseText,
+    citations
+  ).text;
+}
 
 if (executionId) {
   ExecutionAbortRegistry.clear(executionId);

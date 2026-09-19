@@ -1,11 +1,28 @@
 import {
   ImprovementCandidate
 } from './selfEvolutionTypes.js';
+import {
+  EngineeringSandboxEvidence,
+  EngineeringSandboxEvidenceService,
+  REQUIRED_ENGINEERING_COMMANDS,
+} from './engineeringSandboxEvidenceService.js';
 
 const MAX_GENERATED_FILES = 25;
 const MAX_FILE_CONTENT_BYTES = 1_000_000;
 const MAX_TOTAL_CONTENT_BYTES = 2_500_000;
-const WORKER_TIMEOUT_MS = 60_000;
+const DEFAULT_WORKER_TIMEOUT_MS = 15 * 60_000;
+const MIN_WORKER_TIMEOUT_MS = 60_000;
+const MAX_WORKER_TIMEOUT_MS = 30 * 60_000;
+
+function workerTimeoutMs(): number {
+  const configured = Number(process.env.SELF_EVOLUTION_WORKER_TIMEOUT_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_WORKER_TIMEOUT_MS;
+  return Math.max(MIN_WORKER_TIMEOUT_MS, Math.min(MAX_WORKER_TIMEOUT_MS, Math.trunc(configured)));
+}
+
+function isProtectedGeneratedPath(value: string): boolean {
+  return /(?:^|\/)(?:\.git|\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(value);
+}
 
 export interface GeneratedFileChange {
   path: string;
@@ -26,6 +43,8 @@ export interface PatchResult {
   testFileCreated?: string;
   commitMessage?: string;
   baseSha?: string;
+  executionEvidence?: EngineeringSandboxEvidence;
+  engineeringPlanDigest?: string;
   errorMessage?: string;
 }
 
@@ -106,11 +125,16 @@ implements ICodeAgentAdapter {
     const workerToken =
       process.env.SELF_EVOLUTION_WORKER_TOKEN;
 
+    const signingSecret =
+      process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET;
+
     return Boolean(
       workerUrl &&
       workerUrl.trim().length > 0 &&
       workerToken &&
-      workerToken.trim().length > 0
+      workerToken.trim().length > 0 &&
+      signingSecret &&
+      signingSecret.trim().length >= 32
     );
   }
 
@@ -132,6 +156,32 @@ implements ICodeAgentAdapter {
     const workerToken =
       process.env.SELF_EVOLUTION_WORKER_TOKEN!
         .trim();
+
+    const signingSecret =
+      process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET!
+        .trim();
+
+    let parsedWorkerUrl: URL;
+    try {
+      parsedWorkerUrl = new URL(workerUrl);
+    } catch {
+      return createFailureResult('SELF_EVOLUTION_WORKER_URL é inválida.');
+    }
+    const localDevelopmentWorker =
+      process.env.NODE_ENV !== 'production' &&
+      ['localhost', '127.0.0.1', '::1'].includes(parsedWorkerUrl.hostname);
+    if (
+      (parsedWorkerUrl.protocol !== 'https:' && !localDevelopmentWorker) ||
+      parsedWorkerUrl.username || parsedWorkerUrl.password ||
+      parsedWorkerUrl.search || parsedWorkerUrl.hash
+    ) {
+      return createFailureResult(
+        'Worker deve usar HTTPS e uma URL sem credenciais, query ou fragmento.'
+      );
+    }
+
+    const requestNonce =
+      EngineeringSandboxEvidenceService.createRequestNonce();
 
     try {
       const response = await fetch(
@@ -156,10 +206,22 @@ implements ICodeAgentAdapter {
             probableFiles:
               candidate.probableFiles,
             testPlan: candidate.testPlan,
-            riskLevel: candidate.riskLevel
+            riskLevel: candidate.riskLevel,
+            requestNonce,
+            executionPolicy: {
+              schemaVersion: 'engineering-sandbox-v1',
+              networkPolicy: 'restricted',
+              allowedPaths: candidate.probableFiles
+                .map(normalizeRepositoryPath)
+                .filter((path) => isSafeRepositoryPath(path) && !isProtectedGeneratedPath(path)),
+              requiredCommands: REQUIRED_ENGINEERING_COMMANDS,
+              requireRollbackVerification: true,
+              maximumFiles: MAX_GENERATED_FILES,
+              maximumTotalContentBytes: MAX_TOTAL_CONTENT_BYTES,
+            }
           }),
           signal: AbortSignal.timeout(
-            WORKER_TIMEOUT_MS
+            workerTimeoutMs()
           )
         }
       );
@@ -170,13 +232,30 @@ implements ICodeAgentAdapter {
         );
       }
 
-      const data = await response.json() as {
+      const rawBody = await response.text();
+      const verification =
+        EngineeringSandboxEvidenceService.verifySignedResponse({
+          rawBody,
+          signatureHeader: response.headers.get('x-frocia-worker-signature'),
+          signingSecret,
+          requestNonce,
+          candidate,
+        });
+      if (!verification.valid || !verification.evidence) {
+        return createFailureResult(
+          verification.error || 'Evidência da sandbox não pôde ser verificada.'
+        );
+      }
+
+      const data = JSON.parse(rawBody) as {
         files?: unknown;
         linesAdded?: unknown;
         linesRemoved?: unknown;
         testFileCreated?: unknown;
         commitMessage?: unknown;
         baseSha?: unknown;
+        executionEvidence?: unknown;
+        engineeringContext?: unknown;
       };
 
       if (!Array.isArray(data.files)) {
@@ -195,10 +274,24 @@ implements ICodeAgentAdapter {
       }
 
       const allowedCandidatePaths = new Set(
-        candidate.probableFiles.map(
-          normalizeRepositoryPath
-        )
+        candidate.probableFiles
+          .map(normalizeRepositoryPath)
+          .filter((path) => isSafeRepositoryPath(path) && !isProtectedGeneratedPath(path))
       );
+      let engineeringPlanDigest: string | undefined;
+      if (data.engineeringContext && typeof data.engineeringContext === 'object' && !Array.isArray(data.engineeringContext)) {
+        const context = data.engineeringContext as Record<string, unknown>;
+        if (typeof context.digest === 'string' && /^[a-f0-9]{64}$/i.test(context.digest)) engineeringPlanDigest = context.digest;
+        if (Array.isArray(context.editablePaths)) {
+          for (const rawPath of context.editablePaths) {
+            if (typeof rawPath !== 'string') continue;
+            const normalized = normalizeRepositoryPath(rawPath);
+            if (isSafeRepositoryPath(normalized) && !isProtectedGeneratedPath(normalized)) {
+              allowedCandidatePaths.add(normalized);
+            }
+          }
+        }
+      }
 
       const generatedFiles:
         GeneratedFileChange[] = [];
@@ -241,7 +334,7 @@ implements ICodeAgentAdapter {
         if (
           !isSafeRepositoryPath(
             normalizedPath
-          )
+          ) || isProtectedGeneratedPath(normalizedPath)
         ) {
           return createFailureResult(
             `Caminho inseguro retornado pelo worker: ${normalizedPath || '(vazio)'}.`
@@ -364,6 +457,12 @@ implements ICodeAgentAdapter {
         baseSha = normalizedBaseSha;
       }
 
+      if (!baseSha || baseSha !== verification.evidence.baseSha) {
+        return createFailureResult(
+          'baseSha do patch não corresponde ao commit atestado pela sandbox.'
+        );
+      }
+
       return {
         status: 'success',
         success: true,
@@ -382,7 +481,9 @@ implements ICodeAgentAdapter {
           ),
         testFileCreated,
         commitMessage,
-        baseSha
+        baseSha,
+        executionEvidence: verification.evidence,
+        engineeringPlanDigest,
       };
     } catch (error: any) {
       const timedOut =

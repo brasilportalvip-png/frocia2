@@ -583,6 +583,117 @@
   }
 }
 
+.froc-voice-status {
+  border: 1px solid rgba(245, 196, 81, 0.16);
+  background: linear-gradient(110deg, rgba(245, 196, 81, 0.08), rgba(42, 160, 255, 0.04));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  animation: froc-voice-status-enter 280ms ease-out both;
+}
+
+.froc-voice-status--awake,
+.froc-voice-status--speaking {
+  border-color: rgba(245, 196, 81, 0.34);
+  box-shadow: 0 0 28px rgba(245, 196, 81, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.froc-voice-status--thinking {
+  border-color: rgba(42, 160, 255, 0.28);
+  background: linear-gradient(110deg, rgba(42, 160, 255, 0.1), rgba(245, 196, 81, 0.04));
+}
+
+.froc-voice-orb {
+  position: relative;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: radial-gradient(circle, #f8d77c 0 20%, #d99f20 42%, rgba(245, 196, 81, 0.08) 70%);
+  box-shadow: 0 0 20px rgba(245, 196, 81, 0.32);
+}
+
+.froc-voice-orb > span {
+  position: absolute;
+  inset: -3px;
+  border: 1px solid rgba(245, 196, 81, 0.3);
+  border-radius: inherit;
+  animation: froc-voice-ring 1.8s ease-out infinite;
+}
+
+.froc-voice-orb > span:nth-child(2) { animation-delay: 0.6s; }
+.froc-voice-orb > span:nth-child(3) { animation-delay: 1.2s; }
+
+.froc-voice-status--thinking .froc-voice-orb {
+  background: radial-gradient(circle, #9ed7ff 0 20%, #2aa0ff 42%, rgba(42, 160, 255, 0.08) 70%);
+  box-shadow: 0 0 22px rgba(42, 160, 255, 0.36);
+}
+
+.froc-voice-wave {
+  display: flex;
+  height: 18px;
+  align-items: center;
+  gap: 2px;
+}
+
+.froc-voice-wave i {
+  display: block;
+  width: 2px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(245, 196, 81, 0.72);
+  animation: froc-voice-wave 760ms ease-in-out infinite alternate;
+}
+
+.froc-voice-wave i:nth-child(2) { animation-delay: 120ms; }
+.froc-voice-wave i:nth-child(3) { animation-delay: 240ms; }
+.froc-voice-wave i:nth-child(4) { animation-delay: 360ms; }
+
+.froc-voice-status--thinking .froc-voice-wave i {
+  background: rgba(91, 181, 255, 0.78);
+  animation-duration: 1.15s;
+}
+
+.froc-voice-button {
+  position: relative;
+  isolation: isolate;
+  overflow: visible;
+}
+
+.froc-voice-button:not(.froc-voice-button--idle) {
+  background: linear-gradient(145deg, #d99f20, #7d5810);
+  box-shadow: 0 0 18px rgba(245, 196, 81, 0.2);
+}
+
+.froc-voice-button--awake,
+.froc-voice-button--speaking {
+  animation: froc-voice-button-pulse 1.25s ease-in-out infinite;
+}
+
+.froc-voice-button--thinking {
+  background: linear-gradient(145deg, #2aa0ff, #174d78) !important;
+  box-shadow: 0 0 20px rgba(42, 160, 255, 0.28) !important;
+}
+
+@keyframes froc-voice-ring {
+  0% { transform: scale(0.72); opacity: 0.7; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
+@keyframes froc-voice-wave {
+  from { height: 4px; opacity: 0.45; }
+  to { height: 17px; opacity: 1; }
+}
+
+@keyframes froc-voice-button-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 14px rgba(245, 196, 81, 0.18); }
+  50% { transform: scale(1.06); box-shadow: 0 0 28px rgba(245, 196, 81, 0.42); }
+}
+
+@keyframes froc-voice-status-enter {
+  from { opacity: 0; transform: translateY(5px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

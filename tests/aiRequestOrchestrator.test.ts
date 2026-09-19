@@ -52,6 +52,42 @@ describe('AI request classification and orchestration', () => {
   });
 
   it.each([
+    'Como você está hoje?',
+    'Está tudo bem com você hoje?',
+    'Oi, como você vai hoje?',
+  ])('não exige pesquisa para conversa social: %s', (prompt) => {
+    const plan = AIRequestOrchestrator.plan({ mode: 'smart', prompt });
+    expect(plan.classification.requiresSearch).toBe(false);
+    expect(plan.tools.map((tool) => tool.name)).not.toContain('web_search');
+  });
+
+  it.each([
+    'Busque na rede restaurantes abertos agora em Araraquara.',
+    'Pesquise na internet as principais notícias de tecnologia.',
+    'Qual foi o placar do jogo de hoje?',
+    'Compare online os preços deste produto.',
+    'Quais são os eventos locais deste fim de semana?',
+  ])('ativa pesquisa real para pedidos universais: %s', (prompt) => {
+    const plan = AIRequestOrchestrator.plan({ mode: 'smart', prompt });
+    expect(plan.classification.requiresSearch).toBe(true);
+    expect(plan.tools.map((tool) => tool.name)).toContain('web_search');
+    expect(plan.systemPolicy).toContain('Você TEM acesso à pesquisa Google');
+  });
+
+  it('ativa pesquisa GitHub somente leitura para auditoria de repositório', () => {
+    const plan = AIRequestOrchestrator.plan({
+      mode: 'code',
+      prompt: 'Analise a arquitetura, issues e commits de https://github.com/openai/example',
+    });
+    expect(plan.tools.map((tool) => tool.name)).toContain(
+      'github_repository_research'
+    );
+    expect(
+      plan.tools.find((tool) => tool.name === 'github_repository_research')
+    ).toMatchObject({ mutatesState: false, requiresConfirmation: false });
+  });
+
+  it.each([
     'Usando somente a planilha Excel anexada, informe o valor atual registrado.',
     'Analise apenas o CSV anexado e preserve os valores exatamente.',
     'Use exclusivamente o documento Word anexado e informe a versão.',
@@ -115,6 +151,15 @@ describe('AI request classification and orchestration', () => {
     expect(plan.tools.map((tool) => tool.name)).toContain(
       'search_knowledge_base'
     );
+  });
+
+  it('ativa a calculadora para pedidos matemáticos fora do domínio financeiro', () => {
+    const plan = AIRequestOrchestrator.plan({
+      mode: 'smart',
+      prompt: 'Calcule (25 + 5) * 2 para mim.',
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toContain('execute_calculator');
   });
 
   it('rejects a requested tool that is not registered', () => {

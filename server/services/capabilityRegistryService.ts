@@ -3,6 +3,7 @@ import { MercadoPagoService } from './mercadoPagoService.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
 import { SocialSearchService } from '../ai/socialSearchService.js';
 import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
+import { GithubAppService } from './githubAppService.js';
 
 export type CapabilityStatus =
   | 'available'
@@ -63,7 +64,12 @@ export class CapabilityRegistryService {
       MercadoPagoService.isConfigured();
 
     const selfEvolutionOk =
-      SelfEvolutionPolicyEngine.isSelfEvolutionEnabled();
+      SelfEvolutionPolicyEngine.isSelfEvolutionEnabled() &&
+      Boolean(process.env.SELF_EVOLUTION_WORKER_URL?.trim()) &&
+      Boolean(process.env.SELF_EVOLUTION_WORKER_TOKEN?.trim()) &&
+      (process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET?.trim().length || 0) >= 32;
+    const githubAppOk = GithubAppService.isConfigured() &&
+      (process.env.GITHUB_APP_STATE_SECRET?.trim().length || 0) >= 32;
 
     const imageGenerationAvailable =
       mediaGeminiOk &&
@@ -110,6 +116,31 @@ export class CapabilityRegistryService {
       'veo-3.1-generate-preview';
 
     const capabilities: CapabilityItem[] = [
+      {
+        id: 'engineering_sandbox', name: 'Engenheiro de Código com Evidência', category: 'code',
+        status: selfEvolutionOk ? 'configured' : 'disabled', provider: 'Froc.IA Isolated Worker',
+        model: process.env.ENGINEERING_MODEL || 'Gemini Engineering', cost: { credits: 0, description: 'Infraestrutura externa do worker' },
+        limits: 'Execução por candidato, caminhos permitidos, comandos com hash, rollback e assinatura HMAC',
+        requirements: ['SELF_EVOLUTION_WORKER_URL', 'SELF_EVOLUTION_WORKER_TOKEN', 'SELF_EVOLUTION_WORKER_SIGNING_SECRET', 'SANDBOX_NETWORK_POLICY=restricted'],
+        checkedAt: now, lastVerifiedAt: null,
+        evidence: selfEvolutionOk ? 'Configuração detectada; cada execução ainda precisa devolver recibo assinado.' : 'Worker não configurado; nenhuma execução é simulada.',
+      },
+      {
+        id: 'semantic_project_intelligence', name: 'Inteligência Semântica e Memória de Projeto', category: 'code',
+        status: firebaseOk ? 'available' : 'degraded', provider: 'TypeScript AST + Froc.IA Project Ledger',
+        model: 'AST, símbolos, referências, impacto e continuidade versionada', cost: { credits: 0, description: 'Processamento interno' },
+        limits: 'Análise estática; aliases dinâmicos e reflexão exigem worker/LSP', requirements: ['Firebase Admin Auth'],
+        checkedAt: now, lastVerifiedAt: null, evidence: 'Serviços locais e testes automatizados; entradas de repositório são tratadas como dados não confiáveis.',
+      },
+      {
+        id: 'github_app_engineering', name: 'GitHub App de Engenharia', category: 'automation',
+        status: githubAppOk ? 'configured' : 'disabled', provider: 'GitHub App', model: 'Tokens temporários por instalação',
+        cost: { credits: 0, description: 'Sujeito às quotas do GitHub' },
+        limits: 'Somente repositórios/permissões instalados; toda escrita exige confirmação humana',
+        requirements: ['GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_SLUG', 'GITHUB_APP_STATE_SECRET'],
+        checkedAt: now, lastVerifiedAt: null,
+        evidence: githubAppOk ? 'Configuração detectada; operações reais geram resposta do GitHub.' : 'GitHub App não configurado; acesso privado e escrita permanecem indisponíveis.',
+      },
       {
         id: 'smart_ai_chat',
         name: 'Chat Inteligente Multi-turn Froc.IA',
@@ -409,6 +440,7 @@ export class CapabilityRegistryService {
           'SELF_EVOLUTION_ENABLED=true',
           'SELF_EVOLUTION_WORKER_URL',
           'SELF_EVOLUTION_WORKER_TOKEN',
+          'SELF_EVOLUTION_WORKER_SIGNING_SECRET (mínimo 32 caracteres)',
         ],
         checkedAt: now,
         lastVerifiedAt: null,

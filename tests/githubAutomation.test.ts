@@ -14,6 +14,7 @@ import type {
 import type {
   ImprovementCandidate
 } from '../server/selfEvolution/selfEvolutionTypes.js';
+import { REQUIRED_ENGINEERING_COMMANDS } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 
 const BASE_COMMIT_SHA = 'a'.repeat(40);
 const BASE_TREE_SHA = 'b'.repeat(40);
@@ -76,7 +77,37 @@ const patch: PatchResult = {
   linesRemoved: 0,
   commitMessage:
     'fix: corrigir botão principal',
-  baseSha: BASE_COMMIT_SHA
+  baseSha: BASE_COMMIT_SHA,
+  executionEvidence: {
+    schemaVersion: 'engineering-sandbox-v1',
+    candidateId: candidate.id,
+    requestNonce: '1'.repeat(48),
+    sandboxId: 'sandbox:github-test',
+    baseSha: BASE_COMMIT_SHA,
+    networkPolicy: 'restricted',
+    workspaceBeforeSha256: '2'.repeat(64),
+    workspaceAfterSha256: '3'.repeat(64),
+    diffSha256: '4'.repeat(64),
+    rollbackVerified: true,
+    issuedAt: '2026-08-12T00:00:00.000Z',
+    commands: REQUIRED_ENGINEERING_COMMANDS.map((id) => ({
+      id,
+      command: id === 'install' ? 'npm ci'
+        : id === 'typecheck' ? 'npm run typecheck'
+          : id === 'lint' ? 'npm run lint'
+          : id === 'test' ? 'npm test'
+            : id === 'e2e' ? 'npm run test:e2e'
+              : id === 'security-audit' ? 'npm audit --omit=dev --audit-level=moderate'
+            : id === 'production-integrity' ? 'npm run validate:production-integrity'
+              : id === 'build' ? 'npm run build' : 'git diff --check',
+      exitCode: 0,
+      startedAt: '2026-08-12T00:00:00.000Z',
+      completedAt: '2026-08-12T00:00:01.000Z',
+      durationMs: 1000,
+      stdoutSha256: '5'.repeat(64),
+      stderrSha256: '6'.repeat(64),
+    })),
+  }
 };
 
 function mockResponse(
@@ -165,6 +196,19 @@ describe(
           .toHaveBeenCalled();
       }
     );
+
+    it('rejeita patch sem atestado verificável antes de acessar o GitHub', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.createBranchAndPR(
+        candidate,
+        { ...patch, executionEvidence: undefined }
+      );
+      expect(result.success).toBe(false);
+      expect(result.errorMessage).toContain('atestado');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
 
     it(
       'creates branch from the new commit instead of the main SHA',

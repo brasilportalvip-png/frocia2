@@ -17,8 +17,8 @@ import {
   encryptPersonalMemory,
 } from './memoryCryptoService.js';
 
-const MAX_CONTEXT_MEMORIES = 12;
-const MAX_MANAGED_MEMORIES = 200;
+const MAX_CONTEXT_MEMORIES = 32;
+const MAX_MANAGED_MEMORIES = 1_000;
 const CONSENT_VERSION = 'memory-consent-v1';
 
 type MemoryScope = UserMemory['scope'];
