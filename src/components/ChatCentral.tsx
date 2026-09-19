@@ -6,7 +6,7 @@ import React, {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
-import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { createNeuralSpeechAudio } from '../services/neuralSpeechService';
 import {
   ChevronDown,
@@ -236,6 +236,10 @@ export const ChatCentral: React.FC<
   const isGeneratingRef = useRef(isGenerating);
   const voiceAwaitingResponseRef = useRef(false);
   const lastSpokenMessageRef = useRef<string | null>(null);
+  const progressiveSpeechRef = useRef<{
+    messageId: string;
+    spokenText: string;
+  } | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
   const mobileVoiceModeRef = useRef(false);
@@ -649,21 +653,45 @@ export const ChatCentral: React.FC<
   };
 
   useEffect(() => {
-    if (
-      !voiceEnabled ||
-      !voiceAwaitingResponseRef.current ||
-      isGenerating
-    ) return;
+    if (!voiceEnabled || !voiceAwaitingResponseRef.current) return;
     const latestAiMessage = [...messages]
       .reverse()
       .find((message) => message.sender === 'ai');
-    if (
-      !latestAiMessage ||
-      latestAiMessage.id === lastSpokenMessageRef.current
-    ) return;
+    if (!latestAiMessage || !latestAiMessage.text.trim()) return;
+
+    if (isGenerating) {
+      if (progressiveSpeechRef.current) return;
+      const firstChunks = splitTextForProgressiveSpeech(
+        latestAiMessage.text,
+        120,
+        240
+      );
+      const firstChunk = firstChunks[0];
+      const hasCompleteOpening = /[.!?]\s*$/.test(firstChunk || '');
+      if (!firstChunk || (!hasCompleteOpening && firstChunk.length < 100)) return;
+      progressiveSpeechRef.current = {
+        messageId: latestAiMessage.id,
+        spokenText: latestAiMessage.text,
+      };
+      handleSpeak(
+        `${latestAiMessage.id}-opening`,
+        latestAiMessage.text
+      );
+      return;
+    }
+
+    if (latestAiMessage.id === lastSpokenMessageRef.current) return;
     voiceAwaitingResponseRef.current = false;
     lastSpokenMessageRef.current = latestAiMessage.id;
-    handleSpeak(latestAiMessage.id, latestAiMessage.text);
+    const progressive = progressiveSpeechRef.current;
+    const remainingText =
+      progressive?.messageId === latestAiMessage.id &&
+      latestAiMessage.text.startsWith(progressive.spokenText)
+        ? latestAiMessage.text.slice(progressive.spokenText.length).trim()
+        : latestAiMessage.text;
+    progressiveSpeechRef.current = null;
+    if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
+    else if (voiceEnabledRef.current) startVoiceRecognition();
   }, [messages, isGenerating, voiceEnabled]);
 
   const appendAttachment = (file: UploadedFile) => {
@@ -879,7 +907,10 @@ export const ChatCentral: React.FC<
     }
   };
 
-  const handleSend = async (voiceText?: string) => {
+  const handleSend = async (
+    voiceText?: string,
+    modeOverride?: ChatMode
+  ) => {
     const normalizedText = (voiceText ?? inputText).trim();
 
     if (
@@ -896,7 +927,7 @@ export const ChatCentral: React.FC<
     try {
       await onSendMessage(
         textToSend,
-        selectedMode,
+        modeOverride ?? selectedMode,
         attachedFiles
       );
 
@@ -917,6 +948,12 @@ export const ChatCentral: React.FC<
     if (!voiceCommandToSend || isGenerating) return;
     const command = voiceCommandToSend;
     setVoiceCommandToSend(null);
+    const mediaCommand = classifyFrocMediaVoiceCommand(command);
+    if (mediaCommand) {
+      setSelectedMode(mediaCommand.mode);
+      void handleSend(mediaCommand.prompt, mediaCommand.mode);
+      return;
+    }
     void handleSend(command);
   }, [voiceCommandToSend, isGenerating]);
 

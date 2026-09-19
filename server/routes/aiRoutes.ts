@@ -50,7 +50,7 @@ import {
 import {
   ExternalImportError,
   ExternalImportService,
-  extractGithubRepositoryUrlFromPrompt,
+  resolveGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
 
 export const aiRouter = Router();
@@ -356,7 +356,7 @@ aiRouter.post(
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
+        ? await resolveGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {
