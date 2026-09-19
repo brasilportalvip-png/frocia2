@@ -30,7 +30,7 @@ import { CitationUrlResolver } from './citationUrlResolver.js';
 import { ResearchLinkIntegrityService } from './researchLinkIntegrityService.js';
 import {
   ExternalImportService,
-  extractGithubRepositoryUrlFromPrompt,
+  resolveGithubRepositoryUrlFromPrompt,
 } from '../services/externalImportService.js';
 import { CalculatorService } from './calculatorService.js';
 import { WeatherService } from './weatherService.js';
@@ -105,7 +105,7 @@ export class AIExecutionService {
     let attachments = submittedAttachments;
     const githubRepositoryUrl =
       attachments.length === 0
-        ? extractGithubRepositoryUrlFromPrompt(sanitizedPrompt)
+        ? await resolveGithubRepositoryUrlFromPrompt(sanitizedPrompt)
         : undefined;
 
     if (githubRepositoryUrl) {

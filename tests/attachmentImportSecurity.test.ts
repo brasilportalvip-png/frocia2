@@ -7,6 +7,7 @@ import {
 } from '../server/validators/aiAttachmentValidators.js';
 import {
   ExternalImportService,
+  extractGithubRepositoryReferenceFromPrompt,
   extractGithubRepositoryUrlFromPrompt
 } from '../server/services/externalImportService.js';
 import {
@@ -229,6 +230,19 @@ describe('Attachment and Import Security Regression', () => {
           'Analise https://github.com/brasilportalvip-png/frocia2. Informe o package.json.'
         )
       ).toBe('https://github.com/brasilportalvip-png/frocia2');
+    });
+
+    it('recognizes public repositories by URL, owner/name or quoted name', () => {
+      expect(
+        extractGithubRepositoryReferenceFromPrompt(
+          'Audite o repositório brasilportalvip-png/frocia2.'
+        )
+      ).toEqual({ owner: 'brasilportalvip-png', repository: 'frocia2' });
+      expect(
+        extractGithubRepositoryReferenceFromPrompt(
+          'Faça um pente fino no repositório `Portal-Vip-Brasil`.'
+        )
+      ).toEqual({ repository: 'Portal-Vip-Brasil' });
     });
 
     it('blocks loopback destinations before performing a fetch', async () => {

@@ -25,6 +25,83 @@ export function extractGithubRepositoryUrlFromPrompt(
   return matched?.replace(/[.,;:!?)}\]]+$/g, '');
 }
 
+export function extractGithubRepositoryReferenceFromPrompt(
+  prompt: string
+): { owner?: string; repository: string } | undefined {
+  const explicitUrl = extractGithubRepositoryUrlFromPrompt(prompt);
+  if (explicitUrl) {
+    const url = new URL(explicitUrl);
+    const [owner, repository] = url.pathname.replace(/^\/+|\/+$/g, '').split('/');
+    if (owner && repository) {
+      return { owner, repository: repository.replace(/\.git$/i, '') };
+    }
+  }
+
+  const shorthand = prompt.match(
+    /(?:reposit[oó]rio|repo(?:sit[oó]rio)?)?\s*[`"']?([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})[`"']?/i
+  );
+  if (shorthand) {
+    return {
+      owner: shorthand[1],
+      repository: shorthand[2].replace(/[.,;:!?]+$/g, '').replace(/\.git$/i, '')
+    };
+  }
+
+  const named = prompt.match(
+    /\b(?:reposit[oó]rio|repo)\s+(?:p[uú]blico\s+)?[`"']([A-Za-z0-9_.-]{2,100})[`"']/i
+  );
+  return named ? { repository: named[1] } : undefined;
+}
+
+export async function resolveGithubRepositoryUrlFromPrompt(
+  prompt: string
+): Promise<string | undefined> {
+  const reference = extractGithubRepositoryReferenceFromPrompt(prompt);
+  if (!reference) return undefined;
+  if (reference.owner) {
+    return `https://github.com/${reference.owner}/${reference.repository}`;
+  }
+
+  const searchUrl = new URL('https://api.github.com/search/repositories');
+  searchUrl.searchParams.set('q', `${reference.repository} in:name`);
+  searchUrl.searchParams.set('per_page', '10');
+  const token = process.env.GITHUB_READ_TOKEN?.trim();
+  const response = await fetch(searchUrl, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'FrocIA-Public-Repository-Resolver',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new ExternalImportError(
+      'github_search_failed',
+      `Não foi possível pesquisar o repositório público no GitHub (HTTP ${response.status}).`,
+      response.status === 403 || response.status === 429 ? 429 : 502,
+      response.status
+    );
+  }
+
+  const payload = await response.json() as {
+    items?: Array<{ name?: string; html_url?: string; stargazers_count?: number }>;
+  };
+  const exactMatches = (payload.items || [])
+    .filter((item) => item.name?.toLowerCase() === reference.repository.toLowerCase())
+    .filter((item) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/i.test(item.html_url || ''))
+    .sort((left, right) => Number(right.stargazers_count || 0) - Number(left.stargazers_count || 0));
+
+  if (exactMatches.length === 0) {
+    throw new ExternalImportError(
+      'github_repository_not_found',
+      `O repositório público “${reference.repository}” não foi encontrado no GitHub. Envie a URL completa para evitar ambiguidade.`,
+      404
+    );
+  }
+  return exactMatches[0].html_url;
+}
+
 export interface ExternalImportResult {
   type: ImportType;
   sourceUrl: string;

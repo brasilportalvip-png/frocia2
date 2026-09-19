@@ -16,6 +16,7 @@ import { ChatCentral } from './components/ChatCentral';
 import { ArtifactCanvasPanel } from './components/ArtifactCanvasPanel';
 import { useAuth } from './context/AuthContext';
 import { apiClient } from './services/apiClient';
+import { streamApiEvents } from './services/sseClient';
 import { toAIAttachmentPayloads } from './services/attachmentService';
 
 const ExportModal = lazy(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
@@ -994,6 +995,7 @@ const handleGeneralChat = async (
     };
 
     let result: AIExecutionResult;
+    let streamedResponseMessageId: string | null = null;
 
     if (apiMode === 'research') {
       const started = await apiClient<
@@ -1065,11 +1067,69 @@ const handleGeneralChat = async (
         );
       }
     } else {
-      result = await apiClient<AIExecutionResult>('/api/ai/executions', {
-        method: 'POST',
+      const streamMessageId = `ai-stream-${Date.now()}`;
+      streamedResponseMessageId = streamMessageId;
+      let streamedText = '';
+      let streamedCitations: ChatMessage['citations'] = [];
+      let executionId = '';
+      let consumedCredits = 0;
+      let streamError: Error | null = null;
+
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: streamMessageId,
+          sender: 'ai',
+          text: '',
+          timestamp: Date.now(),
+        },
+      ]);
+
+      await streamApiEvents('/api/ai/chat', requestBody, {
         signal: requestController.signal,
-        body: JSON.stringify(requestBody)
+        onEvent: ({ event, data }) => {
+          const payload = data as any;
+          if (event === 'start') executionId = payload?.executionId || '';
+          if (event === 'token' && typeof payload?.text === 'string') {
+            streamedText += payload.text;
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === streamMessageId
+                  ? { ...message, text: streamedText }
+                  : message
+              )
+            );
+          }
+          if (event === 'citations' && Array.isArray(payload?.citations)) {
+            streamedCitations = payload.citations;
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === streamMessageId
+                  ? { ...message, citations: streamedCitations }
+                  : message
+              )
+            );
+          }
+          if (event === 'completed') {
+            consumedCredits = Number(payload?.consumedCredits || 0);
+          }
+          if (event === 'error' || event === 'cancelled') {
+            streamError = new Error(
+              payload?.message || 'A transmissão foi interrompida.'
+            );
+          }
+        },
       });
+
+      if (streamError) throw streamError;
+
+      result = {
+        text: streamedText || 'A IA não retornou conteúdo.',
+        modelUsed: '',
+        executionId,
+        consumedCredits,
+        citations: streamedCitations,
+      };
     }
 
     const responseText =
@@ -1084,10 +1144,16 @@ const handleGeneralChat = async (
       citations: result.citations ?? []
     };
 
-    setChatMessages((current) => [
-      ...current,
-      aiMessage
-    ]);
+    setChatMessages((current) => {
+      if (streamedResponseMessageId) {
+        return current.map((message) =>
+          message.id === streamedResponseMessageId
+            ? { ...message, citations: result.citations ?? [] }
+            : message
+        );
+      }
+      return [...current, aiMessage];
+    });
 
     await refreshProfile();
   } catch (error: any) {

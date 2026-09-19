@@ -24,6 +24,31 @@ export type FrocVoiceIntent =
   | { type: 'command'; command: string }
   | { type: 'stop' };
 
+export type FrocMediaVoiceCommand = {
+  mode: 'Imagem' | 'Vídeo';
+  prompt: string;
+};
+
+const IMAGE_COMMAND_PATTERN = /^(?:crie|cria|criar|gere|gera|gerar|fa[cç]a)\s+(?:(?:a|uma)\s+)?(?:image(?:m|ns)|fotos?|ilustra[cç](?:[aã]o|[oõ]es))\s*(?:de|do|da|com|sobre)?\s*/i;
+const VIDEO_COMMAND_PATTERN = /^(?:crie|cria|criar|gere|gera|gerar|fa[cç]a)\s+(?:(?:o|um)\s+)?v[ií]deos?\s*(?:de|do|da|com|sobre)?\s*/i;
+
+export function classifyFrocMediaVoiceCommand(
+  command: string
+): FrocMediaVoiceCommand | null {
+  const cleaned = command.replace(/\s+/g, ' ').trim();
+  const imagePrompt = cleaned.replace(IMAGE_COMMAND_PATTERN, '').trim();
+  if (imagePrompt !== cleaned) {
+    return { mode: 'Imagem', prompt: imagePrompt || cleaned };
+  }
+
+  const videoPrompt = cleaned.replace(VIDEO_COMMAND_PATTERN, '').trim();
+  if (videoPrompt !== cleaned) {
+    return { mode: 'Vídeo', prompt: videoPrompt || cleaned };
+  }
+
+  return null;
+}
+
 const STOP_PATTERN = new RegExp(
   `^(?:${FROC_NAME_PATTERN}\\s*,?\\s*)?(?:pare|parar|desligue|desativar)(?:\\s+(?:a\\s+)?escuta)?[.!]?$`,
   'i'

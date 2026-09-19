@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, isAndroidChromeVoiceClient, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
+import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, isAndroidChromeVoiceClient, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
 import { normalizeTextForSpeech, splitTextForProgressiveSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
 describe('voice commands',()=>{
  it('remove ativação',()=>{expect(hasFrocWakePhrase('Ok Froc, pesquise receitas')).toBe(true);expect(normalizeFrocVoiceCommand('Ok Froc, pesquise receitas')).toBe('pesquise receitas');});
@@ -33,6 +33,13 @@ describe('voice commands',()=>{
  it('identifica Chrome real no Android sem confundir Edge ou Opera',()=>{
   expect(isAndroidChromeVoiceClient('Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36')).toBe(true);
   expect(isAndroidChromeVoiceClient('Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36 EdgA/151.0')).toBe(false);
+ });
+ it('direciona comandos falados de imagem e vídeo para o modo correto',()=>{
+  expect(classifyFrocMediaVoiceCommand('crie uma imagem de um pôr do sol')).toEqual({mode:'Imagem',prompt:'um pôr do sol'});
+  expect(classifyFrocMediaVoiceCommand('gere um vídeo sobre uma cidade futurista')).toEqual({mode:'Vídeo',prompt:'uma cidade futurista'});
+  expect(classifyFrocMediaVoiceCommand('cria a imagem de uma floresta')).toEqual({mode:'Imagem',prompt:'uma floresta'});
+  expect(classifyFrocMediaVoiceCommand('gera vídeos de uma praia')).toEqual({mode:'Vídeo',prompt:'uma praia'});
+  expect(classifyFrocMediaVoiceCommand('explique energia solar')).toBeNull();
  });
  it('transforma markdown em fala natural sem ler URLs ou símbolos',()=>{
   expect(normalizeTextForSpeech('## Olá\n- Veja [a fonte](https://example.com) e `npm test`.')).toBe('Olá Veja a fonte e npm test.');
