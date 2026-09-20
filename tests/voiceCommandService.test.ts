@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, getFinalFrocVoiceCommand, hasFrocWakePhrase, isAndroidChromeVoiceClient, normalizeFrocVoiceCommand } from '../src/services/voiceCommandService.js';
-import { normalizeTextForSpeech, splitTextForProgressiveSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
+import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech, splitTextForSpeech } from '../src/services/voicePreferenceService.js';
 describe('voice commands',()=>{
  it('remove ativação',()=>{expect(hasFrocWakePhrase('Ok Froc, pesquise receitas')).toBe(true);expect(normalizeFrocVoiceCommand('Ok Froc, pesquise receitas')).toBe('pesquise receitas');});
  it('aceita fala direta',()=>{expect(normalizeFrocVoiceCommand('monte um orçamento')).toBe('monte um orçamento');});
@@ -43,6 +43,13 @@ describe('voice commands',()=>{
  });
  it('transforma markdown em fala natural sem ler URLs ou símbolos',()=>{
   expect(normalizeTextForSpeech('## Olá\n- Veja [a fonte](https://example.com) e `npm test`.')).toBe('Olá Veja a fonte e npm test.');
+ });
+ it('libera a fala cedo sem cortar palavras',()=>{
+  expect(getProgressiveSpeechOpening('Resposta curta. O restante chega depois.')).toBe('Resposta curta.');
+  const opening=getProgressiveSpeechOpening('Esta resposta já possui texto suficiente para começar a falar rapidamente mesmo antes do ponto final aparecer');
+  expect(opening.length).toBeGreaterThanOrEqual(45);
+  expect(opening.endsWith(' ')).toBe(false);
+  expect('Esta resposta já possui texto suficiente para começar a falar rapidamente mesmo antes do ponto final aparecer'.startsWith(opening)).toBe(true);
  });
  it('divide respostas longas em trechos seguros sem perder o conteúdo',()=>{
   const original='Primeira frase curta. Segunda frase um pouco maior para validar a fila de reprodução. Terceira frase final.';

@@ -82,7 +82,7 @@ describe('Phase 3 AI Engine Certification', () => {
   });
 
   describe('4. Context Building & Embeddings', () => {
-        it('should assemble system instruction and context correctly', async () => {
+    it('should assemble system instruction and context correctly', async () => {
       vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue(
         'System instruction for site building'
       );
@@ -98,8 +98,29 @@ describe('Phase 3 AI Engine Certification', () => {
       expect(assembled.systemInstruction).toBeDefined();
       expect(assembled.systemInstruction).toContain('https://frocia2.vercel.app/');
       expect(assembled.systemInstruction).toContain('aplicativo web Froc.IA');
+      expect(assembled.systemInstruction).not.toContain('[REGRAS UNIVERSAIS DE OPERAÇÃO]');
       expect(assembled.userMessage).toContain('landing page');
       expect(assembled.tokenCountEstimate).toBeGreaterThan(0);
+    });
+
+    it('should apply the universal operator policy only in code mode', async () => {
+      vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue(
+        'System instruction for code editing'
+      );
+      vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
+      vi.spyOn(RAGService, 'retrieveRelevantChunks').mockResolvedValue([]);
+
+      const assembled = await ContextBuilder.assemble({
+        userId: 'user-test-123',
+        mode: 'code',
+        prompt: 'Corrija este projeto.',
+      });
+
+      expect(assembled.systemInstruction).toContain('[REGRAS UNIVERSAIS DE OPERAÇÃO]');
+      expect(assembled.systemInstruction).toContain('um passo por vez');
+      expect(assembled.systemInstruction).toContain('formato ANTES e DEPOIS');
+      expect(assembled.systemInstruction).toContain('Não use páginas genéricas da plataforma');
+      expect(assembled.systemInstruction).toContain('Nunca chame uma análise de completa');
     });
 
     it('should calculate vector cosine similarity', () => {

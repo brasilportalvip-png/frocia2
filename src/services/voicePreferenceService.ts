@@ -78,3 +78,23 @@ export function splitTextForProgressiveSpeech(
   );
   return [first, ...following];
 }
+
+/** Returns a stable opening prefix as soon as there is enough text to speak. */
+export function getProgressiveSpeechOpening(
+  text: string,
+  minLength = 45,
+  maxLength = 90
+): string {
+  const normalized = normalizeTextForSpeech(text);
+  if (!normalized) return '';
+
+  const sentenceEnd = normalized.search(/[.!?](?:\s|$)/);
+  if (sentenceEnd >= 0) {
+    return normalized.slice(0, sentenceEnd + 1).trim();
+  }
+  if (normalized.length < minLength) return '';
+
+  const candidate = normalized.slice(0, maxLength);
+  const lastSpace = candidate.lastIndexOf(' ');
+  return (lastSpace >= minLength ? candidate.slice(0, lastSpace) : candidate).trim();
+}
