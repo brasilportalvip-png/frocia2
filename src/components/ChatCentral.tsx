@@ -5,7 +5,7 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
+import { getProgressiveSpeechOpening, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
 import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { createNeuralSpeechAudio } from '../services/neuralSpeechService';
 import {
@@ -227,6 +227,7 @@ export const ChatCentral: React.FC<
     useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] =
     useState<string | null>(null);
+  const speakingMsgIdRef = useRef<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [voiceCommandToSend, setVoiceCommandToSend] = useState<string | null>(null);
@@ -239,6 +240,10 @@ export const ChatCentral: React.FC<
   const progressiveSpeechRef = useRef<{
     messageId: string;
     spokenText: string;
+  } | null>(null);
+  const queuedSpeechRef = useRef<{
+    messageId: string;
+    text: string;
   } | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
@@ -286,11 +291,14 @@ export const ChatCentral: React.FC<
     voiceEnabledRef.current = false;
     voiceArmedRef.current = false;
     voiceAwaitingResponseRef.current = false;
+    progressiveSpeechRef.current = null;
+    queuedSpeechRef.current = null;
     setVoiceEnabled(false);
     setVoicePhase('idle');
     stopVoiceRecognition();
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    speakingMsgIdRef.current = null;
     setSpeakingMsgId(null);
   };
 
@@ -509,6 +517,7 @@ export const ChatCentral: React.FC<
       speechSessionRef.current += 1;
       stopNeuralAudio();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
       if (voiceEnabledRef.current) {
         setVoicePhase('listening');
@@ -531,7 +540,17 @@ export const ChatCentral: React.FC<
     const finishSpeaking = () => {
       if (speechSession !== speechSessionRef.current) return;
       stopNeuralAudio();
+      speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
+      const queuedSpeech = queuedSpeechRef.current;
+      queuedSpeechRef.current = null;
+      if (queuedSpeech?.text.trim()) {
+        window.setTimeout(
+          () => handleSpeak(queuedSpeech.messageId, queuedSpeech.text),
+          0
+        );
+        return;
+      }
       if (voiceEnabledRef.current) {
         if (mobileVoiceModeRef.current) {
           voiceEnabledRef.current = false;
@@ -549,6 +568,7 @@ export const ChatCentral: React.FC<
       if (speechSession !== speechSessionRef.current) return;
       stopNeuralAudio();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
       setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
       if (voiceEnabledRef.current) {
@@ -646,6 +666,7 @@ export const ChatCentral: React.FC<
       }
     };
 
+    speakingMsgIdRef.current = messageId;
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
     prepareChunk(0);
@@ -661,21 +682,15 @@ export const ChatCentral: React.FC<
 
     if (isGenerating) {
       if (progressiveSpeechRef.current) return;
-      const firstChunks = splitTextForProgressiveSpeech(
-        latestAiMessage.text,
-        120,
-        240
-      );
-      const firstChunk = firstChunks[0];
-      const hasCompleteOpening = /[.!?]\s*$/.test(firstChunk || '');
-      if (!firstChunk || (!hasCompleteOpening && firstChunk.length < 100)) return;
+      const firstChunk = getProgressiveSpeechOpening(latestAiMessage.text);
+      if (!firstChunk) return;
       progressiveSpeechRef.current = {
         messageId: latestAiMessage.id,
-        spokenText: latestAiMessage.text,
+        spokenText: firstChunk,
       };
       handleSpeak(
         `${latestAiMessage.id}-opening`,
-        latestAiMessage.text
+        firstChunk
       );
       return;
     }
@@ -690,7 +705,12 @@ export const ChatCentral: React.FC<
         ? latestAiMessage.text.slice(progressive.spokenText.length).trim()
         : latestAiMessage.text;
     progressiveSpeechRef.current = null;
-    if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
+    if (remainingText && speakingMsgIdRef.current) {
+      queuedSpeechRef.current = {
+        messageId: latestAiMessage.id,
+        text: remainingText,
+      };
+    } else if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
     else if (voiceEnabledRef.current) startVoiceRecognition();
   }, [messages, isGenerating, voiceEnabled]);
 
