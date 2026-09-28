@@ -1,9 +1,11 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { ContextBuilder, ContextLimitExceededError } from '../ai/contextBuilder.js';
+import { FieldValue } from 'firebase-admin/firestore';
+import { adminDb } from '../lib/firebaseAdmin.js';
 import {
   AIRequestOrchestrator,
   UnknownAIToolError
@@ -93,7 +95,7 @@ function optionalId(value: unknown): string | null {
     !/^[A-Za-z0-9_-]+$/.test(value.trim())
   ) {
     throw new InvalidAIRequestError([
-      'Um dos identificadores informados é inválido.'
+      'Um dos identificadores informados Ã© invÃ¡lido.'
     ]);
   }
 
@@ -105,7 +107,7 @@ function parseExecutionRequest(
 ): Omit<ExecutionParams, 'userId'> {
   if (!value || typeof value !== 'object') {
     throw new InvalidAIRequestError([
-      'O corpo da requisição é obrigatório.'
+      'O corpo da requisiÃ§Ã£o Ã© obrigatÃ³rio.'
     ]);
   }
 
@@ -129,7 +131,7 @@ function parseExecutionRequest(
 
   if (!ALLOWED_MODES.has(mode)) {
     throw new InvalidAIRequestError([
-      'O modo de IA informado não é permitido.'
+      'O modo de IA informado nÃ£o Ã© permitido.'
     ]);
   }
 
@@ -157,7 +159,7 @@ function parseExecutionRequest(
       rawKnowledgeBaseIds.length
   ) {
     throw new InvalidAIRequestError([
-      'A lista de bases de conhecimento é inválida.'
+      'A lista de bases de conhecimento Ã© invÃ¡lida.'
     ]);
   }
 
@@ -187,7 +189,7 @@ function parseExecutionRequest(
     tools.length !== rawTools.length
   ) {
     throw new InvalidAIRequestError([
-      'A lista de ferramentas é inválida.'
+      'A lista de ferramentas Ã© invÃ¡lida.'
     ]);
   }
 
@@ -303,7 +305,7 @@ aiRouter.post(
             code:
               'feature_temporarily_disabled',
             message:
-              'Este recurso está temporariamente indisponível.',
+              'Este recurso estÃ¡ temporariamente indisponÃ­vel.',
             feature: error.flag,
             correlationId:
               req.correlationId
@@ -316,7 +318,7 @@ aiRouter.post(
           code:
             'ai_request_validation_failed',
           message:
-            'Não foi possível validar a solicitação.',
+            'NÃ£o foi possÃ­vel validar a solicitaÃ§Ã£o.',
           correlationId:
             req.correlationId
         }
@@ -344,7 +346,7 @@ aiRouter.post(
           code: 'unsafe_prompt',
           message:
             safety.reason ||
-            'Prompt rejeitado por segurança.',
+            'Prompt rejeitado por seguranÃ§a.',
           correlationId:
             req.correlationId
         }
@@ -504,7 +506,7 @@ try {
             message:
               error instanceof Error
                 ? error.message
-                : 'Erro ao reservar créditos.',
+                : 'Erro ao reservar crÃ©ditos.',
             correlationId:
               req.correlationId
           }
@@ -570,14 +572,14 @@ try {
             userId: uid,
             reservationId,
             operation:
-              'Estorno por falha ao criar o registro da execução de IA',
+              'Estorno por falha ao criar o registro da execuÃ§Ã£o de IA',
             idempotencyKey:
               `trace-failed-${idempotencyKey}`
           }
         );
       } catch (releaseError) {
         console.error(
-          'Falha ao liberar reserva após erro na criação do trace:',
+          'Falha ao liberar reserva apÃ³s erro na criaÃ§Ã£o do trace:',
           releaseError
         );
       }
@@ -587,7 +589,7 @@ try {
           code:
             'execution_trace_failed',
           message:
-            'Não foi possível iniciar a execução de IA.',
+            'NÃ£o foi possÃ­vel iniciar a execuÃ§Ã£o de IA.',
           correlationId:
             req.correlationId
         }
@@ -651,7 +653,7 @@ try {
 
         ExecutionAbortRegistry.cancel(
           executionId,
-          'Conexão SSE encerrada pelo cliente.'
+          'ConexÃ£o SSE encerrada pelo cliente.'
         );
       }
     });
@@ -769,7 +771,7 @@ recentMessages:
       for await (const chunk of stream) {
         if (isClosed) {
           throw new Error(
-            'Conexão abortada pelo cliente.'
+            'ConexÃ£o abortada pelo cliente.'
           );
         }
 
@@ -879,7 +881,7 @@ recentMessages:
           mode
         );
 
-      await CreditWalletService.confirmConsumption(
+       await CreditWalletService.confirmConsumption(
         {
           userId: uid,
           reservationId,
@@ -893,6 +895,120 @@ recentMessages:
             `cnf-${idempotencyKey}`
         }
       );
+
+      // Persiste o turno completo da conversa para que o histÃ³rico
+      // possa ser reaberto posteriormente pela interface.
+      if (adminDb && conversationId) {
+        try {
+          const batch =
+            adminDb.batch();
+
+          const timestamp =
+            FieldValue.serverTimestamp();
+
+          const persistedAttachments =
+  attachments.map(
+    (attachment) => ({
+      type:
+        attachment.type,
+      name:
+        attachment.name ||
+        null,
+      mimeType:
+        attachment.mimeType ||
+        null,
+      url:
+        attachment.url ||
+        null
+    })
+  );
+
+
+          const userMessageRef =
+            adminDb
+              .collection('messages')
+              .doc(
+                `msg_usr_${executionId}`
+              );
+
+          batch.set(
+            userMessageRef,
+            {
+              conversationId,
+              userId: uid,
+              tenantId:
+                req.user!.tenantId,
+              role: 'user',
+              content:
+                sanitizedPrompt,
+              attachments:
+                persistedAttachments,
+              executionId,
+              messageOrder: 0,
+              createdAt:
+                timestamp
+            },
+            {
+              merge: true
+            }
+          );
+
+          const assistantMessageRef =
+            adminDb
+              .collection('messages')
+              .doc(
+                `msg_ast_${executionId}`
+              );
+
+          batch.set(
+            assistantMessageRef,
+            {
+              conversationId,
+              userId: uid,
+              tenantId:
+                req.user!.tenantId,
+              role: 'assistant',
+              content:
+                fullOutput,
+              citations:
+                streamCitations,
+              executionId,
+              messageOrder: 1,
+              model:
+                route.selectedModel,
+              createdAt:
+                timestamp
+            },
+            {
+              merge: true
+            }
+          );
+
+          const conversationRef =
+            adminDb
+              .collection(
+                'conversations'
+              )
+              .doc(
+                conversationId
+              );
+
+          batch.update(
+            conversationRef,
+            {
+              updatedAt:
+                timestamp
+            }
+          );
+
+          await batch.commit();
+        } catch (messageError) {
+          console.error(
+            'Erro ao salvar mensagens da conversa streaming:',
+            messageError
+          );
+        }
+      }
 
       await ExecutionTraceService.updateTrace(
         executionId,
@@ -970,7 +1086,7 @@ recentMessages:
           : 'Erro desconhecido';
 
       console.error(
-        'Erro na transmissão SSE de IA:',
+        'Erro na transmissÃ£o SSE de IA:',
         streamError
       );
 
@@ -989,15 +1105,15 @@ recentMessages:
             userId: uid,
             reservationId,
             operation: wasCancelled
-              ? 'Estorno por cancelamento da transmissão SSE'
-              : `Estorno por erro de transmissão SSE: ${message}`,
+              ? 'Estorno por cancelamento da transmissÃ£o SSE'
+              : `Estorno por erro de transmissÃ£o SSE: ${message}`,
             idempotencyKey:
               `rel-${idempotencyKey}`
           }
         );
       } catch (releaseError) {
         console.warn(
-          'A reserva SSE já estava liberada ou o estorno falhou:',
+          'A reserva SSE jÃ¡ estava liberada ou o estorno falhou:',
           releaseError
         );
       }
@@ -1028,7 +1144,7 @@ recentMessages:
                 ? 'context_limit_exceeded'
                 : 'stream_failed',
             message: wasCancelled
-              ? 'Execução cancelada pelo usuário.'
+              ? 'ExecuÃ§Ã£o cancelada pelo usuÃ¡rio.'
               : message
           }
         );
@@ -1057,7 +1173,7 @@ aiRouter.post(
       ) {
         requestAbortController.abort(
           new Error(
-            'Conexão encerrada pelo cliente.'
+            'ConexÃ£o encerrada pelo cliente.'
           )
         );
       }
@@ -1142,7 +1258,7 @@ aiRouter.post(
             code:
               'feature_temporarily_disabled',
             message:
-              'Este recurso está temporariamente indisponível.',
+              'Este recurso estÃ¡ temporariamente indisponÃ­vel.',
             feature: error.flag,
             correlationId:
               req.correlationId
@@ -1302,7 +1418,7 @@ aiRouter.post(
           message:
             error instanceof Error
               ? error.message
-              : 'Não foi possível iniciar a pesquisa.',
+              : 'NÃ£o foi possÃ­vel iniciar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1330,7 +1446,7 @@ aiRouter.get(
           message:
             error instanceof Error
               ? error.message
-              : 'Não foi possível atualizar a pesquisa.',
+              : 'NÃ£o foi possÃ­vel atualizar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1358,7 +1474,7 @@ aiRouter.post(
           message:
             error instanceof Error
               ? error.message
-              : 'Não foi possível cancelar a pesquisa.',
+              : 'NÃ£o foi possÃ­vel cancelar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1392,7 +1508,7 @@ aiRouter.get(
           error: {
             code: 'trace_not_found',
             message:
-              'Trace de execução não localizado.',
+              'Trace de execuÃ§Ã£o nÃ£o localizado.',
             correlationId:
               req.correlationId
           }
@@ -1440,7 +1556,7 @@ aiRouter.post(
           error: {
             code: 'trace_not_found',
             message:
-              'Execução não encontrada.',
+              'ExecuÃ§Ã£o nÃ£o encontrada.',
             correlationId:
               req.correlationId
           }
@@ -1450,7 +1566,7 @@ aiRouter.post(
       if (trace.status === 'running') {
         ExecutionAbortRegistry.cancel(
           executionId,
-          'Execução cancelada pelo usuário.'
+          'ExecuÃ§Ã£o cancelada pelo usuÃ¡rio.'
         );
 
         await CreditWalletService.releaseReservation(
@@ -1459,7 +1575,7 @@ aiRouter.post(
             reservationId:
               trace.reservationId,
             operation:
-              'Estorno por cancelamento do usuário',
+              'Estorno por cancelamento do usuÃ¡rio',
             idempotencyKey:
               `cancel-${executionId}`
           }
@@ -1489,7 +1605,7 @@ aiRouter.post(
         error: {
           code: 'cancel_failed',
           message:
-            'Erro ao cancelar execução.',
+            'Erro ao cancelar execuÃ§Ã£o.',
           correlationId:
             req.correlationId
         }

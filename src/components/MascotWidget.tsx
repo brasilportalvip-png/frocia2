@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 const FROC_AVATAR_URL =
-  'https://portalvipbrasil.com.br/wp-content/uploads/2026/08/frocialogo-removebg-preview.png';
+  '/image/Froc.ia.png';
 
 type MascotStatus =
   | 'idle'
