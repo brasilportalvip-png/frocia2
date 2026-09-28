@@ -65,7 +65,7 @@ export function splitTextForSpeech(text: string, maxLength = 220): string[] {
  */
 export function splitTextForProgressiveSpeech(
   text: string,
-  firstChunkLength = 150,
+  firstChunkLength = 70,
   followingChunkLength = 380
 ): string[] {
   const firstPass = splitTextForSpeech(text, firstChunkLength);
@@ -82,19 +82,26 @@ export function splitTextForProgressiveSpeech(
 /** Returns a stable opening prefix as soon as there is enough text to speak. */
 export function getProgressiveSpeechOpening(
   text: string,
-  minLength = 45,
-  maxLength = 90
+  minLength = 20,
+  maxLength = 55
 ): string {
   const normalized = normalizeTextForSpeech(text);
   if (!normalized) return '';
 
   const sentenceEnd = normalized.search(/[.!?](?:\s|$)/);
-  if (sentenceEnd >= 0) {
+
+  if (sentenceEnd >= 0 && sentenceEnd + 1 <= maxLength) {
     return normalized.slice(0, sentenceEnd + 1).trim();
   }
+
   if (normalized.length < minLength) return '';
 
   const candidate = normalized.slice(0, maxLength);
   const lastSpace = candidate.lastIndexOf(' ');
-  return (lastSpace >= minLength ? candidate.slice(0, lastSpace) : candidate).trim();
+
+  return (
+    lastSpace >= minLength
+      ? candidate.slice(0, lastSpace)
+      : candidate
+  ).trim();
 }

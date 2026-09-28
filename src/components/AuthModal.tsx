@@ -169,8 +169,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-2.5">
             <img
-              src="https://portalvipbrasil.com.br/wp-content/uploads/2026/08/Froc.Ia_.png"
-              alt="Froc.IA Logo"
+  src="/image/Froc.ia.png"
+  alt="Froc.IA Logo"
               referrerPolicy="no-referrer"
               className="h-10 w-auto object-contain filter drop-shadow-[0_0_12px_rgba(251,191,36,0.3)]"
             />

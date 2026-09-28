@@ -33,7 +33,7 @@ import { ModelSelectorModal } from './ModelSelectorModal';
 import { MemoryManagerModal } from './MemoryManagerModal';
 
 const FROC_LOGO_URL =
-  'https://portalvipbrasil.com.br/wp-content/uploads/2026/08/frocialogo-removebg-preview.png';
+  '/image/Froc.ia.png';
 
 interface HeaderProps {
   navMode: AppNavigationMode;
