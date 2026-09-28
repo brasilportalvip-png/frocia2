@@ -7,7 +7,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getProgressiveSpeechOpening, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
 import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
-import { createNeuralSpeechAudio } from '../services/neuralSpeechService';
+import {
+  createNeuralSpeechAudio,
+  streamNeuralSpeechAudio
+} from '../services/neuralSpeechService';
 import {
   ChevronDown,
   Code2,
@@ -666,11 +669,51 @@ export const ChatCentral: React.FC<
       }
     };
 
-    speakingMsgIdRef.current = messageId;
+      const startLegacyNeuralSpeech = () => {
+      if (speechSession !== speechSessionRef.current) return;
+
+      prepareChunk(0);
+      void playNeuralChunk(0);
+    };
+
+    const startStreamingSpeech = async () => {
+      const controller = new AbortController();
+
+      neuralSpeechControllersRef.current.add(controller);
+
+      try {
+        await streamNeuralSpeechAudio(
+          text,
+          controller.signal
+        );
+
+        neuralSpeechControllersRef.current.delete(controller);
+
+        if (speechSession !== speechSessionRef.current) {
+          return;
+        }
+
+        setAttachmentError(null);
+        finishSpeaking();
+      } catch {
+        neuralSpeechControllersRef.current.delete(controller);
+
+        if (
+          controller.signal.aborted ||
+          speechSession !== speechSessionRef.current
+        ) {
+          return;
+        }
+
+        startLegacyNeuralSpeech();
+      }
+    };
+
+       speakingMsgIdRef.current = messageId;
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
-    prepareChunk(0);
-    void playNeuralChunk(0);
+
+    void startStreamingSpeech();
   };
 
   useEffect(() => {
