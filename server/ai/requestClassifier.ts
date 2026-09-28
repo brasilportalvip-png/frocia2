@@ -84,7 +84,7 @@ const CURRENT_INFORMATION_PATTERN =
   /\b(hoje|agora|atual(?:mente)?|tempo real|ao vivo|recente|[uú]ltim[oa]s?|not[ií]cias?|pre[çc]os?|promo[çc][oõ]es?|cota[çc][aã]o|agenda|calend[aá]rio|hor[aá]rios?|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento|placar|resultado do jogo|classifica[çc][aã]o|campeonato|tr[aâ]nsito|evento|aberto agora)\b/i;
 
 const EXPLICIT_WEB_RESEARCH_PATTERN =
-  /\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b[\s\S]{0,80}\b(?:internet|web|rede|online|fontes?|sites?|google)\b|\b(?:internet|web|rede|online|fontes?|sites?|google)\b[\s\S]{0,80}\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b/i;
+  /\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b[\s\S]{0,100}\b(?:internet|web|rede|online|fontes?|sites?|google)\b|\b(?:internet|web|rede|online|fontes?|sites?|google)\b[\s\S]{0,100}\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b/i;
 
 const LIVE_INFORMATION_PATTERN =
   /\b(?:futebol|esportes?|jogos?|placar|tabela|campeonato|not[ií]cias?|mercado|bolsa|d[oó]lar|euro|bitcoin|cripto|pre[çc]os?|produto|restaurante|hotel|viagem|voos?|tempo|clima|tr[aâ]nsito|cinema|eventos?)\b/i;
@@ -94,6 +94,18 @@ const CONVERSATIONAL_CHECK_IN_PATTERN =
 
 const ATTACHMENT_ONLY_PATTERN =
   /\b(?:somente|apenas|exclusivamente)\b[\s\S]{0,80}\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b|\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b[\s\S]{0,80}\b(?:somente|apenas|exclusivamente)\b/i;
+
+const ARTIFACT_NOUN_PATTERN =
+  /\b(zip|pasta|arquivo|anexo|documento|pdf|planilha|csv|imagem|foto|v[ií]deo|c[oó]digo|projeto|reposit[oó]rio|site|sistema|arquivo compactado|pasta compactada)\b/i;
+
+const ARTIFACT_REFERENCE_PATTERN =
+  /\b(?:lembra|lembre|recorda|recorde|se lembra|voc[eê] lembra|retoma|retome|continua|continue|volta|volte|abre|abra|rev[eê]|releia|analisa de novo|analise de novo|aquele|aquela|aquilo|esse|essa|isso|este|esta|o anterior|a anterior|o de antes|a de antes)\b[\s\S]{0,160}\b(?:zip|pasta|arquivo|anexo|documento|pdf|planilha|csv|imagem|foto|v[ií]deo|c[oó]digo|projeto|reposit[oó]rio|site|sistema)\b|\b(?:zip|pasta|arquivo|anexo|documento|pdf|planilha|csv|imagem|foto|v[ií]deo|c[oó]digo|projeto|reposit[oó]rio|site|sistema)\b[\s\S]{0,160}\b(?:que te mandei|que mandei|que te enviei|que enviei|que anexei|que te passei|que passei|que compartilhei|que subi|que mostrei|que analisamos|que vimos|de antes|anterior|passado|acabei de mandar|acabei de enviar|agora h[aá] pouco|h[aá] pouco|quase agora|recentemente|nessa conversa|na outra conversa|da conversa anterior)\b/i;
+
+const RECENT_ARTIFACT_TIME_REFERENCE_PATTERN =
+  /\b(?:acabei de|agora h[aá] pouco|h[aá] pouco|quase agora|recentemente|antes|anterior|passado|de antes|nessa conversa|na outra conversa|da conversa anterior)\b/i;
+
+const ARTIFACT_MEMORY_ACTION_PATTERN =
+  /\b(?:lembra|lembre|recorda|recorde|retoma|retome|continua|continue|volta|volte|reabre|reabra|abre de novo|abra de novo|rev[eê]|releia|use de novo|usar de novo|continue de onde parou|retome de onde parou)\b/i;
 
 const COMPLEXITY_PATTERN =
   /\b(arquitetura|auditoria|estrat[eé]gia|compare|implemente|investigue|passo a passo|plano completo|produ[çc][aã]o|multiempresa|migra[çc][aã]o)\b/i;
@@ -117,69 +129,149 @@ function inferDomain(
   );
 }
 
+function isArtifactMemoryReference(
+  prompt: string
+): boolean {
+  if (ARTIFACT_REFERENCE_PATTERN.test(prompt)) {
+    return true;
+  }
+
+  const mentionsArtifact =
+    ARTIFACT_NOUN_PATTERN.test(prompt);
+
+  if (!mentionsArtifact) {
+    return false;
+  }
+
+  return (
+    ARTIFACT_MEMORY_ACTION_PATTERN.test(prompt) ||
+    RECENT_ARTIFACT_TIME_REFERENCE_PATTERN.test(prompt)
+  );
+}
+
 export class AIRequestClassifier {
   static classify(
     input: ClassificationInput
   ): RequestClassification {
     const prompt = input.prompt.trim();
-    const domain = inferDomain(input.mode, prompt);
+
+    const domain =
+      inferDomain(
+        input.mode,
+        prompt
+      );
+
     const highStakes = [
       'health',
       'legal',
       'finance',
     ].includes(domain);
+
     const personalData =
       PERSONAL_DATA_PATTERN.test(prompt);
+
     const attachmentOnly =
       Boolean(input.hasFiles) &&
       ATTACHMENT_ONLY_PATTERN.test(prompt);
+
+    const explicitWebResearch =
+      EXPLICIT_WEB_RESEARCH_PATTERN.test(prompt);
+
+    const artifactMemoryReference =
+      isArtifactMemoryReference(prompt);
+
     const socialPlatforms =
       SocialSearchService.extractRequestedPlatforms(
         prompt
       );
+
     const requiresSocialSearch =
-      !attachmentOnly && SocialSearchService.shouldSearch(
+      !attachmentOnly &&
+      !artifactMemoryReference &&
+      SocialSearchService.shouldSearch(
         prompt,
         input.mode
       );
+
     const requiresSiteAudit =
-      !attachmentOnly && SiteAuditService.shouldAudit(prompt);
-    const siteAuditUrl = requiresSiteAudit
-      ? SiteAuditService.extractRequestedUrl(prompt)
-      : null;
+      !attachmentOnly &&
+      SiteAuditService.shouldAudit(
+        prompt
+      );
+
+    const siteAuditUrl =
+      requiresSiteAudit
+        ? SiteAuditService.extractRequestedUrl(
+            prompt
+          )
+        : null;
+
     const conversationalCheckIn =
-      CONVERSATIONAL_CHECK_IN_PATTERN.test(prompt);
+      CONVERSATIONAL_CHECK_IN_PATTERN.test(
+        prompt
+      );
+
+    const localArtifactRecall =
+      artifactMemoryReference &&
+      !explicitWebResearch &&
+      !requiresSiteAudit;
+
     const requiresSearch =
       !attachmentOnly &&
-      (input.mode === 'research' ||
+      !localArtifactRecall &&
+      (
+        input.mode === 'research' ||
         highStakes ||
         domain === 'research' ||
         requiresSocialSearch ||
         requiresSiteAudit ||
-        (!conversationalCheckIn && CURRENT_INFORMATION_PATTERN.test(prompt)) ||
-        EXPLICIT_WEB_RESEARCH_PATTERN.test(prompt) ||
-        (LIVE_INFORMATION_PATTERN.test(prompt) &&
-          /\b(qual|quais|quanto|onde|quando|como|melhor|recomend|compare|mostre|informe)\b/i.test(prompt)));
+        (
+          !conversationalCheckIn &&
+          CURRENT_INFORMATION_PATTERN.test(
+            prompt
+          )
+        ) ||
+        explicitWebResearch ||
+        (
+          LIVE_INFORMATION_PATTERN.test(
+            prompt
+          ) &&
+          /\b(qual|quais|quanto|onde|quando|como|melhor|recomend|compare|mostre|informe)\b/i.test(
+            prompt
+          )
+        )
+      );
+
     const requiresCode =
       input.mode === 'code' ||
       input.mode === 'site-builder' ||
       domain === 'code' ||
       domain === 'site-builder';
+
     const requiresTools =
       requiresSearch ||
       requiresSiteAudit ||
       Boolean(input.hasFiles) ||
-      Boolean(input.requestedTools?.length);
+      Boolean(
+        input.requestedTools?.length
+      );
+
     const contextSize =
       input.contextSizeEstimate ||
-      Math.ceil(prompt.length / 4);
+      Math.ceil(
+        prompt.length / 4
+      );
+
     const complex =
       input.mode === 'deep' ||
       input.mode === 'code' ||
       input.mode === 'site-builder' ||
       requiresSiteAudit ||
       contextSize > 8_000 ||
-      COMPLEXITY_PATTERN.test(prompt);
+      COMPLEXITY_PATTERN.test(
+        prompt
+      );
+
     const simple =
       !complex &&
       prompt.length < 180 &&
@@ -196,11 +288,27 @@ export class AIRequestClassifier {
     ];
 
     if (requiresSearch) {
-      reasons.push('current_sources_required');
+      reasons.push(
+        'current_sources_required'
+      );
     }
 
     if (attachmentOnly) {
-      reasons.push('attachment_context_only');
+      reasons.push(
+        'attachment_context_only'
+      );
+    }
+
+    if (artifactMemoryReference) {
+      reasons.push(
+        'artifact_memory_reference'
+      );
+    }
+
+    if (localArtifactRecall) {
+      reasons.push(
+        'artifact_memory_recall_without_web_search'
+      );
     }
 
     if (requiresSocialSearch) {
@@ -210,15 +318,21 @@ export class AIRequestClassifier {
     }
 
     if (requiresSiteAudit) {
-      reasons.push('full_site_audit_required');
+      reasons.push(
+        'full_site_audit_required'
+      );
     }
 
     if (highStakes) {
-      reasons.push('high_stakes_guardrails_required');
+      reasons.push(
+        'high_stakes_guardrails_required'
+      );
     }
 
     if (personalData) {
-      reasons.push('personal_data_minimization_required');
+      reasons.push(
+        'personal_data_minimization_required'
+      );
     }
 
     return {
