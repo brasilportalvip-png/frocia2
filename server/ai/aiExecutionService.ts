@@ -16,6 +16,7 @@ import { FeatureFlagService } from '../services/featureFlagService.js';
 import { ExecutionAbortRegistry } from './executionAbortRegistry.js';
 import { ResearchEvidenceService } from './researchEvidenceService.js';
 import { ConversationContextService } from './conversationContextService.js';
+import { ArtifactMemoryService } from './artifactMemoryService.js';
 import { MemoryService } from './memoryService.js';
 import { recordOperationalEventBestEffort } from '../observability/operationalTelemetryRuntime.js';
 import {
@@ -144,8 +145,24 @@ export class AIExecutionService {
       }
     }
 
-    // 2. Classify, authorize tools and route the request
-    const plan = AIRequestOrchestrator.plan({
+    const artifactMemories =
+  await ArtifactMemoryService.rememberAndRetrieve({
+    userId,
+    tenantId,
+    projectId,
+    conversationId,
+    mode,
+    prompt: sanitizedPrompt,
+    attachments
+  });
+
+const artifactMemoryContext =
+  ArtifactMemoryService.toContext(
+    artifactMemories
+  );
+
+// 2. Classify, authorize tools and route the request
+const plan = AIRequestOrchestrator.plan({
       mode,
       prompt: sanitizedPrompt,
       hasImages: attachments.some(
@@ -282,8 +299,9 @@ if (params.abortSignal?.aborted) {
         projectId,
         knowledgeBaseIds,
         systemInstructionOverride: systemInstruction,
-        requestPolicy: plan.systemPolicy,
-        recentMessages: conversationContext.recentMessages,
+requestPolicy: plan.systemPolicy,
+artifactMemoryContext,
+recentMessages: conversationContext.recentMessages,
         conversationSummary: conversationContext,
       });
 

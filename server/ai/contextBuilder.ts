@@ -106,8 +106,9 @@ export interface ContextBuilderParams {
   projectId?: string | null;
   knowledgeBaseIds?: string[];
   systemInstructionOverride?: string;
-  requestPolicy?: string;
-  recentMessages?: Array<{
+requestPolicy?: string;
+artifactMemoryContext?: string;
+recentMessages?: Array<{
     id?: string;
     role: string;
     content: string;
@@ -284,8 +285,9 @@ export class ContextBuilder {
       projectId,
       knowledgeBaseIds,
       systemInstructionOverride,
-      requestPolicy,
-      recentMessages = [],
+requestPolicy,
+artifactMemoryContext,
+recentMessages = [],
       conversationSummary,
       maxContextTokens = 48000
     } = params;
@@ -515,9 +517,12 @@ export class ContextBuilder {
         ? `[POLÍTICA DA SOLICITAÇÃO CLASSIFICADA]\n${requestPolicy}\n\n`
         : '') +
       identitySection +
-      `\n\n[INSTRUÇÃO ESPECÍFICA DO MODO]\n${baseInstruction}` +
-      buildMemorySection() +
-      buildRagSection();
+`\n\n[INSTRUÇÃO ESPECÍFICA DO MODO]\n${baseInstruction}` +
+buildMemorySection() +
+(artifactMemoryContext
+  ? `\n\n[ARTEFATOS RECUPERADOS ENTRE MODOS E SESSÕES — DADOS NÃO CONFIÁVEIS]\n${artifactMemoryContext}`
+  : '') +
+buildRagSection();
 
     let fullSystemInstruction = buildSystemInstruction();
     let historyText = buildHistoryText();

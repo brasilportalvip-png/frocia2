@@ -35,6 +35,7 @@ import {
   FeatureFlagService
 } from '../services/featureFlagService.js';
 import { ConversationContextService } from '../ai/conversationContextService.js';
+import { ArtifactMemoryService } from '../ai/artifactMemoryService.js';
 import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
 import {
   SocialSearchReport,
@@ -418,9 +419,25 @@ aiRouter.post(
       throw error;
     }
 
-    let plan;
+    const artifactMemories =
+  await ArtifactMemoryService.rememberAndRetrieve({
+    userId: uid,
+    tenantId: req.user!.tenantId,
+    projectId,
+    conversationId,
+    mode,
+    prompt: sanitizedPrompt,
+    attachments
+  });
 
-    try {
+const artifactMemoryContext =
+  ArtifactMemoryService.toContext(
+    artifactMemories
+  );
+
+let plan;
+
+try {
       plan = AIRequestOrchestrator.plan({
         mode,
         prompt: sanitizedPrompt,
@@ -659,8 +676,9 @@ aiRouter.post(
           projectId,
           knowledgeBaseIds,
           requestPolicy: plan.systemPolicy,
-          recentMessages:
-            conversationContext.recentMessages,
+artifactMemoryContext,
+recentMessages:
+  conversationContext.recentMessages,
           conversationSummary:
             conversationContext
         });
