@@ -153,13 +153,13 @@ speechRouter.post(
     let clientDisconnected =
       false;
 
-    req.once(
-      'close',
-      () => {
-        clientDisconnected =
-          true;
-      }
-    );
+   res.once(
+  'close',
+  () => {
+    clientDisconnected =
+      true;
+  }
+);
 
     try {
       res.status(200);
