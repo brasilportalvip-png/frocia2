@@ -183,22 +183,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {/* User Overview Card */}
             <div className="md:col-span-1 glass-panel p-6 rounded-[32px] border border-white/10 space-y-6 text-center">
               <div className="relative inline-block mx-auto">
-                {user.avatarUrl && !avatarLoadError ? (
-  <img
-    src={user.avatarUrl}
-    alt={user.name}
-    referrerPolicy="no-referrer"
-    onError={() => setAvatarLoadError(true)}
-    className="w-24 h-24 rounded-full object-cover border-2 border-amber-300/50 mx-auto shadow-xl"
-  />
-) : (
-  <img
-    src="/image/Froc.ia.png"
-    alt="Froc.IA"
-    draggable={false}
-    className="w-24 h-24 rounded-full object-contain border-2 border-amber-300/50 mx-auto shadow-xl"
-  />
-)}
+                <img
+  src="/image/Froc.ia.png"
+  alt="Froc.IA"
+  draggable={false}
+  className="w-24 h-24 rounded-full object-contain border-2 border-amber-300/50 mx-auto shadow-xl"
+/>
               </div>
 
               <div>
