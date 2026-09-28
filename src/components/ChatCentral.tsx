@@ -713,7 +713,7 @@ export const ChatCentral: React.FC<
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
 
-    void startStreamingSpeech();
+    startLegacyNeuralSpeech();
   };
 
   useEffect(() => {
