@@ -1,12 +1,32 @@
-export function selectPreferredMalePortugueseVoice(voices: SpeechSynthesisVoice[]) {
-  const portuguese=voices.filter(v=>/^pt(?:-|_)/i.test(v.lang));
-  return portuguese.find(v=>/\b(male|masculin|daniel|felipe|ricardo|tiago|antonio|paulo|carlos)\b/i.test(v.name))||portuguese.find(v=>/pt-BR/i.test(v.lang))||portuguese[0];
+export function selectPreferredMalePortugueseVoice(
+  voices: SpeechSynthesisVoice[]
+) {
+  const portuguese = voices.filter((v) =>
+    /^pt(?:-|_)/i.test(v.lang)
+  );
+
+  return (
+    portuguese.find((v) =>
+      /\b(male|masculin|daniel|felipe|ricardo|tiago|antonio|paulo|carlos)\b/i.test(
+        v.name
+      )
+    ) ||
+    portuguese.find((v) =>
+      /pt-BR/i.test(v.lang)
+    ) ||
+    portuguese[0]
+  );
 }
 
 /** Converts markdown-heavy answers into text that browser voices can read naturally. */
-export function normalizeTextForSpeech(text: string): string {
+export function normalizeTextForSpeech(
+  text: string
+): string {
   return text
-    .replace(/```[\s\S]*?```/g, ' Trecho de código omitido na leitura. ')
+    .replace(
+      /```[\s\S]*?```/g,
+      ' Trecho de código omitido na leitura. '
+    )
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -14,7 +34,10 @@ export function normalizeTextForSpeech(text: string): string {
     .replace(/^\s*[-*+]\s+/gm, '')
     .replace(/^\s*\d+[.)]\s+/gm, '')
     .replace(/[>*_~]/g, '')
-    .replace(/https?:\/\/\S+/g, ' link disponível na tela ')
+    .replace(
+      /https?:\/\/\S+/g,
+      ' link disponível na tela '
+    )
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -23,39 +46,78 @@ export function normalizeTextForSpeech(text: string): string {
  * Chrome may silently stop very long SpeechSynthesis utterances. Keeping chunks
  * sentence-aware makes playback reliable while preserving a natural cadence.
  */
-export function splitTextForSpeech(text: string, maxLength = 220): string[] {
-  const normalized = normalizeTextForSpeech(text);
-  if (!normalized) return [];
+export function splitTextForSpeech(
+  text: string,
+  maxLength = 220
+): string[] {
+  const normalized =
+    normalizeTextForSpeech(text);
 
-  const sentences = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [normalized];
+  if (!normalized) {
+    return [];
+  }
+
+  const sentences =
+    normalized.match(
+      /[^.!?]+[.!?]+|[^.!?]+$/g
+    ) || [normalized];
+
   const chunks: string[] = [];
   let current = '';
 
   const push = () => {
     const value = current.trim();
-    if (value) chunks.push(value);
+
+    if (value) {
+      chunks.push(value);
+    }
+
     current = '';
   };
 
   for (const sentenceValue of sentences) {
-    const sentence = sentenceValue.trim();
-    if (!sentence) continue;
-    if (`${current} ${sentence}`.trim().length <= maxLength) {
-      current = `${current} ${sentence}`.trim();
+    const sentence =
+      sentenceValue.trim();
+
+    if (!sentence) {
       continue;
     }
+
+    if (
+      `${current} ${sentence}`.trim()
+        .length <= maxLength
+    ) {
+      current =
+        `${current} ${sentence}`.trim();
+
+      continue;
+    }
+
     push();
+
     if (sentence.length <= maxLength) {
       current = sentence;
       continue;
     }
-    const words = sentence.split(/\s+/);
+
+    const words =
+      sentence.split(/\s+/);
+
     for (const word of words) {
-      if (`${current} ${word}`.trim().length > maxLength) push();
-      current = `${current} ${word}`.trim();
+      if (
+        `${current} ${word}`.trim()
+          .length > maxLength
+      ) {
+        push();
+      }
+
+      current =
+        `${current} ${word}`.trim();
     }
   }
+
   push();
+
   return chunks;
 }
 
@@ -65,43 +127,83 @@ export function splitTextForSpeech(text: string, maxLength = 220): string[] {
  */
 export function splitTextForProgressiveSpeech(
   text: string,
-  firstChunkLength = 70,
+  firstChunkLength = 150,
   followingChunkLength = 380
 ): string[] {
-  const firstPass = splitTextForSpeech(text, firstChunkLength);
-  if (firstPass.length <= 1) return firstPass;
+  const firstPass =
+    splitTextForSpeech(
+      text,
+      firstChunkLength
+    );
 
-  const [first, ...remaining] = firstPass;
-  const following = splitTextForSpeech(
-    remaining.join(' '),
-    followingChunkLength
-  );
-  return [first, ...following];
+  if (firstPass.length <= 1) {
+    return firstPass;
+  }
+
+  const [first, ...remaining] =
+    firstPass;
+
+  const following =
+    splitTextForSpeech(
+      remaining.join(' '),
+      followingChunkLength
+    );
+
+  return [
+    first,
+    ...following
+  ];
 }
 
 /** Returns a stable opening prefix as soon as there is enough text to speak. */
 export function getProgressiveSpeechOpening(
   text: string,
-  minLength = 20,
-  maxLength = 55
+  minLength = 45,
+  maxLength = 90
 ): string {
-  const normalized = normalizeTextForSpeech(text);
-  if (!normalized) return '';
+  const normalized =
+    normalizeTextForSpeech(text);
 
-  const sentenceEnd = normalized.search(/[.!?](?:\s|$)/);
-
-  if (sentenceEnd >= 0 && sentenceEnd + 1 <= maxLength) {
-    return normalized.slice(0, sentenceEnd + 1).trim();
+  if (!normalized) {
+    return '';
   }
 
-  if (normalized.length < minLength) return '';
+  const sentenceEnd =
+    normalized.search(
+      /[.!?](?:\s|$)/
+    );
 
-  const candidate = normalized.slice(0, maxLength);
-  const lastSpace = candidate.lastIndexOf(' ');
+  if (sentenceEnd >= 0) {
+    return normalized
+      .slice(
+        0,
+        sentenceEnd + 1
+      )
+      .trim();
+  }
+
+  if (
+    normalized.length <
+    minLength
+  ) {
+    return '';
+  }
+
+  const candidate =
+    normalized.slice(
+      0,
+      maxLength
+    );
+
+  const lastSpace =
+    candidate.lastIndexOf(' ');
 
   return (
     lastSpace >= minLength
-      ? candidate.slice(0, lastSpace)
+      ? candidate.slice(
+          0,
+          lastSpace
+        )
       : candidate
   ).trim();
 }
