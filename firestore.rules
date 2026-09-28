@@ -95,9 +95,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Hierarchical conversation memory is encrypted and backend-only. The API
-    // applies tenant ownership, retrieval limits and user deletion controls.
-    match /conversation_memory_segments/{segmentId} {
+   // Hierarchical conversation memory is encrypted and backend-only. The API
+// applies tenant ownership, retrieval limits and user deletion controls.
+match /conversation_memory_segments/{segmentId} {
+  allow read, write: if false;
+}
+
+    // Universal artifact memory is backend-only.
+    // The trusted API applies user ownership, tenant isolation,
+    // encryption and controlled retrieval before using these records.
+    match /artifact_memory_entries/{artifactId} {
       allow read, write: if false;
     }
 
