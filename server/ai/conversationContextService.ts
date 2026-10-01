@@ -30,7 +30,14 @@ export interface ConversationContextSnapshot {
 
 function normalizeMessageContent(value: unknown): string {
   if (typeof value !== 'string') return '';
-  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 600);
+
+  return value
+    .normalize('NFKC')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
+    .slice(0, 4000);
 }
 
 function importanceScore(message: ConversationContextMessage): number {
