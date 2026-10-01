@@ -19,12 +19,13 @@ describe('Continuidade entre modelos Gemini', () => {
   it('mantém a cadeia estável completa, ordenada e sem duplicatas', () => {
     const chain = configuredGeminiFailoverChain('gemini-3.7-flash');
 
-    expect(chain.slice(0, 4)).toEqual([
-      'gemini-3.7-flash',
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-3.5-flash-lite',
-    ]);
+    expect(chain.slice(0, 5)).toEqual([
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+]);
     expect(new Set(chain).size).toBe(chain.length);
   });
 
@@ -45,12 +46,12 @@ describe('Continuidade entre modelos Gemini', () => {
       userMessage: 'teste',
     });
 
-    expect(result.model).toBe('gemini-3.6-flash');
-    expect(result.fallbackUsed).toBe(true);
-    expect(result.attemptedModels).toEqual([
-      'gemini-3.7-flash',
-      'gemini-3.6-flash',
-    ]);
+    expect(result.model).toBe('gemini-3.8-flash');
+expect(result.fallbackUsed).toBe(true);
+expect(result.attemptedModels).toEqual([
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+]);
     expect(generate.mock.calls[0][0].maxRetries).toBe(0);
   });
 
@@ -89,7 +90,7 @@ describe('Continuidade entre modelos Gemini', () => {
       userMessage: 'teste',
     });
 
-    expect(result.model).toBe('gemini-3.6-flash');
-    expect(result.fallbackUsed).toBe(true);
+    expect(result.model).toBe('gemini-3.8-flash');
+expect(result.fallbackUsed).toBe(true);
   });
 });

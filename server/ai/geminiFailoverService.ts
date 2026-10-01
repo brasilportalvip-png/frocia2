@@ -90,14 +90,24 @@ export class GeminiFailoverService {
           fallbackUsed: model !== options.model,
         };
       } catch (error) {
-        lastError = error;
-        ModelHealthService.recordCall(
-          model,
-          Date.now() - startedAt,
-          false,
-          error instanceof GeminiProviderError && error.code === 'gemini_timeout'
-        );
-      }
+  lastError = error;
+
+  ModelHealthService.recordCall(
+    model,
+    Date.now() - startedAt,
+    false,
+    error instanceof GeminiProviderError && error.code === 'gemini_timeout'
+  );
+
+  // Erro de autenticação/permissão é global para a chave.
+  // Trocar de modelo não resolve e só aumenta a demora da resposta.
+  if (
+    error instanceof GeminiProviderError &&
+    error.code === 'gemini_not_authorized'
+  ) {
+    throw error;
+  }
+}
     }
 
     throw lastError || new Error('Nenhum modelo Gemini respondeu.');
