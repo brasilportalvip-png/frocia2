@@ -236,4 +236,16 @@ describe('AI request classification and orchestration', () => {
       }).valid
     ).toBe(false);
   });
+
+it('mantém domínio de segurança e exige capacidade de código em correção XSS React', () => {
+  const plan = AIRequestOrchestrator.plan({
+    mode: 'smart',
+    prompt:
+      'Corrija uma vulnerabilidade XSS neste componente React e revise o código.',
+  });
+
+  expect(plan.classification.domain).toBe('security');
+  expect(plan.classification.requiresCode).toBe(true);
+  expect(plan.route.requiredCapabilities.code).toBe(true);
+});
 });

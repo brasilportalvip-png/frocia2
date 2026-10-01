@@ -243,10 +243,13 @@ export class AIRequestClassifier {
       );
 
     const requiresCode =
-      input.mode === 'code' ||
-      input.mode === 'site-builder' ||
-      domain === 'code' ||
-      domain === 'site-builder';
+  input.mode === 'code' ||
+  input.mode === 'site-builder' ||
+  domain === 'code' ||
+  domain === 'site-builder' ||
+  /\b(c[oó]digo|programa[çc][aã]o|typescript|javascript|react|node|api|bug|fun[çc][aã]o|classe|componente|backend|frontend|git|github|commit|deploy)\b/i.test(
+    prompt
+  );
 
     const requiresTools =
       requiresSearch ||
