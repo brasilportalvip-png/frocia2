@@ -523,6 +523,26 @@ citations.splice(
   ...mergedCitations
 );
 
+const preVerificationEvidence =
+  ResearchEvidenceService.finalize({
+    text: aiResponseText,
+    citations,
+    requiresSearch: enableSearchGrounding,
+    sensitivity: plan.classification.sensitivity,
+    knowledgeBaseRequested:
+      knowledgeBaseIds.length > 0,
+    ragChunksUsed,
+    minimumSourceDomains:
+      mode === 'research' ||
+      mode === 'deep' ||
+      plan.classification.domain === 'research' ||
+      SocialSearchService.requestedLimit(sanitizedPrompt) === 10
+        ? 2
+        : 1,
+  });
+
+
+
 // Segunda revisão independente para respostas de maior risco.
 if (plan.classification.requiresIndependentVerification) {
   const verification =
@@ -531,6 +551,10 @@ if (plan.classification.requiresIndependentVerification) {
       response: aiResponseText,
       domain: plan.classification.domain,
       sensitivity: plan.classification.sensitivity,
+  researchStatus:
+    preVerificationEvidence.researchStatus,
+  ragStatus:
+    preVerificationEvidence.ragStatus,
       citations: citations.map((citation) => ({
         title: citation.title,
         uri: citation.uri,

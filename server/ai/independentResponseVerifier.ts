@@ -8,6 +8,8 @@ export interface IndependentVerificationInput {
   response: string;
   domain: string;
   sensitivity: string;
+  researchStatus?: string;
+  ragStatus?: string;
   citations?: Array<{
     title?: string;
     uri?: string;
@@ -67,6 +69,8 @@ export class IndependentResponseVerifier {
           'Não confie automaticamente na resposta original.',
           'Procure erros factuais, contradições, afirmações sem suporte, riscos de segurança e conclusões excessivamente confiantes.',
           'Quando houver citações, verifique se a resposta está compatível com a evidência fornecida.',
+'Considere também researchStatus e ragStatus: limited significa evidência parcial e unsupported significa ausência de sustentação suficiente.',
+'Nunca aprove como plenamente sustentada uma conclusão que dependa de evidência marcada como limited ou unsupported.',
           'Não invente fatos, fontes ou evidências.',
           'Não altere o sentido da pergunta do usuário.',
           'Se a resposta estiver correta e suficientemente sustentada, aprove.',
@@ -79,8 +83,10 @@ export class IndependentResponseVerifier {
           originalPrompt: input.prompt,
           proposedResponse: input.response,
           domain: input.domain,
-          sensitivity: input.sensitivity,
-          citations: input.citations || [],
+sensitivity: input.sensitivity,
+researchStatus: input.researchStatus || 'not_requested',
+ragStatus: input.ragStatus || 'not_requested',
+citations: input.citations || [],
         }),
       });
 
