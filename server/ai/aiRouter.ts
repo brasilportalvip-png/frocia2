@@ -40,19 +40,40 @@ export class AIRouter {
           reasonCode = 'mode_fast';
           break;
 
-        case 'smart':
-        case 'deep':
         case 'code':
-          if (requiresCode || mode === 'code' || mode === 'deep') {
-            selectedModel = env.GEMINI_REASONING_MODEL;
-            fallbackModels = [env.GEMINI_DEFAULT_MODEL, env.GEMINI_FAST_MODEL];
-            reasonCode = 'mode_reasoning';
-          } else {
-            selectedModel = env.GEMINI_DEFAULT_MODEL;
-            fallbackModels = [env.GEMINI_FAST_MODEL];
-            reasonCode = 'mode_smart';
-          }
-          break;
+  selectedModel = env.GEMINI_CODE_MODEL;
+  fallbackModels = [
+    env.GEMINI_REASONING_MODEL,
+    env.GEMINI_DEFAULT_MODEL,
+    env.GEMINI_FAST_MODEL,
+  ];
+  reasonCode = 'mode_code';
+  break;
+
+case 'deep':
+  selectedModel = env.GEMINI_REASONING_MODEL;
+  fallbackModels = [
+    env.GEMINI_DEFAULT_MODEL,
+    env.GEMINI_FAST_MODEL,
+  ];
+  reasonCode = 'mode_reasoning';
+  break;
+
+case 'smart':
+  if (requiresCode) {
+    selectedModel = env.GEMINI_CODE_MODEL;
+    fallbackModels = [
+      env.GEMINI_REASONING_MODEL,
+      env.GEMINI_DEFAULT_MODEL,
+      env.GEMINI_FAST_MODEL,
+    ];
+    reasonCode = 'smart_requires_code';
+  } else {
+    selectedModel = env.GEMINI_DEFAULT_MODEL;
+    fallbackModels = [env.GEMINI_FAST_MODEL];
+    reasonCode = 'mode_smart';
+  }
+  break;
 
         case 'research':
           selectedModel = env.GEMINI_DEFAULT_MODEL;
@@ -82,25 +103,26 @@ export class AIRouter {
     }
 
     if (
-      !preferredModel &&
-      (complexity === 'complex' ||
-        sensitivity === 'high-stakes' ||
-        contextSizeEstimate > 8_000) &&
-      mode !== 'image' &&
-      mode !== 'video'
-    ) {
-      selectedModel = env.GEMINI_REASONING_MODEL;
-      fallbackModels = [
-        env.GEMINI_DEFAULT_MODEL,
-        env.GEMINI_FAST_MODEL,
-      ];
-      reasonCode =
-        sensitivity === 'high-stakes'
-          ? 'high_stakes_reasoning'
-          : contextSizeEstimate > 8_000
-            ? 'long_context_reasoning'
-            : 'complex_request_reasoning';
-    }
+  !preferredModel &&
+  (complexity === 'complex' ||
+    sensitivity === 'high-stakes' ||
+    contextSizeEstimate > 8_000) &&
+  mode !== 'image' &&
+  mode !== 'video' &&
+  mode !== 'code'
+) {
+  selectedModel = env.GEMINI_REASONING_MODEL;
+  fallbackModels = [
+    env.GEMINI_DEFAULT_MODEL,
+    env.GEMINI_FAST_MODEL,
+  ];
+  reasonCode =
+    sensitivity === 'high-stakes'
+      ? 'high_stakes_reasoning'
+      : contextSizeEstimate > 8_000
+        ? 'long_context_reasoning'
+        : 'complex_request_reasoning';
+}
 
     // Check health of primary selection; fallback if unhealthy
     if (!ModelHealthService.isModelHealthy(selectedModel)) {
