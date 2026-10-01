@@ -25,6 +25,7 @@ import {
 } from './socialSearchService.js';
 import { SocialSearchPolicyService } from './socialSearchPolicyService.js';
 import { GeminiFailoverService } from './geminiFailoverService.js';
+import { IndependentResponseVerifier } from './independentResponseVerifier.js';
 import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.js';
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
@@ -521,6 +522,34 @@ citations.splice(
   citations.length,
   ...mergedCitations
 );
+
+// Segunda revisão independente para respostas de maior risco.
+if (plan.classification.requiresIndependentVerification) {
+  const verification =
+    await IndependentResponseVerifier.verify({
+      prompt: sanitizedPrompt,
+      response: aiResponseText,
+      domain: plan.classification.domain,
+      sensitivity: plan.classification.sensitivity,
+      citations: citations.map((citation) => ({
+        title: citation.title,
+        uri: citation.uri,
+        snippet: citation.snippet,
+        domain: citation.domain,
+      })),
+    });
+
+  if (!verification.approved) {
+    if (verification.revisedResponse) {
+      aiResponseText = verification.revisedResponse;
+    } else {
+      aiResponseText =
+        `[RESPOSTA PRELIMINAR — VERIFICAÇÃO INDEPENDENTE NÃO CONCLUÍDA]\n` +
+        `${verification.reason}\n\n` +
+        aiResponseText;
+    }
+  }
+}
 
 const evidence = ResearchEvidenceService.finalize({
   text: aiResponseText,
