@@ -248,4 +248,18 @@ it('mantém domínio de segurança e exige capacidade de código em correção X
   expect(plan.classification.requiresCode).toBe(true);
   expect(plan.route.requiredCapabilities.code).toBe(true);
 });
+
+it('força pesquisa para informação tecnológica volátil sobre modelos de IA', () => {
+  const plan = AIRequestOrchestrator.plan({
+    mode: 'smart',
+    prompt: 'Qual modelo do Gemini devo usar na API?',
+  });
+
+  expect(plan.classification.requiresSearch).toBe(true);
+  expect(
+    plan.tools.some((tool) => tool.name === 'web_search')
+  ).toBe(true);
+});
+
+
 });

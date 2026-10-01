@@ -83,6 +83,10 @@ const DOMAIN_PATTERNS: Array<{
 const CURRENT_INFORMATION_PATTERN =
   /\b(hoje|agora|atual(?:mente)?|tempo real|ao vivo|recente|[uú]ltim[oa]s?|not[ií]cias?|pre[çc]os?|promo[çc][oõ]es?|cota[çc][aã]o|agenda|calend[aá]rio|hor[aá]rios?|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento|placar|resultado do jogo|classifica[çc][aã]o|campeonato|tr[aâ]nsito|evento|aberto agora)\b/i;
 
+const VOLATILE_TECH_INFORMATION_PATTERN =
+  /\b(gemini|openai|chatgpt|gpt|claude|anthropic|firebase|vercel|react|node(?:\.js)?|typescript|vite|npm)\b[\s\S]{0,120}\b(modelo|models?|api|sdk|vers[aã]o|pre[çc]o|plano|dispon[ií]vel|deprecat\w*|documenta[çc][aã]o|limite|quota)\b|\b(modelo|models?|api|sdk|vers[aã]o|pre[çc]o|plano|dispon[ií]vel|deprecat\w*|documenta[çc][aã]o|limite|quota)\b[\s\S]{0,120}\b(gemini|openai|chatgpt|gpt|claude|anthropic|firebase|vercel|react|node(?:\.js)?|typescript|vite|npm)\b/i;
+
+
 const EXPLICIT_WEB_RESEARCH_PATTERN =
   /\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b[\s\S]{0,100}\b(?:internet|web|rede|online|fontes?|sites?|google)\b|\b(?:internet|web|rede|online|fontes?|sites?|google)\b[\s\S]{0,100}\b(?:pesquis\w*|busqu\w*|procur\w*|consult\w*|verifiqu\w*|investigu\w*)\b/i;
 
@@ -226,12 +230,17 @@ export class AIRequestClassifier {
         requiresSocialSearch ||
         requiresSiteAudit ||
         (
-          !conversationalCheckIn &&
-          CURRENT_INFORMATION_PATTERN.test(
-            prompt
-          )
-        ) ||
-        explicitWebResearch ||
+  !conversationalCheckIn &&
+  (
+    CURRENT_INFORMATION_PATTERN.test(
+      prompt
+    ) ||
+    VOLATILE_TECH_INFORMATION_PATTERN.test(
+      prompt
+    )
+  )
+) ||
+explicitWebResearch ||
         (
           LIVE_INFORMATION_PATTERN.test(
             prompt

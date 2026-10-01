@@ -78,12 +78,20 @@ export class ResearchEvidenceService {
       if (webCitations.length === 0) {
         researchStatus = 'unsupported';
         finalText = NO_RESEARCH_EVIDENCE;
-      } else if (
-        input.sensitivity === 'high-stakes' &&
-        sourceDomains.length < 2
-      ) {
-        researchStatus = 'limited';
-        finalText = `${finalText}\n\n${LIMITED_HIGH_STAKES_EVIDENCE}`;
+     } else if (
+  input.sensitivity === 'high-stakes' &&
+  sourceDomains.length < 2
+) {
+  researchStatus = 'limited';
+  finalText = `${finalText}\n\n${LIMITED_HIGH_STAKES_EVIDENCE}`;
+} else if (
+  webCitations.length === 1 &&
+  sourceDomains.length === 1
+) {
+  researchStatus = 'limited';
+  finalText =
+    `${finalText}\n\n` +
+    'A resposta está baseada em uma única fonte verificável. Trate a conclusão como limitada até haver confirmação por outra fonte independente.';
       } else if (
         sourceDomains.length < Math.max(1, input.minimumSourceDomains || 1)
       ) {
