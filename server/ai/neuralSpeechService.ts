@@ -55,11 +55,12 @@ export function buildHumanizedSpeechPrompt(
   }
 
   return [
-    'Leia exatamente o conteúdo delimitado ao final, sem acrescentar explicações.',
-    'Fale em português brasileiro com voz masculina adulta, natural, calorosa e amigável.',
-    'Soa como um amigo próximo conversando com tranquilidade: ritmo humano, entonação acolhedora, pausas discretas e nenhuma voz de locutor ou robô.',
-    `<fala>${transcript}</fala>`,
-  ].join('\n');
+  'Leia exatamente o conteúdo delimitado ao final, sem alterar a fala.',
+  'Fale em português brasileiro com voz masculina adulta, natural, calorosa e amigável.',
+  'Soa como um amigo próximo conversando com tranquilidade: educado, simpático, gentil e sempre disposto a ajudar.',
+  'Use ritmo humano, pausas naturais e entonação acolhedora, sem soar como robô ou locutor.',
+  `<fala>${transcript}</fala>`,
+].join('\n');
 }
 
 export function pcm16ToWavBase64(
