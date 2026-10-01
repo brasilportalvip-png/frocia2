@@ -74,9 +74,11 @@ export class IndependentResponseVerifier {
           'Não invente fatos, fontes ou evidências.',
           'Não altere o sentido da pergunta do usuário.',
           'Se a resposta estiver correta e suficientemente sustentada, aprove.',
-          'Se houver erro corrigível, forneça revisedResponse completa.',
-          'Se não houver evidência suficiente para corrigir com segurança, não invente uma correção.',
-          'Retorne somente JSON válido com approved, revisedResponse, reason e risks.',
+         'Se houver erro corrigível, forneça revisedResponse completa.',
+'A revisedResponse deve usar somente fatos sustentados pelo prompt original, pela resposta já validável e pelas evidências/citações fornecidas.',
+'Não introduza nomes, números, datas, versões, links, eventos ou conclusões factuais novas que não estejam sustentadas pela evidência recebida.',
+'Se não houver evidência suficiente para corrigir com segurança, não invente uma correção.',
+'Retorne somente JSON válido com approved, revisedResponse, reason e risks.',
         ].join('\n'),
 
         userMessage: JSON.stringify({
