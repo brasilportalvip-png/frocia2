@@ -27,25 +27,30 @@ export const EnvSchema = z.object({
   APP_URL: urlSchema.optional(),
   TRUSTED_ORIGINS: z.string().optional(),
 
-  // Gemini AI
- GEMINI_API_KEY: z.string().optional(),
-GEMINI_MEDIA_API_KEY: z.string().optional(),
+    // Gemini AI
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MEDIA_API_KEY: z.string().optional(),
 
-GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.8-flash'),
-GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
-GEMINI_REASONING_MODEL: z.string().default('gemini-3.8-flash'),
-GEMINI_CODE_MODEL: z.string().default('gemini-3.8-flash'),
-GEMINI_VISION_MODEL: z.string().default('gemini-3.8-flash'),
-GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
-GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.7-flash'),
-GEMINI_TTS_MODEL: z.string().default('gemini-3.8-flash-tts'),
-GEMINI_TTS_VOICE: z.string().default('Charon'),
+  GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.8-flash'),
+  GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  GEMINI_REASONING_MODEL: z.string().default('gemini-3.8-flash'),
+  GEMINI_CODE_MODEL: z.string().default('gemini-3.8-flash'),
+  GEMINI_VISION_MODEL: z.string().default('gemini-3.8-flash'),
+  GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.7-flash'),
 
-GEMINI_MODEL_FAILOVER_CHAIN: z
-  .string()
-  .default(
-    'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite'
-  ),
+  GEMINI_TTS_MODEL: z.string().default('gemini-3.8-flash-tts'),
+  GEMINI_TTS_VOICE: z.string().default('Charon'),
+
+  ENGINEERING_MODEL: z.string().default('gemini-3.8-flash'),
+  SPECIALIST_REVIEW_MODEL: z.string().default('gemini-3.8-flash'),
+  INDEPENDENT_VERIFIER_MODEL: z.string().default('gemini-3.1-pro-preview'),
+
+  GEMINI_MODEL_FAILOVER_CHAIN: z
+    .string()
+    .default(
+      'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite'
+    ),
   // Internal Cron & Maintenance
   INTERNAL_CRON_SECRET: z.string().optional(),
   CRON_SECRET: z.string().optional(),
@@ -174,6 +179,15 @@ GEMINI_TTS_MODEL:
 
 GEMINI_TTS_VOICE:
   process.env.GEMINI_TTS_VOICE || 'Charon',
+
+ENGINEERING_MODEL:
+  process.env.ENGINEERING_MODEL || 'gemini-3.8-flash',
+
+SPECIALIST_REVIEW_MODEL:
+  process.env.SPECIALIST_REVIEW_MODEL || 'gemini-3.8-flash',
+
+INDEPENDENT_VERIFIER_MODEL:
+  process.env.INDEPENDENT_VERIFIER_MODEL || 'gemini-3.1-pro-preview',
 
 GEMINI_MODEL_FAILOVER_CHAIN:
   process.env.GEMINI_MODEL_FAILOVER_CHAIN ||
