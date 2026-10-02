@@ -245,7 +245,7 @@ const attemptedModels: string[] = [];
         inputTokens: null,
         outputTokens: null,
         cachedTokens: null,
-        estimatedCredits: route.estimatedCredits,
+        estimatedCredits: totalEstimatedCredits,
         consumedCredits: null,
         reservationId,
         latencyMs: null,
