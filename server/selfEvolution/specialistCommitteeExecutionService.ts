@@ -1,5 +1,6 @@
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { CommitteeGateService } from './committeeGateService.js';
+import { env } from '../config/env.js';
 import {
   COMMITTEE_ROLES, CommitteeReview, CommitteeRole, CommitteeVerdict, ImprovementCandidate,
 } from './selfEvolutionTypes.js';
@@ -39,9 +40,10 @@ function cleanList(value: unknown): string[] {
 class GeminiSpecialistReviewAdapter implements SpecialistReviewAdapter {
   async review(role: CommitteeRole, candidate: ImprovementCandidate): Promise<SpecialistReviewPayload> {
     const response = await GeminiProvider.generate({
-      model: role === 'independent_verifier'
-        ? process.env.INDEPENDENT_VERIFIER_MODEL || 'gemini-3.1-pro-preview'
-        : process.env.SPECIALIST_REVIEW_MODEL || 'gemini-3.7-flash',
+      model:
+  role === 'independent_verifier'
+    ? env.INDEPENDENT_VERIFIER_MODEL
+    : env.SPECIALIST_REVIEW_MODEL,
       responseFormat: 'json', temperature: 0.1, timeoutMs: 45_000, maxRetries: 1,
       systemInstruction: [
         `Você é o agente ${role} do comitê independente da Froc.IA.`, ROLE_MISSIONS[role],

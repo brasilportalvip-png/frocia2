@@ -3,6 +3,8 @@ import {
   GeminiProviderError,
 } from './providers/geminiProvider.js';
 
+import { env } from '../config/env.js';
+
 export interface IndependentVerificationInput {
   prompt: string;
   response: string;
@@ -51,10 +53,7 @@ export class IndependentResponseVerifier {
   static async verify(
     input: IndependentVerificationInput
   ): Promise<IndependentVerificationResult> {
-    const model =
-      process.env.INDEPENDENT_VERIFIER_MODEL ||
-      'gemini-3.1-pro-preview';
-
+    const model = env.INDEPENDENT_VERIFIER_MODEL;
     try {
       const result = await GeminiProvider.generate({
         model,
