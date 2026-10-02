@@ -28,14 +28,19 @@ export const EnvSchema = z.object({
   TRUSTED_ORIGINS: z.string().optional(),
 
   // Gemini AI
-  GEMINI_API_KEY: z.string().optional(),
-  GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.8-flash'),
+ GEMINI_API_KEY: z.string().optional(),
+GEMINI_MEDIA_API_KEY: z.string().optional(),
+
+GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.8-flash'),
 GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
 GEMINI_REASONING_MODEL: z.string().default('gemini-3.8-flash'),
 GEMINI_CODE_MODEL: z.string().default('gemini-3.8-flash'),
 GEMINI_VISION_MODEL: z.string().default('gemini-3.8-flash'),
 GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-2'),
 GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.7-flash'),
+GEMINI_TTS_MODEL: z.string().default('gemini-3.8-flash-tts'),
+GEMINI_TTS_VOICE: z.string().default('Charon'),
+
 GEMINI_MODEL_FAILOVER_CHAIN: z
   .string()
   .default(
@@ -154,13 +159,22 @@ if (parseResult.success) {
     APP_URL: process.env.APP_URL,
     TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-   GEMINI_DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.8-flash',
+GEMINI_MEDIA_API_KEY: process.env.GEMINI_MEDIA_API_KEY,
+
+GEMINI_DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-3.8-flash',
 GEMINI_FAST_MODEL: process.env.GEMINI_FAST_MODEL || 'gemini-3.5-flash-lite',
 GEMINI_REASONING_MODEL: process.env.GEMINI_REASONING_MODEL || 'gemini-3.8-flash',
 GEMINI_CODE_MODEL: process.env.GEMINI_CODE_MODEL || 'gemini-3.8-flash',
 GEMINI_VISION_MODEL: process.env.GEMINI_VISION_MODEL || 'gemini-3.8-flash',
 GEMINI_EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2',
 GEMINI_FALLBACK_MODEL: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.7-flash',
+
+GEMINI_TTS_MODEL:
+  process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts',
+
+GEMINI_TTS_VOICE:
+  process.env.GEMINI_TTS_VOICE || 'Charon',
+
 GEMINI_MODEL_FAILOVER_CHAIN:
   process.env.GEMINI_MODEL_FAILOVER_CHAIN ||
   'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite',
