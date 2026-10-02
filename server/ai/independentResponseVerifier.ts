@@ -12,12 +12,13 @@ export interface IndependentVerificationInput {
   sensitivity: string;
   researchStatus?: string;
   ragStatus?: string;
-  citations?: Array<{
-    title?: string;
-    uri?: string;
-    snippet?: string;
-    domain?: string;
-  }>;
+ citations?: Array<{
+  title?: string;
+  uri?: string;
+  snippet?: string;
+  domain?: string;
+  supportedText?: string;
+}>;
 }
 
 export interface IndependentVerificationResult {

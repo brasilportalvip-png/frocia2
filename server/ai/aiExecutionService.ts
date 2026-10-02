@@ -577,12 +577,13 @@ if (plan.classification.requiresIndependentVerification) {
     preVerificationEvidence.researchStatus,
   ragStatus:
     preVerificationEvidence.ragStatus,
-      citations: citations.map((citation) => ({
-        title: citation.title,
-        uri: citation.uri,
-        snippet: citation.snippet,
-        domain: citation.domain,
-      })),
+     citations: citations.map((citation) => ({
+  title: citation.title,
+  uri: citation.uri,
+  snippet: citation.snippet,
+  domain: citation.domain,
+  supportedText: citation.supportedText,
+})),
     });
 
 verifierInputTokens =
