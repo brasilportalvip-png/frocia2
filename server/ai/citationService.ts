@@ -285,10 +285,17 @@ export class CitationService {
       seen.add(url.href);
 
       const matchingSupports = supports.filter((support: any) =>
-        Array.isArray(support?.groundingChunkIndices) &&
-        support.groundingChunkIndices.includes(chunkIndex)
-      );
-      const firstSegment = matchingSupports[0]?.segment;
+  Array.isArray(support?.groundingChunkIndices) &&
+  support.groundingChunkIndices.includes(chunkIndex)
+);
+
+// Só uma fonte realmente vinculada a um trecho da resposta
+// deve contar como evidência de grounding.
+if (matchingSupports.length === 0) {
+  continue;
+}
+
+const firstSegment = matchingSupports[0]?.segment;
       const supportedText = cleanText(
         matchingSupports
           .map((support: any) => support?.segment?.text)
