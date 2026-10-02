@@ -25,6 +25,9 @@ export interface IndependentVerificationResult {
   revisedResponse?: string;
   reason: string;
   risks: string[];
+  modelUsed?: string;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 interface VerificationPayload {
@@ -54,6 +57,7 @@ export class IndependentResponseVerifier {
     input: IndependentVerificationInput
   ): Promise<IndependentVerificationResult> {
     const model = env.INDEPENDENT_VERIFIER_MODEL;
+
     try {
       const result = await GeminiProvider.generate({
         model,
@@ -68,28 +72,36 @@ export class IndependentResponseVerifier {
           'Não confie automaticamente na resposta original.',
           'Procure erros factuais, contradições, afirmações sem suporte, riscos de segurança e conclusões excessivamente confiantes.',
           'Quando houver citações, verifique se a resposta está compatível com a evidência fornecida.',
-'Considere também researchStatus e ragStatus: limited significa evidência parcial e unsupported significa ausência de sustentação suficiente.',
-'Nunca aprove como plenamente sustentada uma conclusão que dependa de evidência marcada como limited ou unsupported.',
+          'Considere também researchStatus e ragStatus: limited significa evidência parcial e unsupported significa ausência de sustentação suficiente.',
+          'Nunca aprove como plenamente sustentada uma conclusão que dependa de evidência marcada como limited ou unsupported.',
           'Não invente fatos, fontes ou evidências.',
           'Não altere o sentido da pergunta do usuário.',
           'Se a resposta estiver correta e suficientemente sustentada, aprove.',
-         'Se houver erro corrigível, forneça revisedResponse completa.',
-'A revisedResponse deve usar somente fatos sustentados pelo prompt original, pela resposta já validável e pelas evidências/citações fornecidas.',
-'Não introduza nomes, números, datas, versões, links, eventos ou conclusões factuais novas que não estejam sustentadas pela evidência recebida.',
-'Se não houver evidência suficiente para corrigir com segurança, não invente uma correção.',
-'Retorne somente JSON válido com approved, revisedResponse, reason e risks.',
+          'Se houver erro corrigível, forneça revisedResponse completa.',
+          'A revisedResponse deve usar somente fatos sustentados pelo prompt original, pela resposta já validável e pelas evidências/citações fornecidas.',
+          'Não introduza nomes, números, datas, versões, links, eventos ou conclusões factuais novas que não estejam sustentadas pela evidência recebida.',
+          'Se não houver evidência suficiente para corrigir com segurança, não invente uma correção.',
+          'Retorne somente JSON válido com approved, revisedResponse, reason e risks.',
         ].join('\n'),
 
         userMessage: JSON.stringify({
           originalPrompt: input.prompt,
           proposedResponse: input.response,
           domain: input.domain,
-sensitivity: input.sensitivity,
-researchStatus: input.researchStatus || 'not_requested',
-ragStatus: input.ragStatus || 'not_requested',
-citations: input.citations || [],
+          sensitivity: input.sensitivity,
+          researchStatus:
+            input.researchStatus || 'not_requested',
+          ragStatus:
+            input.ragStatus || 'not_requested',
+          citations: input.citations || [],
         }),
       });
+
+      const usage = {
+        modelUsed: model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      };
 
       let parsed: VerificationPayload;
 
@@ -108,6 +120,7 @@ citations: input.citations || [],
           risks: [
             'independent_verifier_invalid_json',
           ],
+          ...usage,
         };
       }
 
@@ -133,6 +146,7 @@ citations: input.citations || [],
             reason ||
             'Resposta aprovada pelo verificador independente.',
           risks,
+          ...usage,
         };
       }
 
@@ -144,6 +158,7 @@ citations: input.citations || [],
             reason ||
             'Resposta revisada pelo verificador independente.',
           risks,
+          ...usage,
         };
       }
 
@@ -156,6 +171,7 @@ citations: input.citations || [],
           risks.length > 0
             ? risks
             : ['independent_verification_failed'],
+        ...usage,
       };
     } catch (error) {
       if (error instanceof GeminiProviderError) {
@@ -163,6 +179,8 @@ citations: input.citations || [],
           approved: false,
           reason: error.message,
           risks: [error.code],
+          inputTokens: 0,
+          outputTokens: 0,
         };
       }
 
@@ -170,7 +188,11 @@ citations: input.citations || [],
         approved: false,
         reason:
           'O verificador independente não conseguiu concluir a revisão.',
-        risks: ['independent_verifier_failed'],
+        risks: [
+          'independent_verifier_failed',
+        ],
+        inputTokens: 0,
+        outputTokens: 0,
       };
     }
   }

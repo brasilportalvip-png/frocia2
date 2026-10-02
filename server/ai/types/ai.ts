@@ -163,6 +163,10 @@ export interface ExecutionRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   cachedTokens: number | null;
+
+  verifierModelUsed?: string | null;
+  verifierInputTokens?: number;
+  verifierOutputTokens?: number;
   estimatedCredits: number;
   consumedCredits: number | null;
   reservationId: string;

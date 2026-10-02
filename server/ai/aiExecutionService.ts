@@ -30,6 +30,7 @@ import { SiteAuditReport, SiteAuditService } from '../services/siteAuditService.
 import { SiteAuditPolicyService } from './siteAuditPolicyService.js';
 import { CitationUrlResolver } from './citationUrlResolver.js';
 import { ResearchLinkIntegrityService } from './researchLinkIntegrityService.js';
+import { env } from '../config/env.js';
 import {
   ExternalImportService,
   resolveGithubRepositoryUrlFromPrompt,
@@ -178,10 +179,26 @@ const plan = AIRequestOrchestrator.plan({
 
     const idempotencyKey = providedKey || `aiexec-${userId}-${Date.now()}`;
 
+
+const verifierReservationCredits =
+  plan.classification.requiresIndependentVerification
+    ? CostService.estimateReservationCeiling(
+        env.INDEPENDENT_VERIFIER_MODEL,
+        sanitizedPrompt,
+        false,
+        false,
+        false
+      )
+    : 0;
+
+const totalEstimatedCredits =
+  route.estimatedCredits +
+  verifierReservationCredits;
+
     // 3. Reserve Credits
     const reserveResult = await CreditWalletService.reserveCredits({
       userId,
-      amount: route.estimatedCredits,
+      amount: totalEstimatedCredits,
       operation: `Reserva para execução IA (${mode})`,
       idempotencyKey,
     });
@@ -192,8 +209,13 @@ const plan = AIRequestOrchestrator.plan({
     let fallbackUsed = false;
     let aiResponseText = '';
     let inputTokens = 0;
-    let outputTokens = 0;
-    const attemptedModels: string[] = [];
+let outputTokens = 0;
+
+let verifierInputTokens = 0;
+let verifierOutputTokens = 0;
+let verifierModelUsed: string | null = null;
+
+const attemptedModels: string[] = [];
     let startTime = Date.now();
     const citations: MessageCitation[] = [];
     let ragChunksUsed: KnowledgeChunk[] = [];
@@ -563,6 +585,15 @@ if (plan.classification.requiresIndependentVerification) {
       })),
     });
 
+verifierInputTokens =
+  verification.inputTokens;
+
+verifierOutputTokens =
+  verification.outputTokens;
+
+verifierModelUsed =
+  verification.modelUsed || null;
+
   if (!verification.approved) {
     if (verification.revisedResponse) {
       aiResponseText = verification.revisedResponse;
@@ -606,14 +637,30 @@ if (executionId) {
 }
 
 // 7. Calculate Actual Consumed Credits
-const consumedCredits = CostService.calculateCreditCost(
-  modelToUse,
-  inputTokens,
-  outputTokens,
-  plan.tools.length > 0,
-  plan.classification.requiresSearch,
-  mode
-);
+const primaryConsumedCredits =
+  CostService.calculateCreditCost(
+    modelToUse,
+    inputTokens,
+    outputTokens,
+    plan.tools.length > 0,
+    plan.classification.requiresSearch,
+    mode
+  );
+
+const verifierConsumedCredits =
+  verifierModelUsed
+    ? CostService.calculateCreditCost(
+        verifierModelUsed,
+        verifierInputTokens,
+        verifierOutputTokens,
+        false,
+        false
+      )
+    : 0;
+
+const consumedCredits =
+  primaryConsumedCredits +
+  verifierConsumedCredits;
 
     const latencyMs = Date.now() - startTime;
 
@@ -622,7 +669,10 @@ const consumedCredits = CostService.calculateCreditCost(
       await CreditWalletService.confirmConsumption({
         userId,
         reservationId,
-        amountConsumed: Math.min(consumedCredits, route.estimatedCredits),
+        amountConsumed: Math.min(
+  consumedCredits,
+  totalEstimatedCredits
+),
         operation: `Consumo de IA (${mode} - ${modelToUse})`,
         idempotencyKey: `cnf-${idempotencyKey}`,
       });
@@ -690,10 +740,15 @@ const consumedCredits = CostService.calculateCreditCost(
 
     // 10. Finalize Trace
     await ExecutionTraceService.updateTrace(executionId, {
-      status: 'completed',
-      inputTokens,
-      outputTokens,
-      consumedCredits,
+  status: 'completed',
+  inputTokens,
+  outputTokens,
+
+  verifierModelUsed,
+  verifierInputTokens,
+  verifierOutputTokens,
+
+  consumedCredits,
       latencyMs,
       fallbackUsed,
       attemptedModels,
