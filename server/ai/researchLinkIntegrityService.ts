@@ -71,6 +71,88 @@ function sanitizeLinks(text: string, approved: Set<string>): ResearchLinkIntegri
   return { text: output, removedLinks };
 }
 
+
+function sanitizeBareUrls(
+  text: string,
+  approved: Set<string>
+): ResearchLinkIntegrityResult {
+  const bareUrlPattern =
+    /https:\/\/[^\s<>"'`]+/gi;
+
+  let cursor = 0;
+  let output = '';
+  let removedLinks = 0;
+
+  while (cursor < text.length) {
+    const markdownLink = nextMarkdownLink(
+      text,
+      cursor
+    );
+
+    const segmentEnd = markdownLink
+      ? markdownLink.start
+      : text.length;
+
+    const plainSegment = text.slice(
+      cursor,
+      segmentEnd
+    );
+
+    const sanitizedSegment =
+      plainSegment.replace(
+        bareUrlPattern,
+        (rawUrl) => {
+          const trailingPunctuation =
+            rawUrl.match(
+              /[.,;:!?)\]}]+$/
+            )?.[0] || '';
+
+          const cleanUrl =
+            trailingPunctuation
+              ? rawUrl.slice(
+                  0,
+                  -trailingPunctuation.length
+                )
+              : rawUrl;
+
+          const target =
+            canonical(cleanUrl);
+
+          if (
+            target &&
+            approved.has(target)
+          ) {
+            return rawUrl;
+          }
+
+          removedLinks += 1;
+          return trailingPunctuation;
+        }
+      );
+
+    output += sanitizedSegment;
+
+    if (!markdownLink) {
+      break;
+    }
+
+    // O link Markdown já foi validado por sanitizeLinks().
+    // Aqui ele é preservado sem reinterpretar sua URL interna.
+    output += text.slice(
+      markdownLink.start,
+      markdownLink.end
+    );
+
+    cursor = markdownLink.end;
+  }
+
+  return {
+    text: output,
+    removedLinks,
+  };
+}
+
+
 function verifiedSources(citations: MessageCitation[]): string {
   const seen = new Set<string>();
   const lines: string[] = [];
@@ -100,15 +182,27 @@ export class ResearchLinkIntegrityService {
         .map((citation) => canonical(citation.uri))
         .filter((uri): uri is string => Boolean(uri))
     );
-    const result = sanitizeLinks(text, approved);
-    const sourceSection = options.appendVerifiedSources
-      ? verifiedSources(citations)
-      : '';
-    return {
-      ...result,
-      text: sourceSection
-        ? `${result.text.trim()}\n\n${sourceSection}`
-        : result.text,
-    };
+    const markdownResult = sanitizeLinks(
+  text,
+  approved
+);
+
+const bareUrlResult = sanitizeBareUrls(
+  markdownResult.text,
+  approved
+);
+
+const sourceSection = options.appendVerifiedSources
+  ? verifiedSources(citations)
+  : '';
+
+return {
+  text: sourceSection
+    ? `${bareUrlResult.text.trim()}\n\n${sourceSection}`
+    : bareUrlResult.text,
+  removedLinks:
+    markdownResult.removedLinks +
+    bareUrlResult.removedLinks,
+};
   }
 }
