@@ -181,9 +181,13 @@ const plan = AIRequestOrchestrator.plan({
       knowledgeBaseIds,
       preferredModel: modelOverride
     });
-    const route = plan.route;
+       const route = plan.route;
+    const executionMode =
+      plan.effectiveMode;
 
-    const idempotencyKey = providedKey || `aiexec-${userId}-${Date.now()}`;
+    const idempotencyKey =
+      providedKey ||
+      `aiexec-${userId}-${Date.now()}`;
 
 
 const verifierReservationCredits =
@@ -202,12 +206,14 @@ const totalEstimatedCredits =
   verifierReservationCredits;
 
     // 3. Reserve Credits
-    const reserveResult = await CreditWalletService.reserveCredits({
-      userId,
-      amount: totalEstimatedCredits,
-      operation: `Reserva para execução IA (${mode})`,
-      idempotencyKey,
-    });
+    const reserveResult =
+      await CreditWalletService.reserveCredits({
+        userId,
+        amount: totalEstimatedCredits,
+        operation:
+          `Reserva para execução IA (${mode} -> ${executionMode})`,
+        idempotencyKey,
+      });
 
     const reservationId = reserveResult.reservationId;
     let executionId: string | null = null;
@@ -242,8 +248,8 @@ const attemptedModels: string[] = [];
       executionId = await ExecutionTraceService.createTrace({
         userId,
         conversationId: conversationId || null,
-        projectId: projectId || null,
-        mode,
+         projectId: projectId || null,
+        mode: executionMode,
         selectedModel: route.selectedModel,
         fallbackModels: route.fallbackModels,
         attemptedModels: [route.selectedModel],
@@ -319,11 +325,11 @@ if (params.abortSignal?.aborted) {
         projectId,
         prompt: sanitizedPrompt,
       });
-      const assembled = await ContextBuilder.assemble({
+       const assembled = await ContextBuilder.assemble({
         userId,
         tenantId,
         userDisplayName,
-        mode,
+        mode: executionMode,
         prompt: sanitizedPrompt,
         conversationId,
         projectId,
@@ -355,10 +361,10 @@ recentMessages: conversationContext.recentMessages,
         citations.push(...CitationService.buildSiteAuditCitations(siteAuditReport));
       }
 
-      if (
+        if (
         SocialSearchService.shouldSearch(
           sanitizedPrompt,
-          mode
+          executionMode
         )
       ) {
         await SocialSearchPolicyService.assertAllowed({
@@ -627,10 +633,10 @@ const preVerificationEvidence =
     knowledgeBaseRequested:
       knowledgeBaseIds.length > 0,
     ragChunksUsed,
-    minimumSourceDomains:
-      mode === 'research' ||
-      mode === 'deep' ||
-      plan.classification.domain === 'research' ||
+     minimumSourceDomains:
+    executionMode === 'research' ||
+    executionMode === 'deep' ||
+    plan.classification.domain === 'research' ||
       SocialSearchService.requestedLimit(sanitizedPrompt) === 10
         ? 2
         : 1,
@@ -718,7 +724,7 @@ const primaryConsumedCredits =
     outputTokens,
     plan.tools.length > 0,
     plan.classification.requiresSearch,
-    mode
+    executionMode
   );
 
 const verifierConsumedCredits =
@@ -747,7 +753,8 @@ const consumedCredits =
   consumedCredits,
   totalEstimatedCredits
 ),
-        operation: `Consumo de IA (${mode} - ${modelToUse})`,
+        operation:
+          `Consumo de IA (${mode} -> ${executionMode} - ${modelToUse})`,
         idempotencyKey: `cnf-${idempotencyKey}`,
       });
     } catch (confErr: any) {

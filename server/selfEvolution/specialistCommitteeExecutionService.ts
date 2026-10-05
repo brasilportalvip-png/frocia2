@@ -82,21 +82,49 @@ function actorEnv(role: CommitteeRole): string {
   return `SPECIALIST_${role.toUpperCase()}_ACTOR_UID`;
 }
 
+function defaultActorUid(
+  role: CommitteeRole
+): string {
+  return `froc-specialist-${role}`;
+}
+
 export class SpecialistCommitteeExecutionService {
   private static adapter: SpecialistReviewAdapter = new GeminiSpecialistReviewAdapter();
 
   static setAdapter(adapter: SpecialistReviewAdapter) { this.adapter = adapter; }
 
-  static configuredActors(): Record<CommitteeRole, string> {
-    const actors = {} as Record<CommitteeRole, string>;
+    static configuredActors(): Record<
+    CommitteeRole,
+    string
+  > {
+    const actors =
+      {} as Record<
+        CommitteeRole,
+        string
+      >;
+
     for (const role of COMMITTEE_ROLES) {
-      const actor = process.env[actorEnv(role)]?.trim();
-      if (!actor) throw new Error(`specialist_actor_not_configured:${role}`);
-      actors[role] = actor;
+      const configured =
+        process.env[
+          actorEnv(role)
+        ]?.trim();
+
+      actors[role] =
+        configured ||
+        defaultActorUid(role);
     }
-    if (new Set(Object.values(actors)).size !== COMMITTEE_ROLES.length) {
-      throw new Error('specialist_actor_identities_not_unique');
+
+    if (
+      new Set(
+        Object.values(actors)
+      ).size !==
+      COMMITTEE_ROLES.length
+    ) {
+      throw new Error(
+        'specialist_actor_identities_not_unique'
+      );
     }
+
     return actors;
   }
 

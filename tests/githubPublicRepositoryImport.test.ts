@@ -211,6 +211,146 @@ describe('public GitHub repository import', () => {
     expect(result.content).not.toContain('BEGIN PRIVATE KEY');
   });
 
+  it('lê integralmente arquivo GitHub acima de 100 KB em segmentos seguros', async () => {
+    const largeSha = '9'.repeat(40);
+
+    const largeContent =
+      'export const linha = "conteudo";\n'.repeat(
+        8_000
+      );
+
+    expect(
+      Buffer.byteLength(
+        largeContent,
+        'utf8'
+      )
+    ).toBeGreaterThan(200_000);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (
+          input:
+            | string
+            | URL
+            | Request
+        ) => {
+          const url = String(input);
+
+          if (
+            url.endsWith(
+              '/repos/brasilportalvip-png/exu-tata'
+            )
+          ) {
+            return jsonResponse({
+              full_name:
+                'brasilportalvip-png/exu-tata',
+              description:
+                'Exu benchmark',
+              default_branch: 'main',
+              language: 'TypeScript',
+              stargazers_count: 0,
+              forks_count: 0,
+              html_url:
+                'https://github.com/brasilportalvip-png/exu-tata',
+              private: false,
+              archived: false,
+              topics: []
+            });
+          }
+
+          if (
+            url.includes(
+              '/git/trees/main'
+            )
+          ) {
+            return jsonResponse({
+              truncated: false,
+              tree: [
+                {
+                  path: 'api/index.ts',
+                  type: 'blob',
+                  size:
+                    Buffer.byteLength(
+                      largeContent,
+                      'utf8'
+                    ),
+                  sha: largeSha
+                }
+              ]
+            });
+          }
+
+          if (
+            url.endsWith('/readme')
+          ) {
+            return jsonResponse(
+              {},
+              404
+            );
+          }
+
+          if (
+            url.endsWith(
+              `/git/blobs/${largeSha}`
+            )
+          ) {
+            return jsonResponse(
+              encoded(largeContent)
+            );
+          }
+
+          throw new Error(
+            `unexpected request: ${url}`
+          );
+        }
+      )
+    );
+
+    const result =
+      await ExternalImportService.import({
+        type: 'github',
+        url:
+          'https://github.com/brasilportalvip-png/exu-tata'
+      });
+
+    const document =
+      JSON.parse(result.content);
+
+    expect(
+      document.contentFilesReturned
+    ).toBe(1);
+
+    const imported =
+      document.importedFiles[0];
+
+    expect(imported.path).toBe(
+      'api/index.ts'
+    );
+
+    expect(imported.content).toBe(
+      largeContent
+    );
+
+    expect(
+      imported.segments.length
+    ).toBeGreaterThan(2);
+
+    expect(
+      imported.segments.join('')
+    ).toBe(largeContent);
+
+    expect(
+      imported.segments.every(
+        (segment: string) =>
+          Buffer.byteLength(
+            segment,
+            'utf8'
+          ) <= 80_000
+      )
+    ).toBe(true);
+  });
+
   it('reports an absent public repository honestly', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 404)));
 

@@ -13,7 +13,7 @@ import { RollbackService } from './rollbackService.js';
 import { CandidateState } from './selfEvolutionTypes.js';
 import { CommitteeGateService } from './committeeGateService.js';
 import { AutonomousBrowserValidationService } from './autonomousBrowserValidationService.js';
-
+import { SpecialistCommitteeExecutionService } from './specialistCommitteeExecutionService.js';
 export class SelfEvolutionOrchestrator {
   static async processCandidateLifecycle(candidateId: string, actor: string = 'system'): Promise<{
     state: CandidateState;
@@ -178,19 +178,148 @@ export class SelfEvolutionOrchestrator {
             await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_failed');
             return { state: 'preview_failed', message: 'Homologação autônoma do navegador encontrou falhas.' };
           }
-        } catch (error) {
-          await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_failed');
+           } catch (error) {
+          await ImprovementPlannerService.updateCandidateState(
+            candidateId,
+            'preview_failed'
+          );
+
           return {
             state: 'preview_failed',
-            message: `Homologação autônoma indisponível: ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+            message:
+              `Homologação autônoma indisponível: ${
+                error instanceof Error
+                  ? error.message
+                  : 'erro desconhecido'
+              }`,
           };
         }
 
-        if (candidate.riskLevel === 'R2' || candidate.riskLevel === 'R3') {
-          await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_release_approval');
+        let specialistReviews;
+
+        try {
+          specialistReviews =
+            await SpecialistCommitteeExecutionService.execute(
+              candidate
+            );
+        } catch (error) {
+          await ImprovementPlannerService.updateCandidateState(
+            candidateId,
+            'failed'
+          );
+
+          await AuditService.logEvent({
+            actor: 'specialist-committee',
+            action:
+              'automatic_specialist_committee',
+            resource: candidateId,
+            riskLevel:
+              candidate.riskLevel,
+            result: 'failure',
+            commitHash:
+              candidate.headCommitSha,
+            prUrl:
+              candidate.pullRequestUrl,
+            reason:
+              error instanceof Error
+                ? error.message
+                : 'Falha desconhecida ao executar o comitê especialista.',
+          });
+
           return {
-            state: 'awaiting_release_approval',
-            message: 'Preview implantada. Aguardando aprovação humana final de release.',
+            state: 'failed',
+            message:
+              `Comitê especialista não pôde concluir a revisão: ${
+                error instanceof Error
+                  ? error.message
+                  : 'erro desconhecido'
+              }`,
+          };
+        }
+
+        const committeeGate =
+          CommitteeGateService.evaluateReviews({
+            candidateId:
+              candidate.id,
+            commitSha:
+              candidate.headCommitSha,
+            riskLevel:
+              candidate.riskLevel,
+            reviews:
+              specialistReviews,
+          });
+
+        await AuditService.logEvent({
+          actor: 'specialist-committee',
+          action:
+            'automatic_specialist_committee',
+          resource: candidateId,
+          riskLevel:
+            candidate.riskLevel,
+          result:
+            committeeGate.status ===
+            'blocked'
+              ? 'rejected'
+              : 'success',
+          commitHash:
+            candidate.headCommitSha,
+          prUrl:
+            candidate.pullRequestUrl,
+          reason:
+            committeeGate.reason,
+        });
+
+        if (
+          committeeGate.status ===
+          'blocked'
+        ) {
+          await ImprovementPlannerService.updateCandidateState(
+            candidateId,
+            'failed'
+          );
+
+          return {
+            state: 'failed',
+            message:
+              `Comitê especialista bloqueou a alteração: ${committeeGate.reason}`,
+          };
+        }
+
+        if (
+          candidate.riskLevel !==
+            'R2' &&
+          candidate.riskLevel !==
+            'R3' &&
+          !committeeGate.approved
+        ) {
+          await ImprovementPlannerService.updateCandidateState(
+            candidateId,
+            'failed'
+          );
+
+          return {
+            state: 'failed',
+            message:
+              `Comitê especialista não aprovou a alteração: ${committeeGate.reason}`,
+          };
+        }
+
+        if (
+          candidate.riskLevel ===
+            'R2' ||
+          candidate.riskLevel ===
+            'R3'
+        ) {
+          await ImprovementPlannerService.updateCandidateState(
+            candidateId,
+            'awaiting_release_approval'
+          );
+
+          return {
+            state:
+              'awaiting_release_approval',
+            message:
+              'Os 10 agentes especialistas concluíram a revisão. Preview aprovada. Aguardando somente aprovação humana final de release.',
           };
         }
       }

@@ -10,11 +10,11 @@ import { RollbackService } from '../server/selfEvolution/rollbackService.js';
 import { CommitteeGateService } from '../server/selfEvolution/committeeGateService.js';
 import {
   COMMITTEE_ROLES,
-  CommitteeReview
+  CommitteeReview,
+  ImprovementCandidate
 } from '../server/selfEvolution/selfEvolutionTypes.js';
 import { validateRequirementTracker } from '../server/selfEvolution/requirementTrackerValidator.js';
-
-
+import { ReleaseDecisionService } from '../server/selfEvolution/releaseDecisionService.js';
 
 
 describe('Self-Evolution Engine Security & Governance Tests', () => {
@@ -108,7 +108,7 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
     );
   });
 
-  it('requires a separate human identity for high-risk release', () => {
+    it('requires a separate human identity for high-risk release', () => {
     const reviews = completeCommittee();
     const withoutHuman =
       CommitteeGateService.evaluateReviews({
@@ -130,6 +130,81 @@ describe('Self-Evolution Engine Security & Governance Tests', () => {
       'incomplete'
     );
     expect(withHuman.approved).toBe(true);
+  });
+
+  it('permite release R2 após comitê e aprovação humana no estado awaiting_release_approval', () => {
+    const reviews =
+      completeCommittee();
+
+    const gate =
+      CommitteeGateService.evaluateReviews({
+        candidateId:
+          'candidate-committee-test',
+        commitSha:
+          committeeCommit,
+        riskLevel: 'R2',
+        reviews,
+        humanApproverUid:
+          'human-admin-separate'
+      });
+
+    const candidate: ImprovementCandidate = {
+      id:
+        'candidate-committee-test',
+      title:
+        'Correção validada',
+      summary:
+        'Correção aprovada pelos agentes.',
+      evidence: [
+        'ci://passed'
+      ],
+      frequency: 1,
+      affectedUsersCount: 1,
+      severity: 'medium',
+      confidence: 1,
+      affectedComponents: [
+        'backend'
+      ],
+      probableFiles: [
+        'server/api.ts'
+      ],
+      hypothesis:
+        'Falha confirmada',
+      expectedBehavior:
+        'Funcionamento correto',
+      riskLevel: 'R2',
+      estimatedCostCredits: 1,
+      testPlan:
+        'npm test',
+      rollbackStrategy:
+        'revert',
+      duplicates: [],
+      requiresApproval: true,
+      state:
+        'awaiting_release_approval',
+      headCommitSha:
+        committeeCommit,
+      createdAt:
+        '2026-10-05T00:00:00.000Z',
+      updatedAt:
+        '2026-10-05T00:00:00.000Z'
+    };
+
+    const decision =
+      ReleaseDecisionService
+        .canReleaseToProduction(
+          candidate,
+          true,
+          gate
+        );
+
+    expect(
+      gate.approved
+    ).toBe(true);
+
+    expect(
+      decision.canRelease
+    ).toBe(true);
   });
 
   it('rejects VERIFIED in the tracker without independent evidence', () => {

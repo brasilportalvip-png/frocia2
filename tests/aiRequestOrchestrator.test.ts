@@ -74,17 +74,93 @@ describe('AI request classification and orchestration', () => {
     expect(plan.systemPolicy).toContain('Você TEM acesso à pesquisa Google');
   });
 
-  it('ativa pesquisa GitHub somente leitura para auditoria de repositório', () => {
+   it('ativa pesquisa GitHub somente leitura para auditoria de repositório', () => {
     const plan = AIRequestOrchestrator.plan({
       mode: 'code',
       prompt: 'Analise a arquitetura, issues e commits de https://github.com/openai/example',
     });
+
     expect(plan.tools.map((tool) => tool.name)).toContain(
       'github_repository_research'
     );
+
     expect(
-      plan.tools.find((tool) => tool.name === 'github_repository_research')
-    ).toMatchObject({ mutatesState: false, requiresConfirmation: false });
+      plan.tools.find(
+        (tool) =>
+          tool.name ===
+          'github_repository_research'
+      )
+    ).toMatchObject({
+      mutatesState: false,
+      requiresConfirmation: false
+    });
+  });
+
+  it('autoescala o modo Inteligente para Engenharia quando o pedido exige código', () => {
+    const plan =
+      AIRequestOrchestrator.plan({
+        mode: 'smart',
+        prompt:
+          'Corrija o bug TypeScript desta API e revise o backend.'
+      });
+
+    expect(
+      plan.classification.requiresCode
+    ).toBe(true);
+
+    expect(
+      plan.effectiveMode
+    ).toBe('code');
+
+    expect(
+      plan.route.requiredCapabilities.code
+    ).toBe(true);
+
+    expect(
+      plan.route.reasonCode
+    ).toBe('mode_code');
+  });
+
+  it('autoescala o modo Inteligente para Pesquisa quando precisa de informação atual', () => {
+    const plan =
+      AIRequestOrchestrator.plan({
+        mode: 'smart',
+        prompt:
+          'Pesquise na internet as notícias mais recentes sobre o Gemini.'
+      });
+
+    expect(
+      plan.classification.requiresSearch
+    ).toBe(true);
+
+    expect(
+      plan.effectiveMode
+    ).toBe('research');
+
+    expect(
+      plan.tools.map(
+        (tool) => tool.name
+      )
+    ).toContain('web_search');
+
+    expect(
+      plan.route.reasonCode
+    ).toBe(
+      'mode_research_grounded'
+    );
+  });
+
+  it('mantém o modo Inteligente quando não há necessidade de escalonamento', () => {
+    const plan =
+      AIRequestOrchestrator.plan({
+        mode: 'smart',
+        prompt:
+          'Explique de forma simples o que é uma variável.'
+      });
+
+    expect(
+      plan.effectiveMode
+    ).toBe('smart');
   });
 
   it.each([

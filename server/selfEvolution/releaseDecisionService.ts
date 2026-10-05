@@ -29,10 +29,18 @@ export class ReleaseDecisionService {
       }
     }
 
-    if (candidate.state !== 'ci_passed' && candidate.state !== 'preview_deployed') {
+       if (
+      candidate.state !==
+        'ci_passed' &&
+      candidate.state !==
+        'preview_deployed' &&
+      candidate.state !==
+        'awaiting_release_approval'
+    ) {
       return {
         canRelease: false,
-        reason: `Candidato no estado '${candidate.state}' não concluiu validações prévias.`,
+        reason:
+          `Candidato no estado '${candidate.state}' não concluiu validações prévias.`,
       };
     }
 

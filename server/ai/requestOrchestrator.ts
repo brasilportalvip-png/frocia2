@@ -30,6 +30,7 @@ interface RequestPlanInput {
 
 export interface AIRequestPlan {
   classification: RequestClassification;
+  effectiveMode: AIMode;
   route: RouterResult;
   tools: ToolDeclaration[];
   systemPolicy: string;
@@ -102,6 +103,15 @@ export class AIRequestOrchestrator {
           input.contextSizeEstimate,
       });
 
+    const effectiveMode: AIMode =
+      input.mode === 'smart'
+        ? classification.requiresCode
+          ? 'code'
+          : classification.requiresSearch
+            ? 'research'
+            : 'smart'
+        : input.mode;
+
     const automaticTools: string[] = [];
 
     if (classification.requiresSearch) {
@@ -155,8 +165,8 @@ export class AIRequestOrchestrator {
       return tool;
     });
 
-    const route = AIRouter.route({
-      mode: input.mode,
+      const route = AIRouter.route({
+      mode: effectiveMode,
       prompt: input.prompt,
       hasImages: input.hasImages,
       hasFiles: input.hasFiles,
@@ -174,9 +184,9 @@ export class AIRequestOrchestrator {
       sensitivity: classification.sensitivity,
       preferredModel: input.preferredModel,
     });
-
     return {
       classification,
+      effectiveMode,
       route,
       tools,
       systemPolicy:
