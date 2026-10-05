@@ -12,7 +12,7 @@ githubAppRouter.use(createRateLimiter({ windowMs: 60_000, max: 20, keyPrefix: 'g
 
 const connectSchema = z.object({
   projectId: z.string().min(1).max(160),
-  installationId: z.number().int().positive(),
+  installationId: z.number().int().positive().optional(),
   owner: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
   repository: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
   humanConfirmed: z.literal(true),
@@ -70,14 +70,48 @@ githubAppRouter.get('/installations/:installationId/repositories', async (req: A
 
 githubAppRouter.post('/connections', async (req: AuthenticatedRequest, res) => {
   const parsed = connectSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: { code: 'invalid_github_connection', message: parsed.error.issues[0].message } });
-  try {
-    const { humanConfirmed: _confirmed, ...input } = parsed.data;
-    const connection = await GithubAppService.connectProject({
-      userId: req.user!.uid, tenantId: req.user!.tenantId, ...input,
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: {
+        code: 'invalid_github_connection',
+        message: parsed.error.issues[0].message
+      }
     });
-    return res.status(201).json({ connection });
-  } catch (error) { return failure(res, error); }
+  }
+
+  try {
+    const {
+      humanConfirmed: _confirmed,
+      installationId: requestedInstallationId,
+      owner,
+      repository,
+      projectId,
+    } = parsed.data;
+
+    const installationId =
+      requestedInstallationId ??
+      await GithubAppService.findRepositoryInstallation(
+        owner,
+        repository
+      );
+
+    const connection =
+      await GithubAppService.connectProject({
+        userId: req.user!.uid,
+        tenantId: req.user!.tenantId,
+        projectId,
+        installationId,
+        owner,
+        repository,
+      });
+
+    return res.status(201).json({
+      connection
+    });
+  } catch (error) {
+    return failure(res, error);
+  }
 });
 
 githubAppRouter.get('/projects/:projectId/intelligence', async (req: AuthenticatedRequest, res) => {

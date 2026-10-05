@@ -44,11 +44,55 @@ describe('GithubAppService', () => {
     expect(secondHeaders.Authorization).toBe('Bearer installation-token');
   });
 
-  it('bloqueia criação de branch sem confirmação humana', async () => {
+   it('bloqueia criação de branch sem confirmação humana', async () => {
     await expect(GithubAppService.createBranch({
       id: 'c', userId: 'u', tenantId: 't', projectId: 'p', installationId: 1,
       owner: 'owner', repository: 'repo', repositoryId: 1, permissions: { contents: 'write' },
       createdAt: '', updatedAt: '',
     }, 'a'.repeat(40), 'feature/test', false)).rejects.toMatchObject({ code: 'human_confirmation_required' });
+  });
+
+  it('descobre automaticamente a instalação autorizada para um repositório', async () => {
+    process.env.GITHUB_APP_ID = '12345';
+    process.env.GITHUB_APP_PRIVATE_KEY = pem;
+    process.env.GITHUB_APP_SLUG = 'frocia-app';
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 5196868,
+          account: {
+            login: 'brasilportalvip-png'
+          }
+        }),
+        { status: 200 }
+      )
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const installationId =
+      await GithubAppService.findRepositoryInstallation(
+        'brasilportalvip-png',
+        'frocia2'
+      );
+
+    expect(installationId).toBe(5196868);
+
+     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    expect(
+      String(fetchMock.mock.calls[0][0])
+    ).toContain(
+      '/repos/brasilportalvip-png/frocia2/installation'
+    );
+
+    const headers =
+      (fetchMock.mock.calls[0][1] as RequestInit)
+        .headers as Record<string, string>;
+
+    expect(headers.Authorization).toMatch(
+      /^Bearer /
+    );
   });
 });

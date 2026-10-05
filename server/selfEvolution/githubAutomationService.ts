@@ -4,7 +4,9 @@ import type {
 import {
   ImprovementCandidate
 } from './selfEvolutionTypes.js';
+
 import { EngineeringSandboxEvidenceService } from './engineeringSandboxEvidenceService.js';
+import { GithubAppService } from '../services/githubAppService.js';
 
 const GITHUB_API_URL =
   'https://api.github.com';
@@ -76,11 +78,39 @@ export class GithubAutomationService {
       'frocia2';
 
     return Boolean(
-      token &&
-      token.trim().length > 0 &&
+      (
+        token?.trim() ||
+        GithubAppService.isConfigured()
+      ) &&
       owner.trim().length > 0 &&
       repo.trim().length > 0
     );
+  }
+
+  private static async resolveAccessToken(
+    owner: string,
+    repo: string
+  ): Promise<string> {
+    const staticToken =
+      process.env.GITHUB_TOKEN ||
+      process.env.GITHUB_APP_TOKEN;
+
+    if (staticToken?.trim()) {
+      return staticToken.trim();
+    }
+
+    const installationId =
+      await GithubAppService.findRepositoryInstallation(
+        owner,
+        repo
+      );
+
+    const access =
+      await GithubAppService.installationToken(
+        installationId
+      );
+
+    return access.token;
   }
 
   private static getHeaders(
@@ -134,9 +164,7 @@ export class GithubAutomationService {
     candidate: ImprovementCandidate,
     patch?: PatchResult
   ): Promise<PullRequestResult> {
-    const configuredToken =
-      process.env.GITHUB_TOKEN ||
-      process.env.GITHUB_APP_TOKEN;
+   
 
     const owner = (
       process.env.GITHUB_OWNER ||
@@ -153,12 +181,9 @@ export class GithubAutomationService {
       'main'
     ).trim();
 
-    if (
-      !this.isConfigured() ||
-      !configuredToken
-    ) {
+        if (!this.isConfigured()) {
       return this.createFailure(
-        'Integração GitHub não configurada. Configure GITHUB_TOKEN ou GITHUB_APP_TOKEN.',
+        'Integração GitHub não configurada. Configure o GitHub App ou um token compatível.',
         'not_configured'
       );
     }
@@ -203,8 +228,20 @@ export class GithubAutomationService {
       );
     }
 
-    const token =
-      configuredToken.trim();
+    let token: string;
+
+    try {
+      token = await this.resolveAccessToken(
+        owner,
+        repo
+      );
+    } catch (error) {
+      return this.createFailure(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível obter autenticação temporária do GitHub App.'
+      );
+    }
 
     const safeCandidateId = candidate.id
       .toLowerCase()

@@ -291,7 +291,10 @@ export class CitationService {
 
 // Só uma fonte realmente vinculada a um trecho da resposta
 // deve contar como evidência de grounding.
-if (matchingSupports.length === 0) {
+if (
+  supports.length > 0 &&
+  matchingSupports.length === 0
+) {
   continue;
 }
 
