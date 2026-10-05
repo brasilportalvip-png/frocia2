@@ -1,3 +1,4 @@
+import { GithubAppService } from '../services/githubAppService.js';
 export interface CIGateResult {
   status: 'configured' | 'not_configured' | 'pending' | 'failed' | 'success';
   passed: boolean;
@@ -9,16 +10,62 @@ export interface CIGateResult {
 
 export class CIGateService {
   private static isConfigured(): boolean {
-    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
-    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
-    const repo = process.env.GITHUB_REPO || 'frocia2';
-    return Boolean(token && token.trim().length > 0 && owner && repo);
+    const token =
+      process.env.GITHUB_TOKEN ||
+      process.env.GITHUB_APP_TOKEN;
+
+    const owner =
+      process.env.GITHUB_OWNER ||
+      'brasilportalvip-png';
+
+    const repo =
+      process.env.GITHUB_REPO ||
+      'frocia2';
+
+    return Boolean(
+      (
+        token?.trim() ||
+        GithubAppService.isConfigured()
+      ) &&
+      owner &&
+      repo
+    );
+  }
+
+  private static async resolveAccessToken(
+    owner: string,
+    repo: string
+  ): Promise<string> {
+    const staticToken =
+      process.env.GITHUB_TOKEN ||
+      process.env.GITHUB_APP_TOKEN;
+
+    if (staticToken?.trim()) {
+      return staticToken.trim();
+    }
+
+    const installationId =
+      await GithubAppService.findRepositoryInstallation(
+        owner,
+        repo
+      );
+
+    const access =
+      await GithubAppService.installationToken(
+        installationId
+      );
+
+    return access.token;
   }
 
   static async runCIGate(refOrSha?: string): Promise<CIGateResult> {
-    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
-    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
-    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const owner =
+      process.env.GITHUB_OWNER ||
+      'brasilportalvip-png';
+
+    const repo =
+      process.env.GITHUB_REPO ||
+      'frocia2';
 
     if (!this.isConfigured()) {
       return {
@@ -50,7 +97,13 @@ export class CIGateService {
       };
     }
 
-    try {
+        try {
+      const token =
+        await this.resolveAccessToken(
+          owner,
+          repo
+        );
+
       const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${refOrSha}/check-runs`, {
         headers: {
           'Authorization': `Bearer ${token}`,

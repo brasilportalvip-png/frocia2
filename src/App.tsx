@@ -985,10 +985,15 @@ const handleGeneralChat = async (
             .toString(36)
             .substring(2)}`;
 
-    const requestBody = {
+     const requestBody = {
       prompt,
       mode: apiMode,
       conversationId: activeConvId,
+      projectId:
+        activeSite?.id &&
+        !activeSite.id.startsWith('local-')
+          ? activeSite.id
+          : undefined,
       attachments,
       knowledgeBaseIds,
       idempotencyKey: stableExecutionKey
