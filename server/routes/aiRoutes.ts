@@ -476,6 +476,8 @@ try {
     }
 
     const route = plan.route;
+    const executionMode =
+      plan.effectiveMode;
 
     const enableSearchGrounding =
       plan.classification.requiresSearch ||
@@ -495,8 +497,8 @@ try {
             userId: uid,
             amount:
               route.estimatedCredits,
-            operation:
-              `Reserva para streaming de IA (${mode})`,
+                        operation:
+              `Reserva para streaming de IA (${mode} -> ${executionMode})`,
             idempotencyKey
           }
         );
@@ -676,12 +678,12 @@ try {
           projectId,
           prompt: sanitizedPrompt,
         });
-      const assembled =
+           const assembled =
         await ContextBuilder.assemble({
           userId: uid,
           tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
-          mode,
+          mode: executionMode,
           prompt: sanitizedPrompt,
           conversationId,
           projectId,
@@ -998,7 +1000,7 @@ recentMessages:
           outputTokens,
           plan.tools.length > 0,
           enableSearchGrounding,
-          mode
+          executionMode
         );
 
        await CreditWalletService.confirmConsumption(
@@ -1009,8 +1011,8 @@ recentMessages:
             consumedCredits,
             route.estimatedCredits
           ),
-          operation:
-            `Streaming IA (${mode})`,
+                    operation:
+            `Streaming IA (${mode} -> ${executionMode})`,
           idempotencyKey:
             `cnf-${idempotencyKey}`
         }

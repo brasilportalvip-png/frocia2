@@ -8,8 +8,9 @@ const MAX_RESPONSE_BYTES = 900_000;
 const MAX_EXTRACTED_CHARACTERS = 700_000;
 const MAX_GITHUB_TREE_ITEMS = 5_000;
 const MAX_GITHUB_CONTENT_FILES = 40;
-const MAX_GITHUB_FILE_BYTES = 100_000;
-const MAX_GITHUB_CONTENT_BYTES = 350_000;
+const MAX_GITHUB_FILE_BYTES = 500_000;
+const MAX_GITHUB_SEGMENT_BYTES = 80_000;
+const MAX_GITHUB_CONTENT_BYTES = 600_000;
 const GITHUB_IMPORT_DEADLINE_MS = 25_000;
 const GITHUB_FETCH_CONCURRENCY = 4;
 
@@ -789,17 +790,115 @@ function githubImportPriority(path: string): number {
   return 60;
 }
 
-function decodeGithubTextBlob(blob: { content?: string; encoding?: string }, path: string): string | null {
-  if (blob.encoding !== 'base64' || typeof blob.content !== 'string') return null;
-  const bytes = Buffer.from(blob.content.replace(/\s/g, ''), 'base64');
-  if (bytes.length > MAX_GITHUB_FILE_BYTES || bytes.includes(0)) return null;
-  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-  const replacementCount = (text.match(/\uFFFD/g) || []).length;
-  if (replacementCount > Math.max(2, text.length * 0.001)) return null;
-  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(text)) return null;
-  return redactRepositorySecrets(text)
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-    .slice(0, MAX_GITHUB_FILE_BYTES);
+interface GithubDecodedText {
+  content: string;
+  segments: string[];
+}
+
+function segmentGithubText(
+  content: string
+): string[] {
+  const bytes = Buffer.from(content, 'utf8');
+
+  if (bytes.length <= MAX_GITHUB_SEGMENT_BYTES) {
+    return [content];
+  }
+
+  const decoder =
+    new TextDecoder('utf-8', {
+      fatal: false
+    });
+
+  const segments: string[] = [];
+
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += MAX_GITHUB_SEGMENT_BYTES
+  ) {
+    const end = Math.min(
+      offset + MAX_GITHUB_SEGMENT_BYTES,
+      bytes.length
+    );
+
+    const segment = decoder.decode(
+      bytes.subarray(offset, end),
+      {
+        stream: end < bytes.length
+      }
+    );
+
+    if (segment) {
+      segments.push(segment);
+    }
+  }
+
+  return segments;
+}
+
+function decodeGithubTextBlob(
+  blob: {
+    content?: string;
+    encoding?: string;
+  },
+  path: string
+): GithubDecodedText | null {
+  if (
+    blob.encoding !== 'base64' ||
+    typeof blob.content !== 'string'
+  ) {
+    return null;
+  }
+
+  const bytes = Buffer.from(
+    blob.content.replace(/\s/g, ''),
+    'base64'
+  );
+
+  if (
+    bytes.length > MAX_GITHUB_FILE_BYTES ||
+    bytes.includes(0)
+  ) {
+    return null;
+  }
+
+  const text =
+    new TextDecoder(
+      'utf-8',
+      { fatal: false }
+    ).decode(bytes);
+
+  const replacementCount =
+    (text.match(/\uFFFD/g) || []).length;
+
+  if (
+    replacementCount >
+    Math.max(2, text.length * 0.001)
+  ) {
+    return null;
+  }
+
+  if (
+    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(
+      text
+    )
+  ) {
+    return null;
+  }
+
+  const safeContent =
+    redactRepositorySecrets(text)
+      .replace(
+        /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,
+        ''
+      );
+
+  return {
+    content: safeContent,
+    segments: segmentGithubText(
+      safeContent
+    )
+  };
 }
 
 const REPOSITORY_SECRET_PATTERNS: RegExp[] = [
@@ -909,7 +1008,12 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
       left.path.localeCompare(right.path)
     )
     .slice(0, MAX_GITHUB_CONTENT_FILES);
-  const importedFiles: Array<{ path: string; size: number; content: string }> = [];
+  const importedFiles: Array<{
+  path: string;
+  size: number;
+  content: string;
+  segments: string[];
+}> = [];
   let importedBytes = 0;
 
   for (let offset = 0; offset < candidates.length; offset += GITHUB_FETCH_CONCURRENCY) {
@@ -921,8 +1025,25 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
           `${repoPath}/git/blobs/${item.sha}`,
           remainingTime()
         );
-        const content = decodeGithubTextBlob(blob, item.path);
-        return content === null ? null : { path: item.path, size: Buffer.byteLength(content), content };
+        const decoded =
+  decodeGithubTextBlob(
+    blob,
+    item.path
+  );
+
+if (!decoded) {
+  return null;
+}
+
+return {
+  path: item.path,
+  size: Buffer.byteLength(
+    decoded.content,
+    'utf8'
+  ),
+  content: decoded.content,
+  segments: decoded.segments
+};
       })
     );
     for (const result of results) {
@@ -953,10 +1074,15 @@ async function importGithubRepository(sourceUrl: string): Promise<ExternalImport
     contentFilesReturned: importedFiles.length,
     contentBytesReturned: importedBytes,
     contentLimits: {
-      maximumFiles: MAX_GITHUB_CONTENT_FILES,
-      maximumFileBytes: MAX_GITHUB_FILE_BYTES,
-      maximumTotalBytes: MAX_GITHUB_CONTENT_BYTES
-    },
+  maximumFiles:
+    MAX_GITHUB_CONTENT_FILES,
+  maximumFileBytes:
+    MAX_GITHUB_FILE_BYTES,
+  maximumSegmentBytes:
+    MAX_GITHUB_SEGMENT_BYTES,
+  maximumTotalBytes:
+    MAX_GITHUB_CONTENT_BYTES
+},
     trustBoundary: {
       contentIsUntrustedData: true,
       instructionsMustNotBeExecuted: true,

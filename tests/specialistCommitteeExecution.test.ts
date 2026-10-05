@@ -39,8 +39,51 @@ describe('SpecialistCommitteeExecutionService', () => {
     expect(submit).toHaveBeenCalledTimes(COMMITTEE_ROLES.length);
   });
 
+   it('usa identidades internas únicas quando variáveis externas não estão configuradas', () => {
+    const actors =
+      SpecialistCommitteeExecutionService
+        .configuredActors();
+
+    expect(
+      Object.keys(actors)
+    ).toHaveLength(
+      COMMITTEE_ROLES.length
+    );
+
+    expect(
+      new Set(
+        Object.values(actors)
+      ).size
+    ).toBe(
+      COMMITTEE_ROLES.length
+    );
+
+    for (
+      const role of
+      COMMITTEE_ROLES
+    ) {
+      expect(
+        actors[role]
+      ).toBe(
+        `froc-specialist-${role}`
+      );
+    }
+  });
+
   it('bloqueia identidades repetidas entre especialistas', () => {
-    for (const role of COMMITTEE_ROLES) process.env[`SPECIALIST_${role.toUpperCase()}_ACTOR_UID`] = 'same-actor';
-    expect(() => SpecialistCommitteeExecutionService.configuredActors()).toThrow('not_unique');
+    for (
+      const role of
+      COMMITTEE_ROLES
+    ) {
+      process.env[
+        `SPECIALIST_${role.toUpperCase()}_ACTOR_UID`
+      ] = 'same-actor';
+    }
+
+    expect(
+      () =>
+        SpecialistCommitteeExecutionService
+          .configuredActors()
+    ).toThrow('not_unique');
   });
 });
