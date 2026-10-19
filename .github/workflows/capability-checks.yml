@@ -1,0 +1,49 @@
+name: Capability Regression Evidence
+
+on:
+  push:
+    branches:
+      - main
+      - 'froc-evolution/**'
+
+permissions:
+  contents: read
+
+jobs:
+  capability-check:
+    name: 'Capability: ${{ matrix.category }}'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - category: conversation
+            tests: 'tests/conversationCreationRace.test.ts tests/conversationMessageOrdering.test.ts tests/sseClient.test.ts'
+          - category: research
+            tests: 'tests/researchQualityService.test.ts tests/researchEvidenceService.test.ts tests/researchAndRagEvidence.test.ts'
+          - category: code
+            tests: 'tests/engineeringCodePlanner.test.ts tests/typescriptLanguageEngine.test.ts tests/semanticCodeIntelligence.test.ts'
+          - category: memory
+            tests: 'tests/longTermMemoryPersistence.test.ts tests/memoryPrivacyAndContext.test.ts tests/memoryControl.test.ts'
+          - category: security
+            tests: 'tests/authAndHealthSecurity.test.ts tests/securityAndReleaseGovernance.test.ts tests/phase0_isolation_and_governance.test.ts'
+          - category: truthfulness
+            tests: 'tests/independentResponseVerifier.test.ts tests/researchEvidenceService.test.ts tests/researchQualityService.test.ts'
+          - category: tools
+            tests: 'tests/toolExecutionService.test.ts tests/currentTurnToolIsolation.test.ts tests/calculatorService.test.ts'
+          - category: github
+            tests: 'tests/githubAutomation.test.ts tests/githubAppMerge.test.ts tests/ciGateService.test.ts'
+          - category: browser
+            tests: 'tests/autonomousBrowserValidation.test.ts tests/generatedSiteFunctionalGate.test.ts tests/siteFactoryPipeline.test.ts'
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Execute capability regression tests
+        run: npx vitest run ${{ matrix.tests }}

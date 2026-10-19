@@ -34,4 +34,29 @@ describe('ContinuousCapabilityEvaluationService', () => {
     candidate.scores[0].evidenceRefs = [];
     expect(() => ContinuousCapabilityEvaluationService.compare(run('v1', 'a'.repeat(40)), candidate)).toThrow('evidence');
   });
+  it('rejeita categorias ausentes ou duplicadas', () => {
+    const baseline = run('v1', 'a'.repeat(40));
+    const incomplete = run('v2', 'b'.repeat(40));
+    incomplete.scores.pop();
+
+    expect(() =>
+      ContinuousCapabilityEvaluationService.compare(baseline, incomplete)
+    ).toThrow('evaluation_categories_missing_or_duplicated');
+
+    const duplicated = run('v2', 'b'.repeat(40));
+    duplicated.scores[0] = duplicated.scores[1];
+
+    expect(() =>
+      ContinuousCapabilityEvaluationService.compare(baseline, duplicated)
+    ).toThrow('evaluation_categories_missing_or_duplicated');
+  });
+
+  it('rejeita comparação do mesmo commit', () => {
+    expect(() =>
+      ContinuousCapabilityEvaluationService.compare(
+        run('v1', 'a'.repeat(40)),
+        run('v2', 'a'.repeat(40))
+      )
+    ).toThrow('evaluation_commits_must_differ');
+  });
 });

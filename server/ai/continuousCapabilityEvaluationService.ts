@@ -50,9 +50,22 @@ export class ContinuousCapabilityEvaluationService {
       throw new Error('evaluation_commit_sha_invalid');
     }
     if (!baseline.scores.every(validScore) || !candidate.scores.every(validScore)) {
-      throw new Error('evaluation_score_or_evidence_invalid');
-    }
-    const base = new Map(baseline.scores.map((score) => [score.category, score]));
+  throw new Error('evaluation_score_or_evidence_invalid');
+}
+
+const hasAllCategoriesOnce = (run: CapabilityEvaluationRun) =>
+  run.scores.length === CAPABILITY_CATEGORIES.length &&
+  new Set(run.scores.map((score) => score.category)).size === CAPABILITY_CATEGORIES.length;
+
+if (!hasAllCategoriesOnce(baseline) || !hasAllCategoriesOnce(candidate)) {
+  throw new Error('evaluation_categories_missing_or_duplicated');
+}
+
+if (baseline.commitSha === candidate.commitSha) {
+  throw new Error('evaluation_commits_must_differ');
+}
+
+const base = new Map(baseline.scores.map((score) => [score.category, score]));
     const next = new Map(candidate.scores.map((score) => [score.category, score]));
     const missingCategories = CAPABILITY_CATEGORIES.filter((category) => !base.has(category) || !next.has(category));
     const baselineAverage = CAPABILITY_CATEGORIES.reduce((sum, category) => sum + (base.get(category)?.score || 0), 0) / CAPABILITY_CATEGORIES.length;
@@ -86,10 +99,31 @@ export class ContinuousCapabilityEvaluationService {
     return comparison;
   }
 
+  // Somente checks reais conferidos pelo servidor podem liberar o gate.
+  // O endpoint administrativo de comparação continua informativo, sem poder
+  // produzir sozinho uma aprovação automática para produção.
+  static async compareVerifiedGithubAndPersist(
+    baseline: CapabilityEvaluationRun,
+    candidate: CapabilityEvaluationRun
+  ): Promise<CapabilityComparison> {
+    if (!isFirebaseAdminConfigured()) throw new Error('evaluation_persistence_unavailable');
+    const comparison = this.compare(baseline, candidate);
+    await adminDb.collection('capability_evaluation_comparisons').doc(comparison.id).set({
+      ...comparison,
+      baseline,
+      candidate,
+      evidenceSource: 'github-actions-check-runs-v1',
+      persistedAt: FieldValue.serverTimestamp(),
+    });
+    return comparison;
+  }
+
   static async hasPassingComparison(commitSha: string): Promise<boolean> {
     if (!/^[a-f0-9]{40}$/i.test(commitSha) || !isFirebaseAdminConfigured()) return false;
     const snapshot = await adminDb.collection('capability_evaluation_comparisons')
       .where('candidate.commitSha', '==', commitSha).limit(10).get();
-    return snapshot.docs.some((doc) => doc.data().passed === true);
+    return snapshot.docs.some((doc) =>
+      doc.data().passed === true && doc.data().evidenceSource === 'github-actions-check-runs-v1'
+    );
   }
 }
