@@ -353,8 +353,47 @@ export const SelfEvolutionDashboard: React.FC = () => {
                     onClick={() => inspectCommittee(cand.id)}
                     className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-xs font-semibold"
                   >
-                    Ver Comitê
+                                        Ver Comitê
                   </button>
+
+                  {(cand.state === 'ci_pending' || cand.state === 'ci_passed') && (
+                    <button
+                      type="button"
+                      disabled={actionLoading !== null}
+                      onClick={async () => {
+                        setActionLoading(cand.id);
+                        setError(null);
+
+                        try {
+                          const response = await fetch(
+                            `/api/admin/self-evolution/candidates/${encodeURIComponent(cand.id)}/resume`,
+                            {
+                              method: 'POST',
+                              headers: await getAuthHeader(),
+                            }
+                          );
+
+                          if (!response.ok) {
+                            const data = await response.json();
+                            throw new Error(data.error || `HTTP ${response.status}`);
+                          }
+
+                          await fetchDashboardData();
+                        } catch (err) {
+                          setError(
+                            `Falha na retomada: ${err instanceof Error ? err.message : String(err)}`
+                          );
+                        } finally {
+                          setActionLoading(null);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Retomar Etapa
+                    </button>
+                  )}
+
                   {cand.state === 'awaiting_work_approval' && (
                     <button
                       disabled={actionLoading === cand.id}

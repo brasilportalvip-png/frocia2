@@ -15,37 +15,44 @@ import { CommitteeGateService } from './committeeGateService.js';
 import { AutonomousBrowserValidationService } from './autonomousBrowserValidationService.js';
 import { SpecialistCommitteeExecutionService } from './specialistCommitteeExecutionService.js';
 export class SelfEvolutionOrchestrator {
-  static async processCandidateLifecycle(candidateId: string, actor: string = 'system'): Promise<{
-    state: CandidateState;
-    message: string;
-  }> {
+  /**
+   * Executa ou retoma cada etapa persistida, sem recriar um patch ja publicado.
+   * Um gatilho externo (worker/cron) ainda e necessario para retomar estados pendentes.
+   */
+  static async processCandidateLifecycle(
+    candidateId: string,
+    actor: string = 'system'
+  ): Promise<{ state: CandidateState; message: string }> {
     const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) {
       return { state: 'failed', message: 'Candidato não encontrado.' };
     }
 
-        const selfEvolutionEnabled =
-      await SelfEvolutionPolicyEngine
-        .isSelfEvolutionEnabledPersisted();
-
-    if (!selfEvolutionEnabled) {
+    if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) {
       return {
         state: candidate.state,
-        message:
-          'Sistema de autoevolução está desativado por configuração ou parada emergencial persistente.'
+        message: 'Sistema de autoevolução desativado ou em parada emergencial.',
       };
     }
 
     const lock = await LockService.acquireLock(candidateId, actor);
     if (!lock) {
-      return { state: candidate.state, message: 'Operação em andamento em outro processo (Lock ativo).' };
+      return {
+        state: candidate.state,
+        message: 'Operação em andamento em outro processo (lock ativo).',
+      };
     }
 
+    const transition = async (state: CandidateState): Promise<void> => {
+      if (!(await ImprovementPlannerService.updateCandidateState(candidateId, state))) {
+        throw new Error(`Não foi possível persistir o estado ${state}.`);
+      }
+      candidate.state = state;
+    };
+
     try {
-      // Stage 1: Triage & Approval Check
       if (candidate.state === 'detected') {
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'triaged');
-        candidate.state = 'triaged';
+        await transition('triaged');
         await AuditService.logEvent({
           actor,
           action: 'triage_candidate',
@@ -55,38 +62,44 @@ export class SelfEvolutionOrchestrator {
         });
       }
 
-      if (candidate.requiresApproval && candidate.state === 'triaged') {
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'awaiting_work_approval');
-        candidate.state = 'awaiting_work_approval';
-        return {
-          state: 'awaiting_work_approval',
-          message: `Aprovação humana necessária para candidato de risco ${candidate.riskLevel}.`,
-        };
+      // O trabalho e iniciado automaticamente. Protecoes de branch, CI e
+      // revisao continuam obrigatorias antes de qualquer publicacao.
+      if (
+        candidate.state === 'triaged' ||
+        candidate.state === 'awaiting_work_approval'
+      ) {
+        await transition('approved_for_work');
+        await AuditService.logEvent({
+          actor: 'self-evolution',
+          action: 'auto_approve_work',
+          resource: candidateId,
+          riskLevel: candidate.riskLevel,
+          result: 'success',
+          reason: 'Trabalho autorizado por politica automatica; release ainda depende dos gates.',
+        });
       }
 
-      // Stage 2: Budget Check & Code Generation
-      if (candidate.state === 'approved_for_work' || candidate.state === 'triaged') {
-        const canExecute = await BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits);
-        if (!canExecute) {
+      if (candidate.state === 'approved_for_work') {
+        if (!(await BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits))) {
           return {
             state: candidate.state,
-            message: 'Limite de orçamento diário ou mensal atingido.',
+            message: 'Orçamento de execução insuficiente. Nenhum código foi gerado.',
           };
         }
 
         await BudgetService.consumeBudget(candidate.estimatedCostCredits);
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'agent_running');
+        await transition('agent_running');
 
         const patch = await CodeAgentService.generatePatchAndTest(candidate);
         if (!patch.success) {
-          await ImprovementPlannerService.updateCandidateState(candidateId, 'tests_failed');
+          await transition('tests_failed');
           return {
             state: 'tests_failed',
-            message: patch.errorMessage || 'Falha na geração de patch do agente (Worker não configurado ou erro).',
+            message: patch.errorMessage || 'O worker não conseguiu gerar e testar o patch.',
           };
         }
 
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'tests_passed');
+        await transition('tests_passed');
         await AuditService.logEvent({
           actor: 'engineering-sandbox',
           action: 'verify_isolated_patch_execution',
@@ -100,228 +113,181 @@ export class SelfEvolutionOrchestrator {
             `diff ${patch.executionEvidence?.diffSha256 || '(sem hash)'}.`,
         });
 
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'patch_created');
-
-        // GitHub PR
-        const pr =
-          await GithubAutomationService
-            .createBranchAndPR(
-              candidate,
-              patch
-            );
-        if (!pr.success) {
+        await transition('patch_created');
+        const pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
+        if (!pr.success || !pr.commitSha || !pr.branchName || !pr.pullRequestUrl) {
           return {
-            state: candidate.state,
-            message: pr.errorMessage || 'Falha ao criar branch e Pull Request no GitHub.',
+            state: 'patch_created',
+            message: pr.errorMessage || 'Não foi possível comprovar a criação do Pull Request.',
           };
         }
 
         candidate.branchName = pr.branchName;
         candidate.headCommitSha = pr.commitSha;
         candidate.pullRequestUrl = pr.pullRequestUrl;
-        await ImprovementPlannerService.updateCandidateMetadata(
-          candidateId,
-          {
-            branchName: pr.branchName,
-            headCommitSha: pr.commitSha,
-            pullRequestUrl: pr.pullRequestUrl
-          }
-        );
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'pull_request_opened');
+        if (!(await ImprovementPlannerService.updateCandidateMetadata(candidateId, {
+          branchName: pr.branchName,
+          headCommitSha: pr.commitSha,
+          pullRequestUrl: pr.pullRequestUrl,
+        }))) {
+          throw new Error('Pull Request criado, mas metadados não foram persistidos.');
+        }
+        await transition('pull_request_opened');
+      }
 
-        // CI Check
-        const ci = await CIGateService.runCIGate(pr.commitSha);
-        if (ci.status === 'not_configured' || ci.status === 'pending') {
+      // A retomada usa o SHA registrado, nunca recria o patch ou cobra creditos.
+      if (candidate.state === 'pull_request_opened' || candidate.state === 'ci_pending') {
+        if (!candidate.headCommitSha) {
           return {
             state: candidate.state,
-            message: `CI Gate em estado: ${ci.status}. ${ci.details}`,
+            message: 'SHA do Pull Request ausente. Não é seguro retomar o CI.',
           };
         }
 
+        const ci = await CIGateService.runCIGate(candidate.headCommitSha);
+        if (ci.status === 'not_configured') {
+          return { state: candidate.state, message: `CI não configurado: ${ci.details}` };
+        }
+        if (ci.status === 'pending') {
+          await transition('ci_pending');
+          return { state: 'ci_pending', message: `CI em andamento: ${ci.details}` };
+        }
         if (!ci.passed) {
-          await ImprovementPlannerService.updateCandidateState(candidateId, 'ci_failed');
-          return { state: 'ci_failed', message: `CI Gate reprovado: ${ci.details}` };
+          await transition('ci_failed');
+          return { state: 'ci_failed', message: `CI reprovado: ${ci.details}` };
+        }
+        await transition('ci_passed');
+      }
+
+      if (candidate.state === 'ci_passed') {
+        if (!candidate.branchName || !candidate.headCommitSha) {
+          return {
+            state: 'ci_passed',
+            message: 'Branch ou SHA ausente para conferir o deploy de preview.',
+          };
         }
 
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'ci_passed');
-
-        // Preview Deployment
-        const preview = await PreviewDeploymentService.createPreviewDeployment(candidateId, candidate.branchName);
-        if (preview.status === 'not_configured' || preview.status === 'pending') {
+        const preview = await PreviewDeploymentService.createPreviewDeployment(
+          candidateId,
+          candidate.branchName
+        );
+        if (preview.status === 'pending' || preview.status === 'not_configured') {
           return {
-            state: candidate.state,
-            message: `Preview Deployment em estado: ${preview.status}. ${preview.errorMessage || ''}`,
+            state: 'ci_passed',
+            message: `Preview aguardando: ${preview.errorMessage || preview.status}`,
+          };
+        }
+        if (preview.status !== 'ready' || !preview.previewUrl) {
+          await transition('preview_failed');
+          return {
+            state: 'preview_failed',
+            message: `Preview reprovado: ${preview.errorMessage || 'URL indisponível.'}`,
           };
         }
 
         candidate.previewUrl = preview.previewUrl;
-        await ImprovementPlannerService.updateCandidateMetadata(
-          candidateId,
-          {
-            previewUrl: preview.previewUrl
-          }
-        );
-        await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_deployed');
+        if (!(await ImprovementPlannerService.updateCandidateMetadata(candidateId, {
+          previewUrl: preview.previewUrl,
+        }))) {
+          throw new Error('Preview pronto, mas a URL não foi persistida.');
+        }
+        await transition('preview_deployed');
+      }
 
-        try {
-          const browserReport = await AutonomousBrowserValidationService.validate({
-            previewUrl: preview.previewUrl!, commitSha: pr.commitSha!, candidateId,
-          });
-          await AuditService.logEvent({
-            actor: 'autonomous-browser', action: 'validate_preview_end_to_end',
-            resource: candidateId, riskLevel: candidate.riskLevel,
-            result: browserReport.passed ? 'success' : 'failure',
-            commitHash: pr.commitSha, deployUrl: preview.previewUrl,
-            reason: `${browserReport.scenarios.length} cenários; sandbox ${browserReport.sandboxId}.`,
-          });
-          if (!browserReport.passed) {
-            await ImprovementPlannerService.updateCandidateState(candidateId, 'preview_failed');
-            return { state: 'preview_failed', message: 'Homologação autônoma do navegador encontrou falhas.' };
-          }
-           } catch (error) {
-          await ImprovementPlannerService.updateCandidateState(
-            candidateId,
-            'preview_failed'
-          );
-
+      if (candidate.state === 'preview_deployed') {
+        if (!candidate.previewUrl || !candidate.headCommitSha) {
+          await transition('preview_failed');
           return {
             state: 'preview_failed',
-            message:
-              `Homologação autônoma indisponível: ${
-                error instanceof Error
-                  ? error.message
-                  : 'erro desconhecido'
-              }`,
+            message: 'URL ou commit ausente para homologação real do navegador.',
           };
         }
-
-        let specialistReviews;
 
         try {
-          specialistReviews =
-            await SpecialistCommitteeExecutionService.execute(
-              candidate
-            );
-        } catch (error) {
-          await ImprovementPlannerService.updateCandidateState(
+          const report = await AutonomousBrowserValidationService.validate({
+            previewUrl: candidate.previewUrl,
+            commitSha: candidate.headCommitSha,
             candidateId,
-            'failed'
-          );
+          });
+          await AuditService.logEvent({
+            actor: 'autonomous-browser',
+            action: 'validate_preview_end_to_end',
+            resource: candidateId,
+            riskLevel: candidate.riskLevel,
+            result: report.passed ? 'success' : 'failure',
+            commitHash: candidate.headCommitSha,
+            deployUrl: candidate.previewUrl,
+            reason: `${report.scenarios.length} cenários; sandbox ${report.sandboxId}.`,
+          });
+          if (!report.passed) {
+            await transition('preview_failed');
+            return {
+              state: 'preview_failed',
+              message: 'Homologação do navegador encontrou falhas verificadas.',
+            };
+          }
+        } catch (error) {
+          await transition('preview_failed');
+          return {
+            state: 'preview_failed',
+            message: `Homologação indisponível: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
 
+        let reviews;
+        try {
+          reviews = await SpecialistCommitteeExecutionService.execute(candidate);
+        } catch (error) {
+          await transition('failed');
           await AuditService.logEvent({
             actor: 'specialist-committee',
-            action:
-              'automatic_specialist_committee',
+            action: 'automatic_specialist_committee',
             resource: candidateId,
-            riskLevel:
-              candidate.riskLevel,
+            riskLevel: candidate.riskLevel,
             result: 'failure',
-            commitHash:
-              candidate.headCommitSha,
-            prUrl:
-              candidate.pullRequestUrl,
-            reason:
-              error instanceof Error
-                ? error.message
-                : 'Falha desconhecida ao executar o comitê especialista.',
+            commitHash: candidate.headCommitSha,
+            prUrl: candidate.pullRequestUrl,
+            reason: error instanceof Error ? error.message : String(error),
           });
-
           return {
             state: 'failed',
-            message:
-              `Comitê especialista não pôde concluir a revisão: ${
-                error instanceof Error
-                  ? error.message
-                  : 'erro desconhecido'
-              }`,
+            message: `Comitê indisponível: ${error instanceof Error ? error.message : String(error)}`,
           };
         }
 
-        const committeeGate =
-          CommitteeGateService.evaluateReviews({
-            candidateId:
-              candidate.id,
-            commitSha:
-              candidate.headCommitSha,
-            riskLevel:
-              candidate.riskLevel,
-            reviews:
-              specialistReviews,
-          });
-
+        const committeeGate = CommitteeGateService.evaluateReviews({
+          candidateId,
+          commitSha: candidate.headCommitSha,
+          riskLevel: candidate.riskLevel,
+          reviews,
+        });
         await AuditService.logEvent({
           actor: 'specialist-committee',
-          action:
-            'automatic_specialist_committee',
+          action: 'automatic_specialist_committee',
           resource: candidateId,
-          riskLevel:
-            candidate.riskLevel,
-          result:
-            committeeGate.status ===
-            'blocked'
-              ? 'rejected'
-              : 'success',
-          commitHash:
-            candidate.headCommitSha,
-          prUrl:
-            candidate.pullRequestUrl,
-          reason:
-            committeeGate.reason,
+          riskLevel: candidate.riskLevel,
+          result: committeeGate.status === 'blocked' ? 'rejected' :
+            committeeGate.approved ? 'success' : 'failure',
+          commitHash: candidate.headCommitSha,
+          prUrl: candidate.pullRequestUrl,
+          reason: committeeGate.reason,
         });
 
-        if (
-          committeeGate.status ===
-          'blocked'
-        ) {
-          await ImprovementPlannerService.updateCandidateState(
-            candidateId,
-            'failed'
-          );
-
+        if (committeeGate.status === 'blocked' ||
+          (!committeeGate.approved && candidate.riskLevel !== 'R2' && candidate.riskLevel !== 'R3')) {
+          await transition('failed');
           return {
             state: 'failed',
-            message:
-              `Comitê especialista bloqueou a alteração: ${committeeGate.reason}`,
+            message: `Comitê não aprovou a mudança: ${committeeGate.reason}`,
           };
         }
 
-        if (
-          candidate.riskLevel !==
-            'R2' &&
-          candidate.riskLevel !==
-            'R3' &&
-          !committeeGate.approved
-        ) {
-          await ImprovementPlannerService.updateCandidateState(
-            candidateId,
-            'failed'
-          );
+        // Estado duravel apos verificacao, sem repetir as dez revisoes a cada tentativa.
+        await transition('awaiting_release_approval');
+      }
 
-          return {
-            state: 'failed',
-            message:
-              `Comitê especialista não aprovou a alteração: ${committeeGate.reason}`,
-          };
-        }
-
-        if (
-          candidate.riskLevel ===
-            'R2' ||
-          candidate.riskLevel ===
-            'R3'
-        ) {
-          await ImprovementPlannerService.updateCandidateState(
-            candidateId,
-            'awaiting_release_approval'
-          );
-
-          return {
-            state:
-              'awaiting_release_approval',
-            message:
-              'Os 10 agentes especialistas concluíram a revisão. Preview aprovada. Aguardando somente aprovação humana final de release.',
-          };
-        }
+      if (candidate.state === 'awaiting_release_approval') {
+        return this.tryAutonomousRelease(candidateId);
       }
 
       return {
@@ -331,6 +297,75 @@ export class SelfEvolutionOrchestrator {
     } finally {
       await LockService.releaseLock(candidateId, actor);
     }
+  }
+
+  /** A publicacao depende de evidencias reais e de configuracao explicita. */
+  private static async tryAutonomousRelease(
+    candidateId: string
+  ): Promise<{ state: CandidateState; message: string }> {
+    const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
+    if (!candidate || candidate.state !== 'awaiting_release_approval') {
+      return {
+        state: candidate?.state || 'failed',
+        message: 'Candidato não está pronto para conferência de release.',
+      };
+    }
+
+    const gate = await CommitteeGateService.evaluateCandidate(candidate);
+    if (gate.status === 'blocked') {
+      await ImprovementPlannerService.updateCandidateState(candidateId, 'failed');
+      return { state: 'failed', message: `Comitê bloqueou o release: ${gate.reason}` };
+    }
+    if (!gate.approved) {
+      return {
+        state: 'awaiting_release_approval',
+        message: `Release automático bloqueado pela política de revisão atual: ${gate.reason}`,
+      };
+    }
+
+    const decision = ReleaseDecisionService.canReleaseToProduction(candidate, false, gate);
+    if (!decision.canRelease) {
+      return { state: 'awaiting_release_approval', message: decision.reason };
+    }
+    if (!candidate.headCommitSha ||
+      !(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
+      return {
+        state: 'awaiting_release_approval',
+        message: 'Aguardando comparação de capacidades aprovada para o commit exato.',
+      };
+    }
+    if (!SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed()) {
+      return {
+        state: 'awaiting_release_approval',
+        message: 'Deploy automático desativado por configuração. Nenhum merge foi realizado.',
+      };
+    }
+
+    const merge = await GithubAutomationService.mergeApprovedPullRequest(
+      candidate.pullRequestUrl,
+      candidate.headCommitSha
+    );
+    await AuditService.logEvent({
+      actor: 'self-evolution',
+      action: 'merge_approved_release',
+      resource: candidateId,
+      riskLevel: candidate.riskLevel,
+      result: merge.success ? 'success' : 'failure',
+      reason: merge.message,
+      commitHash: merge.mergeCommitSha,
+      prUrl: candidate.pullRequestUrl,
+    });
+    if (!merge.success) {
+      return { state: 'awaiting_release_approval', message: merge.message };
+    }
+
+    if (!(await ImprovementPlannerService.updateCandidateState(candidateId, 'approved_for_release'))) {
+      throw new Error('Merge confirmado, mas não foi possível persistir o estado do release.');
+    }
+    return {
+      state: 'approved_for_release',
+      message: `${merge.message} A publicação em produção ainda requer smoke test comprovado.`,
+    };
   }
 
   static async approveRelease(candidateId: string, adminUid: string): Promise<{ success: boolean; message: string }> {

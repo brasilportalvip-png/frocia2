@@ -3,6 +3,7 @@ import {
   adminDb,
   isFirebaseAdminConfigured
 } from '../lib/firebaseAdmin.js';
+import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import {
   COMMITTEE_ROLES,
   CommitteeGateResult,
@@ -225,17 +226,35 @@ export class CommitteeGateService {
       input.riskLevel === 'R2' ||
       input.riskLevel === 'R3'
     ) {
-      if (!input.humanApproverUid) {
+      // Sem o modo autonomo explicitamente habilitado, mantemos a protecao
+      // legada. Em modo autonomo o comite completo pode autorizar o release,
+      // mas nao dispensa CI, preview, comparacao de capacidades e protecoes
+      // de branch, que sao aplicados fora deste servico.
+      const autonomousReleaseEnabled =
+        SelfEvolutionPolicyEngine.isSelfEvolutionEnabled() &&
+        SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed();
+
+      if (!input.humanApproverUid && autonomousReleaseEnabled &&
+          !/^[a-f0-9]{40}$/i.test(input.commitSha)) {
+        return {
+          ...emptyResult,
+          status: 'blocked',
+          approved: false,
+          reason: 'Release autonomo de alto risco exige SHA completo de 40 caracteres.'
+        };
+      }
+
+      if (!input.humanApproverUid && !autonomousReleaseEnabled) {
         return {
           ...emptyResult,
           status: 'incomplete',
           approved: false,
           reason:
-            `Mudança ${input.riskLevel} exige aprovação humana separada.`
+            `Mudança ${input.riskLevel} exige autorização humana ou modo autônomo explicitamente habilitado.`
         };
       }
 
-      if (actors.includes(input.humanApproverUid)) {
+      if (input.humanApproverUid && actors.includes(input.humanApproverUid)) {
         return {
           ...emptyResult,
           status: 'blocked',

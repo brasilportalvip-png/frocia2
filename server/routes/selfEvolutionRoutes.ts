@@ -440,8 +440,14 @@ selfEvolutionRouter.post('/candidates/:id/approve-work', requireAuth, requireAdm
 
   const candidateId = paramVal.data.id;
   const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
-  if (!candidate) {
+   if (!candidate) {
     return res.status(404).json({ error: 'Candidato não encontrado.' });
+  }
+
+  if (candidate.state !== 'awaiting_work_approval') {
+    return res.status(409).json({
+      error: `Aprovação de trabalho indisponível para o estado ${candidate.state}.`,
+    });
   }
 
   await ImprovementPlannerService.updateCandidateState(candidateId, 'approved_for_work');
@@ -457,6 +463,40 @@ selfEvolutionRouter.post('/candidates/:id/approve-work', requireAuth, requireAdm
   const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(candidateId, req.user!.uid);
   return res.json({ success: true, result });
 });
+
+// Retoma o CI ou o preview sem reiniciar a geracao de codigo.
+selfEvolutionRouter.post(
+  '/candidates/:id/resume',
+  requireAuth,
+  requireAdmin,
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = candidateIdSchema.safeParse(req.params);
+
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'ID de candidato invalido.' });
+    }
+
+    const candidateId = parsed.data.id;
+    const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
+
+    if (!candidate) {
+      return res.status(404).json({ error: 'Candidato nao encontrado.' });
+    }
+
+    if (candidate.state !== 'ci_pending' && candidate.state !== 'ci_passed') {
+      return res.status(409).json({
+        error: `Retomada indisponivel para o estado ${candidate.state}.`,
+      });
+    }
+
+    const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
+      candidateId,
+      req.user!.uid
+    );
+
+    return res.json({ success: true, result });
+  }
+);
 
 // POST /api/admin/self-evolution/releases/:id/approve
 selfEvolutionRouter.post('/releases/:id/approve', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
