@@ -50,9 +50,22 @@ export class ContinuousCapabilityEvaluationService {
       throw new Error('evaluation_commit_sha_invalid');
     }
     if (!baseline.scores.every(validScore) || !candidate.scores.every(validScore)) {
-      throw new Error('evaluation_score_or_evidence_invalid');
-    }
-    const base = new Map(baseline.scores.map((score) => [score.category, score]));
+  throw new Error('evaluation_score_or_evidence_invalid');
+}
+
+const hasAllCategoriesOnce = (run: CapabilityEvaluationRun) =>
+  run.scores.length === CAPABILITY_CATEGORIES.length &&
+  new Set(run.scores.map((score) => score.category)).size === CAPABILITY_CATEGORIES.length;
+
+if (!hasAllCategoriesOnce(baseline) || !hasAllCategoriesOnce(candidate)) {
+  throw new Error('evaluation_categories_missing_or_duplicated');
+}
+
+if (baseline.commitSha === candidate.commitSha) {
+  throw new Error('evaluation_commits_must_differ');
+}
+
+const base = new Map(baseline.scores.map((score) => [score.category, score]));
     const next = new Map(candidate.scores.map((score) => [score.category, score]));
     const missingCategories = CAPABILITY_CATEGORIES.filter((category) => !base.has(category) || !next.has(category));
     const baselineAverage = CAPABILITY_CATEGORIES.reduce((sum, category) => sum + (base.get(category)?.score || 0), 0) / CAPABILITY_CATEGORIES.length;
