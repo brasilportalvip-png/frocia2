@@ -700,14 +700,14 @@ export class GithubAutomationService {
     pullRequestUrl: string | undefined,
     expectedHeadSha: string | undefined
   ): Promise<MergePullRequestResult> {
-    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
+    
     const owner = (process.env.GITHUB_OWNER || 'brasilportalvip-png').trim();
     const repo = (process.env.GITHUB_REPO || 'frocia2').trim();
     const match = pullRequestUrl?.match(
       /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/
     );
 
-    if (!this.isConfigured() || !token) {
+    if (!this.isConfigured()) {
       return { success: false, message: 'Integração GitHub não configurada para merge.' };
     }
     if (!match || match[1] !== owner || match[2] !== repo) {
@@ -720,7 +720,10 @@ export class GithubAutomationService {
     const pullNumber = Number(match[3]);
     const repositoryUrl = `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     try {
-      const inspectResponse = await this.githubFetch(
+    
+  const token = await this.resolveAccessToken(owner, repo);
+
+  const inspectResponse = await this.githubFetch(
         `${repositoryUrl}/pulls/${pullNumber}`,
         { headers: this.getHeaders(token) }
       );
