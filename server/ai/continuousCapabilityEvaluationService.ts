@@ -99,10 +99,31 @@ const base = new Map(baseline.scores.map((score) => [score.category, score]));
     return comparison;
   }
 
+  // Somente checks reais conferidos pelo servidor podem liberar o gate.
+  // O endpoint administrativo de comparação continua informativo, sem poder
+  // produzir sozinho uma aprovação automática para produção.
+  static async compareVerifiedGithubAndPersist(
+    baseline: CapabilityEvaluationRun,
+    candidate: CapabilityEvaluationRun
+  ): Promise<CapabilityComparison> {
+    if (!isFirebaseAdminConfigured()) throw new Error('evaluation_persistence_unavailable');
+    const comparison = this.compare(baseline, candidate);
+    await adminDb.collection('capability_evaluation_comparisons').doc(comparison.id).set({
+      ...comparison,
+      baseline,
+      candidate,
+      evidenceSource: 'github-actions-check-runs-v1',
+      persistedAt: FieldValue.serverTimestamp(),
+    });
+    return comparison;
+  }
+
   static async hasPassingComparison(commitSha: string): Promise<boolean> {
     if (!/^[a-f0-9]{40}$/i.test(commitSha) || !isFirebaseAdminConfigured()) return false;
     const snapshot = await adminDb.collection('capability_evaluation_comparisons')
       .where('candidate.commitSha', '==', commitSha).limit(10).get();
-    return snapshot.docs.some((doc) => doc.data().passed === true);
+    return snapshot.docs.some((doc) =>
+      doc.data().passed === true && doc.data().evidenceSource === 'github-actions-check-runs-v1'
+    );
   }
 }

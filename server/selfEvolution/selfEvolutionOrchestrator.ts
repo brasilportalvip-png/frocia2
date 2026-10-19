@@ -9,6 +9,7 @@ import { CIGateService } from './ciGateService.js';
 import { PreviewDeploymentService } from './previewDeploymentService.js';
 import { ReleaseDecisionService } from './releaseDecisionService.js';
 import { ContinuousCapabilityEvaluationService } from '../ai/continuousCapabilityEvaluationService.js';
+import { GithubCapabilityEvaluationService } from '../ai/githubCapabilityEvaluationService.js';
 import { RollbackService } from './rollbackService.js';
 import { CandidateState } from './selfEvolutionTypes.js';
 import { CommitteeGateService } from './committeeGateService.js';
@@ -160,6 +161,12 @@ export class SelfEvolutionOrchestrator {
       }
 
       if (candidate.state === 'ci_passed') {
+        if (candidate.headCommitSha && !(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
+          const evaluation = await GithubCapabilityEvaluationService.evaluateCandidate(candidate);
+          if (evaluation.status !== 'passed') {
+            return { state: 'ci_passed', message: evaluation.message };
+          }
+        }
         if (!candidate.branchName || !candidate.headCommitSha) {
           return {
             state: 'ci_passed',
@@ -327,12 +334,14 @@ export class SelfEvolutionOrchestrator {
     if (!decision.canRelease) {
       return { state: 'awaiting_release_approval', message: decision.reason };
     }
-    if (!candidate.headCommitSha ||
-      !(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
-      return {
-        state: 'awaiting_release_approval',
-        message: 'Aguardando comparação de capacidades aprovada para o commit exato.',
-      };
+    if (!candidate.headCommitSha) {
+      return { state: 'awaiting_release_approval', message: 'Commit do candidato ausente.' };
+    }
+    if (!(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
+      const evaluation = await GithubCapabilityEvaluationService.evaluateCandidate(candidate);
+      if (evaluation.status !== 'passed') {
+        return { state: 'awaiting_release_approval', message: evaluation.message };
+      }
     }
     if (!SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed()) {
       return {
@@ -372,8 +381,14 @@ export class SelfEvolutionOrchestrator {
     const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) return { success: false, message: 'Candidato não encontrado.' };
 
-    if (!candidate.headCommitSha || !(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
-      return { success: false, message: 'Release bloqueada: falta comparação de capacidades aprovada para o commit exato.' };
+    if (!candidate.headCommitSha) {
+      return { success: false, message: 'Release bloqueada: commit do candidato ausente.' };
+    }
+    if (!(await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha))) {
+      const evaluation = await GithubCapabilityEvaluationService.evaluateCandidate(candidate);
+      if (evaluation.status !== 'passed') {
+        return { success: false, message: evaluation.message };
+      }
     }
 
     const committeeGate =
