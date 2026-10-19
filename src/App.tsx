@@ -986,18 +986,13 @@ const handleGeneralChat = async (
             .substring(2)}`;
 
      const requestBody = {
-      prompt,
-      mode: apiMode,
-      conversationId: activeConvId,
-      projectId:
-        activeSite?.id &&
-        !activeSite.id.startsWith('local-')
-          ? activeSite.id
-          : undefined,
-      attachments,
-      knowledgeBaseIds,
-      idempotencyKey: stableExecutionKey
-    };
+  prompt,
+  mode: apiMode,
+  conversationId: activeConvId,
+  attachments,
+  knowledgeBaseIds,
+  idempotencyKey: stableExecutionKey
+};
 
     let result: AIExecutionResult;
     let streamedResponseMessageId: string | null = null;
