@@ -5,6 +5,7 @@ import { adminDb, isFirebaseAdminConfigured } from '../server/lib/firebaseAdmin.
 import type { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
 import { SelfEvolutionOrchestrator } from '../server/selfEvolution/selfEvolutionOrchestrator.js';
 import { SelfEvolutionPolicyEngine } from '../server/selfEvolution/selfEvolutionPolicyEngine.js';
+import { OperationalAutoDiscoveryService } from '../server/selfEvolution/operationalAutoDiscoveryService.js';
 
 // Mantem o limite atual da API. A Vercel pode encerrar execucoes mais longas.
 export const maxDuration = 300;
@@ -83,7 +84,14 @@ async function runScheduledSelfEvolution(req: Request, res: Response) {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 
     if (!candidate) {
-      return res.status(200).json({ status: 'idle', processed: 0 });
+      // Sem trabalho pendente: detecta erros reais antes de criar um candidato.
+      // Nao executa codigo recem-detectado no mesmo ciclo.
+      const discovery = await OperationalAutoDiscoveryService.discoverOne();
+      return res.status(200).json({
+        status: discovery.status === 'created' ? 'discovered' : 'idle',
+        processed: 0,
+        discovery,
+      });
     }
 
     // Identidade unica por tentativa: protege contra duas execucoes simultaneas.
