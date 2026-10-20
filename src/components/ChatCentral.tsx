@@ -5,12 +5,16 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getProgressiveSpeechOpening, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
-import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
+import { classifyFrocMediaVoiceCommand, classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
 } from '../services/neuralSpeechService';
+import {
+  startFrocLiveTranscription,
+  type FrocLiveSession
+} from '../services/frocLiveTranscription';
 import {
   ChevronDown,
   Code2,
@@ -84,7 +88,7 @@ type VoicePhase = 'idle' | 'listening' | 'awake' | 'thinking' | 'speaking' | 'er
 
 const VOICE_PHASE_LABELS: Record<VoicePhase, string> = {
   idle: 'Voz desativada',
-  listening: 'Aguardando “Ok, Froc”',
+  listening: 'Ouvindo sua próxima pergunta',
   awake: 'Estou ouvindo seu pedido',
   thinking: 'Pensando na resposta',
   speaking: 'Conversando com você',
@@ -240,6 +244,7 @@ export const ChatCentral: React.FC<
   const isGeneratingRef = useRef(isGenerating);
   const voiceAwaitingResponseRef = useRef(false);
   const lastSpokenMessageRef = useRef<string | null>(null);
+  const responsePreviousAiIdRef = useRef<string | null>(null);
   const progressiveSpeechRef = useRef<{
     messageId: string;
     spokenText: string;
@@ -248,12 +253,26 @@ export const ChatCentral: React.FC<
     messageId: string;
     text: string;
   } | null>(null);
+  // Prepara o próximo trecho neural enquanto a abertura ainda está tocando.
+  // O modelo e a voz continuam sendo os configurados no servidor.
+  const prefetchedSpeechRef = useRef<{
+    messageId: string;
+    text: string;
+    chunks: string[];
+    pending: Map<number, {
+      promise: ReturnType<typeof createNeuralSpeechAudio>;
+      controller: AbortController;
+    }>;
+  } | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
   const mobileVoiceModeRef = useRef(false);
   const neuralAudioRef = useRef<HTMLAudioElement | null>(null);
   const neuralAudioUrlRef = useRef<string | null>(null);
   const neuralSpeechControllersRef = useRef<Set<AbortController>>(new Set());
+  const liveSessionRef = useRef<FrocLiveSession | null>(null);
+  const liveConnectingRef = useRef(false);
+  const liveAttemptRef = useRef(0);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -264,6 +283,7 @@ export const ChatCentral: React.FC<
   };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
 
   const stopVoiceRecognition = () => {
@@ -289,11 +309,51 @@ export const ChatCentral: React.FC<
     }
   };
 
+  const disposePrefetchedSpeech = () => {
+    const prepared = prefetchedSpeechRef.current;
+    prefetchedSpeechRef.current = null;
+    if (!prepared) return;
+    for (const { promise, controller } of prepared.pending.values()) {
+      controller.abort();
+      // Uma resposta já pronta possui um object URL que precisa ser liberado.
+      void promise.then(({ audio, objectUrl }) => {
+        audio.pause();
+        URL.revokeObjectURL(objectUrl);
+      }).catch(() => undefined);
+    }
+  };
+
+  const prefetchQueuedSpeech = (messageId: string, text: string) => {
+    disposePrefetchedSpeech();
+    // Primeiro segmento relativamente curto para reduzir tempo de síntese.
+    // Os demais são maiores e serão preparados durante a reprodução.
+    const chunks = splitTextForProgressiveSpeech(text, 220, 420);
+    const pending = new Map<number, {
+      promise: ReturnType<typeof createNeuralSpeechAudio>;
+      controller: AbortController;
+    }>();
+    for (let index = 0; index < Math.min(2, chunks.length); index += 1) {
+      const controller = new AbortController();
+      const promise = createNeuralSpeechAudio(chunks[index], controller.signal);
+      // A primeira chamada pode falhar antes de ser consumida: evite unhandled rejection.
+      void promise.catch(() => undefined);
+      pending.set(index, { promise, controller });
+    }
+    prefetchedSpeechRef.current = { messageId, text, chunks, pending };
+  };
+
   const disableVoiceConversation = () => {
+    disposePrefetchedSpeech();
+    liveAttemptRef.current += 1;
+    liveConnectingRef.current = false;
+    liveSessionRef.current?.stop();
+    liveSessionRef.current = null;
+
     speechSessionRef.current += 1;
     voiceEnabledRef.current = false;
     voiceArmedRef.current = false;
     voiceAwaitingResponseRef.current = false;
+    responsePreviousAiIdRef.current = null;
     progressiveSpeechRef.current = null;
     queuedSpeechRef.current = null;
     setVoiceEnabled(false);
@@ -309,7 +369,11 @@ export const ChatCentral: React.FC<
     if (
       !voiceEnabledRef.current ||
       recognitionRef.current ||
+      liveConnectingRef.current ||
+      liveSessionRef.current !== null ||
       isGeneratingRef.current ||
+      voiceAwaitingResponseRef.current ||
+      speakingMsgIdRef.current !== null ||
       ('speechSynthesis' in window && window.speechSynthesis.speaking)
     ) return;
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -331,26 +395,19 @@ export const ChatCentral: React.FC<
         transcript += event.results[index][0].transcript;
         isFinal = isFinal || event.results[index].isFinal;
       }
-      const intent = mobileVoiceModeRef.current
-        ? classifyFrocMobileVoiceTranscript(transcript, isFinal)
-        : classifyFrocVoiceTranscript(transcript, isFinal, voiceArmedRef.current);
+      const intent = classifyFrocVoiceTranscript(
+        transcript,
+        isFinal,
+        voiceArmedRef.current
+      );
       if (intent.type === 'preview') setInputText(intent.text);
       if (intent.type === 'wake') {
-        if (mobileVoiceModeRef.current) {
-          voiceEnabledRef.current = false;
-          voiceArmedRef.current = false;
-          setVoiceEnabled(false);
-          setVoicePhase('idle');
-          setInputText('');
-          setAttachmentError('No celular, diga “Ok Froc” e o pedido na mesma frase. Toque no microfone para tentar novamente.');
-          return;
-        }
         voiceArmedRef.current = true;
         setVoicePhase('awake');
         setInputText('');
       }
       if (intent.type === 'command') {
-        voiceArmedRef.current = false;
+        // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
         voiceAwaitingResponseRef.current = true;
         setVoicePhase('thinking');
         setInputText(intent.command);
@@ -361,33 +418,40 @@ export const ChatCentral: React.FC<
     };
     recognition.onerror = (event: any) => {
       recognitionRef.current = null;
-      if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
-        voiceEnabledRef.current = false;
-        setVoiceEnabled(false);
-        setVoicePhase('error');
-        setAttachmentError('Permissão de microfone negada. Libere o microfone nas configurações do navegador.');
-      } else if (mobileVoiceModeRef.current) {
-        voiceEnabledRef.current = false;
-        voiceArmedRef.current = false;
-        setVoiceEnabled(false);
-        setVoicePhase('idle');
-        setAttachmentError(
-          event?.error === 'no-speech'
-            ? 'Não ouvi uma frase completa. Toque no microfone e diga “Ok Froc” junto com o pedido.'
-            : 'A escuta foi encerrada pelo Chrome. Toque no microfone para falar novamente.'
-        );
+
+      if (event?.error === 'no-speech' || event?.error === 'aborted') {
+        return;
       }
+
+      voiceEnabledRef.current = false;
+      voiceArmedRef.current = false;
+      setVoiceEnabled(false);
+      setVoicePhase('error');
+
+      setAttachmentError(
+        event?.error === 'not-allowed' ||
+        event?.error === 'service-not-allowed'
+          ? 'Permissão de microfone negada. Libere o microfone no navegador.'
+          : 'A escuta falhou. Ative a conversa por voz novamente.'
+      );
     };
+
     recognition.onend = () => {
-      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+
       if (
-        !mobileVoiceModeRef.current &&
         voiceEnabledRef.current &&
         !isGeneratingRef.current &&
         !voiceAwaitingResponseRef.current &&
+        speakingMsgIdRef.current === null &&
         !window.speechSynthesis?.speaking
       ) {
-        restartVoiceTimerRef.current = window.setTimeout(startVoiceRecognition, 350);
+        restartVoiceTimerRef.current = window.setTimeout(
+          startVoiceRecognition,
+          350
+        );
       }
     };
     recognitionRef.current = recognition;
@@ -405,38 +469,187 @@ export const ChatCentral: React.FC<
       disableVoiceConversation();
       return;
     }
+
     voiceEnabledRef.current = true;
     mobileVoiceModeRef.current =
       isAndroidChromeVoiceClient(navigator.userAgent) ||
       window.matchMedia?.('(pointer: coarse)').matches === true;
-    voiceArmedRef.current = false;
+    // O clique de ativação autoriza a primeira pergunta direta sem exigir "Ok, Froc".
+    // A escuta continua armada após as respostas enquanto o usuário mantiver o microfone ligado.
+    voiceArmedRef.current = true;
     setVoiceEnabled(true);
-    setVoicePhase('listening');
-    // Desbloqueia a saída de áudio dentro do gesto do usuário. Chrome e
-    // Edge podem bloquear a primeira fala automática sem esta ativação.
+    setVoicePhase('awake');
+
     if ('speechSynthesis' in window) {
       const unlockUtterance = new SpeechSynthesisUtterance(' ');
       unlockUtterance.volume = 0;
       window.speechSynthesis.speak(unlockUtterance);
       window.speechSynthesis.cancel();
     }
-    startVoiceRecognition();
+
+    const attempt = ++liveAttemptRef.current;
+    liveConnectingRef.current = true;
+
+    void startFrocLiveTranscription({
+      onPartial: (text) => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current ||
+          voiceAwaitingResponseRef.current ||
+          isGeneratingRef.current ||
+          speakingMsgIdRef.current !== null
+        ) return;
+
+        const intent = classifyFrocVoiceTranscript(
+          text,
+          false,
+          voiceArmedRef.current
+        );
+
+        if (intent.type === 'preview' &&
+            (voiceArmedRef.current || hasFrocWakePhrase(text))) {
+          setInputText(intent.text);
+        }
+      },
+
+      onFinal: (text) => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current ||
+          voiceAwaitingResponseRef.current ||
+          isGeneratingRef.current ||
+          speakingMsgIdRef.current !== null
+        ) return;
+
+        const intent = classifyFrocVoiceTranscript(
+          text,
+          true,
+          voiceArmedRef.current
+        );
+
+        if (intent.type === 'wake') {
+          voiceArmedRef.current = true;
+          setVoicePhase('awake');
+          setInputText('');
+          return;
+        }
+
+        if (intent.type === 'stop') {
+          disableVoiceConversation();
+          return;
+        }
+
+        if (intent.type === 'command') {
+          // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
+          voiceAwaitingResponseRef.current = true;
+          liveSessionRef.current?.pause();
+
+          setVoicePhase('thinking');
+          setInputText(intent.command);
+          setVoiceCommandToSend(intent.command);
+        }
+      },
+
+      onError: (message) => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current
+        ) return;
+
+        liveAttemptRef.current += 1;
+        liveSessionRef.current?.stop();
+        liveSessionRef.current = null;
+        liveConnectingRef.current = false;
+
+        startVoiceRecognition();
+        setAttachmentError(
+          `${message} Usando reconhecimento do navegador.`
+        );
+      },
+    }).then((session) => {
+      if (
+        attempt !== liveAttemptRef.current ||
+        !voiceEnabledRef.current
+      ) {
+        session.stop();
+        return;
+      }
+
+      liveConnectingRef.current = false;
+      liveSessionRef.current = session;
+
+      if (
+        voiceAwaitingResponseRef.current ||
+        isGeneratingRef.current ||
+        speakingMsgIdRef.current !== null
+      ) {
+        session.pause();
+      }
+
+      setAttachmentError(null);
+    }).catch((error: unknown) => {
+      if (
+        attempt !== liveAttemptRef.current ||
+        !voiceEnabledRef.current
+      ) return;
+
+      liveConnectingRef.current = false;
+
+      startVoiceRecognition();
+      const message = error instanceof Error
+        ? error.message
+        : 'Não foi possível conectar ao Gemini Live.';
+      setAttachmentError(`${message} Usando reconhecimento do navegador.`);
+    });
+  };
+
+  // Retorna à escuta somente quando toda a resposta neural terminou.
+  const resumeVoiceListening = (delayMs = 300) => {
+    if (
+      !voiceEnabledRef.current ||
+      isGeneratingRef.current ||
+      voiceAwaitingResponseRef.current ||
+      speakingMsgIdRef.current !== null ||
+      queuedSpeechRef.current !== null
+    ) return;
+
+    setVoicePhase('listening');
+
+    if (liveSessionRef.current) {
+      liveSessionRef.current.resume();
+    } else if (!liveConnectingRef.current) {
+      if (restartVoiceTimerRef.current !== null) {
+        window.clearTimeout(restartVoiceTimerRef.current);
+      }
+      restartVoiceTimerRef.current = window.setTimeout(() => {
+        restartVoiceTimerRef.current = null;
+        startVoiceRecognition();
+      }, delayMs);
+    }
   };
 
   useEffect(() => {
     isGeneratingRef.current = isGenerating;
     if (!voiceEnabledRef.current) return;
+
     if (isGenerating) {
       setVoicePhase('thinking');
       stopVoiceRecognition();
-    } else if (!voiceAwaitingResponseRef.current && !window.speechSynthesis?.speaking) {
-      startVoiceRecognition();
+      liveSessionRef.current?.pause();
+    } else {
+      resumeVoiceListening();
     }
   }, [isGenerating]);
 
   useEffect(() => () => {
     voiceEnabledRef.current = false;
+    liveAttemptRef.current += 1;
+    liveConnectingRef.current = false;
+    liveSessionRef.current?.stop();
+    liveSessionRef.current = null;
+    disposePrefetchedSpeech();
     stopVoiceRecognition();
+    stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   }, []);
 
@@ -448,9 +661,13 @@ export const ChatCentral: React.FC<
   const CurrentModeIcon = currentMode.icon;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: 'smooth'
-    });
+    const scroll = chatScrollRef.current;
+    if (scroll) {
+      scroll.scrollTo({
+        top: scroll.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
   }, [messages, isGenerating]);
 
   useEffect(() => {
@@ -516,27 +733,36 @@ export const ChatCentral: React.FC<
     messageId: string,
     text: string
   ) => {
-    if (speakingMsgId === messageId) {
+    if (speakingMsgIdRef.current === messageId) {
       speechSessionRef.current += 1;
       stopNeuralAudio();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
-      if (voiceEnabledRef.current) {
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 250);
-      }
+      resumeVoiceListening(250);
       return;
     }
 
     stopVoiceRecognition();
+    liveSessionRef.current?.pause();
     const speechSession = ++speechSessionRef.current;
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 
-    const chunks = splitTextForProgressiveSpeech(text);
+    const prepared = prefetchedSpeechRef.current;
+    const usePrepared = prepared?.messageId === messageId && prepared.text === text;
+    // Transfere as requisições antecipadas sem abortá-las.
+    if (usePrepared) {
+      prefetchedSpeechRef.current = null;
+    } else {
+      disposePrefetchedSpeech();
+    }
+    const chunks = usePrepared
+      ? prepared!.chunks
+      : splitTextForProgressiveSpeech(text);
     if (chunks.length === 0) {
       setAttachmentError('Esta resposta não possui texto disponível para leitura.');
+      resumeVoiceListening();
       return;
     }
 
@@ -554,17 +780,7 @@ export const ChatCentral: React.FC<
         );
         return;
       }
-      if (voiceEnabledRef.current) {
-        if (mobileVoiceModeRef.current) {
-          voiceEnabledRef.current = false;
-          voiceArmedRef.current = false;
-          setVoiceEnabled(false);
-          setVoicePhase('idle');
-        } else {
-          setVoicePhase('listening');
-          window.setTimeout(startVoiceRecognition, 300);
-        }
-      }
+      resumeVoiceListening();
     };
 
     const failSpeaking = () => {
@@ -574,51 +790,23 @@ export const ChatCentral: React.FC<
       speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
       setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
-      if (voiceEnabledRef.current) {
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 300);
-      }
-    };
-
-    const speakBrowserChunk = (index: number) => {
-      if (speechSession !== speechSessionRef.current) return;
-      if (index >= chunks.length) {
-        finishSpeaking();
-        return;
-      }
-      if (!('speechSynthesis' in window)) {
-        failSpeaking();
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(chunks[index]);
-      utterance.lang = 'pt-BR';
-      const preferredVoice = selectPreferredMalePortugueseVoice(
-        window.speechSynthesis.getVoices()
-      );
-      if (preferredVoice) utterance.voice = preferredVoice;
-      utterance.rate = 0.96;
-      utterance.pitch = 0.88;
-      utterance.onend = () => speakBrowserChunk(index + 1);
-      utterance.onerror = failSpeaking;
-      window.speechSynthesis.speak(utterance);
-    };
-
-    const speakWithBrowserFallback = () => {
-      if (speechSession !== speechSessionRef.current) return;
-      if (!('speechSynthesis' in window)) {
-        failSpeaking();
-        return;
-      }
-      window.speechSynthesis.resume();
-      window.setTimeout(() => {
-        if (speechSession === speechSessionRef.current) speakBrowserChunk(0);
-      }, 60);
+      resumeVoiceListening();
     };
 
     const pendingAudio = new Map<
       number,
       ReturnType<typeof createNeuralSpeechAudio>
     >();
+
+    if (usePrepared) {
+      for (const [index, { promise, controller }] of prepared!.pending) {
+        pendingAudio.set(index, promise);
+        neuralSpeechControllersRef.current.add(controller);
+        void promise.finally(() => {
+          neuralSpeechControllersRef.current.delete(controller);
+        }).catch(() => undefined);
+      }
+    }
 
     const prepareChunk = (index: number) => {
       if (index >= chunks.length || pendingAudio.has(index)) return;
@@ -655,7 +843,11 @@ export const ChatCentral: React.FC<
         };
         audio.onerror = () => {
           stopNeuralAudio();
-          speakBrowserChunk(index);
+          if (usePrepared && index === 0) {
+            void startStreamingSpeech();
+          } else {
+            failSpeaking();
+          }
         };
         await audio.play();
         setAttachmentError(null);
@@ -664,12 +856,16 @@ export const ChatCentral: React.FC<
       } catch {
         if (speechSession === speechSessionRef.current) {
           stopNeuralAudio();
-          speakBrowserChunk(index);
+          if (usePrepared && index === 0) {
+            void startStreamingSpeech();
+          } else {
+            failSpeaking();
+          }
         }
       }
     };
 
-      const startLegacyNeuralSpeech = () => {
+    const startLegacyNeuralSpeech = () => {
       if (speechSession !== speechSessionRef.current) return;
 
       prepareChunk(0);
@@ -709,11 +905,17 @@ export const ChatCentral: React.FC<
       }
     };
 
-     speakingMsgIdRef.current = messageId;
+    speakingMsgIdRef.current = messageId;
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
 
-    void startStreamingSpeech();
+    // Se o áudio foi sintetizado durante a abertura, reproduza-o de imediato.
+    // Evita aguardar uma segunda chamada apenas depois do fim da primeira fala.
+    if (usePrepared) {
+      void playNeuralChunk(0);
+    } else {
+      void startStreamingSpeech();
+    }
   };
 
   useEffect(() => {
@@ -722,6 +924,8 @@ export const ChatCentral: React.FC<
       .reverse()
       .find((message) => message.sender === 'ai');
     if (!latestAiMessage || !latestAiMessage.text.trim()) return;
+    // Não leia a resposta antiga enquanto uma nova pergunta está sendo processada.
+    if (latestAiMessage.id === responsePreviousAiIdRef.current) return;
 
     if (isGenerating) {
       if (progressiveSpeechRef.current) return;
@@ -742,19 +946,23 @@ export const ChatCentral: React.FC<
     voiceAwaitingResponseRef.current = false;
     lastSpokenMessageRef.current = latestAiMessage.id;
     const progressive = progressiveSpeechRef.current;
+    const completedSpeechText = normalizeTextForSpeech(latestAiMessage.text);
     const remainingText =
       progressive?.messageId === latestAiMessage.id &&
-      latestAiMessage.text.startsWith(progressive.spokenText)
-        ? latestAiMessage.text.slice(progressive.spokenText.length).trim()
-        : latestAiMessage.text;
+      completedSpeechText.startsWith(progressive.spokenText)
+        ? completedSpeechText.slice(progressive.spokenText.length).trim()
+        : completedSpeechText;
     progressiveSpeechRef.current = null;
     if (remainingText && speakingMsgIdRef.current) {
       queuedSpeechRef.current = {
         messageId: latestAiMessage.id,
         text: remainingText,
       };
+      // A resposta já está pronta; sintetize a continuação em paralelo
+      // com a fala de abertura, nunca depois que ela acabar.
+      prefetchQueuedSpeech(latestAiMessage.id, remainingText);
     } else if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
-    else if (voiceEnabledRef.current) startVoiceRecognition();
+    else resumeVoiceListening();
   }, [messages, isGenerating, voiceEnabled]);
 
   const appendAttachment = (file: UploadedFile) => {
@@ -988,6 +1196,17 @@ export const ChatCentral: React.FC<
       'Analise os arquivos que foram anexados.';
 
     try {
+      if (voiceEnabledRef.current) {
+        // Ignore uma mensagem antiga enquanto aguardamos a nova resposta.
+        responsePreviousAiIdRef.current = [...messages]
+          .reverse()
+          .find((message) => message.sender === 'ai')?.id ?? null;
+        voiceAwaitingResponseRef.current = true;
+        stopVoiceRecognition();
+        liveSessionRef.current?.pause();
+        setVoicePhase('thinking');
+      }
+
       await onSendMessage(
         textToSend,
         modeOverride ?? selectedMode,
@@ -998,10 +1217,9 @@ export const ChatCentral: React.FC<
       setAttachedFiles([]);
       setIsAttachmentMenuOpen(false);
     } catch {
-      if (voiceText && voiceEnabledRef.current) {
+      if (voiceEnabledRef.current) {
         voiceAwaitingResponseRef.current = false;
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 300);
+        resumeVoiceListening();
       }
       return;
     }
@@ -1029,7 +1247,7 @@ export const ChatCentral: React.FC<
   };
 
   return (
-    <section className="froc-app-background relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#050505] text-white">
+    <section className="froc-app-background relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#050505] text-white">
       <div
         aria-hidden="true"
         className="froc-ambient-light -right-32 top-10"
@@ -1141,7 +1359,7 @@ export const ChatCentral: React.FC<
         </div>
       </header>
 
-      <div className="custom-scrollbar relative z-10 flex-1 overflow-y-auto">
+      <div ref={chatScrollRef} className="custom-scrollbar relative z-10 min-h-0 flex-1 overflow-y-scroll overscroll-contain">
         {messages.length === 0 ? (
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col items-center justify-center px-4 py-10 text-center md:px-8">
             <MascotWidget
@@ -1196,7 +1414,7 @@ export const ChatCentral: React.FC<
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-3xl px-4 pb-36 pt-7 md:px-6">
+          <div className="mx-auto w-full max-w-3xl px-4 pb-8 pt-7 md:px-6">
             <div className="space-y-8">
               {messages.map((message) => {
                 const isAi = message.sender === 'ai';
@@ -1491,8 +1709,8 @@ export const ChatCentral: React.FC<
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-[#050505] via-[#050505]/96 to-transparent px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-16 md:px-6">
-        <div className="pointer-events-auto mx-auto max-w-3xl">
+      <div className="relative z-20 shrink-0 border-t border-white/10 bg-[#050505] px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3 md:px-6">
+        <div className="mx-auto max-w-3xl">
           {attachmentError && (
             <div className="mb-2 flex items-start justify-between gap-3 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-2 text-[10px] text-red-200">
               <span>{attachmentError}</span>
@@ -1560,8 +1778,8 @@ export const ChatCentral: React.FC<
                   <span className="block truncate text-[9px] text-white/40">
                     {voicePhase === 'listening'
                       ? mobileVoiceModeRef.current
-                        ? 'Diga em uma frase: “Ok Froc” e o seu pedido'
-                        : 'Diga “Ok, Froc” e depois faça seu pedido'
+                        ? 'Pode falar normalmente ou começar com “Ok Froc”'
+                        : 'Pode falar normalmente ou começar com “Ok, Froc”'
                       : voicePhase === 'awake'
                         ? 'Pode falar naturalmente'
                         : voicePhase === 'speaking'
