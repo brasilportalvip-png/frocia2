@@ -26,6 +26,116 @@ const speechSchema = z.object({
 });
 
 /**
+ * Emite um token temporário para o reconhecimento
+ * de voz em tempo real do Froc.IA.
+ *
+ * A chave Gemini permanece somente no servidor.
+ * O modelo Live transcreve, mas não substitui
+ * a inteligência nem a voz neural original.
+ */
+speechRouter.post(
+  '/live-token',
+  requireAuth,
+  speechLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+
+    res.setHeader('Cache-Control', 'no-store');
+
+    if (!apiKey) {
+      return res.status(503).json({
+        error: {
+          code: 'live_voice_not_configured',
+          message: 'Reconhecimento em tempo real indisponível.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+
+    const model = 'gemini-3.5-transcribe-live';
+    const expiresAt = new Date(
+      Date.now() + 30 * 60 * 1000
+    ).toISOString();
+
+    const newSessionExpiresAt = new Date(
+      Date.now() + 60 * 1000
+    ).toISOString();
+
+    try {
+      const response = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/auth_tokens',
+        {
+          method: 'POST',
+          signal: AbortSignal.timeout(10000),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify({
+            uses: 1,
+            expireTime: expiresAt,
+            newSessionExpireTime: newSessionExpiresAt,
+            liveConnectConstraints: {
+              model: `models/${model}`,
+              config: {
+                responseModalities: ['TEXT'],
+                inputAudioTranscription: {
+                  languageCodes: ['pt-BR'],
+                },
+              },
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error('live_voice_token_provider_error', {
+          status: response.status,
+          correlationId: req.correlationId,
+        });
+
+        return res.status(503).json({
+          error: {
+            code: 'live_voice_token_unavailable',
+            message: 'Não foi possível iniciar a escuta em tempo real.',
+            correlationId: req.correlationId,
+          },
+        });
+      }
+
+      const result = await response.json() as {
+        name?: string;
+      };
+
+      if (!result.name) {
+        throw new Error('live_voice_token_missing');
+      }
+
+      return res.status(200).json({
+        token: result.name,
+        model,
+        expiresAt,
+      });
+    } catch (error) {
+      console.error('live_voice_token_error', {
+        message: error instanceof Error
+          ? error.message
+          : 'unknown_error',
+        correlationId: req.correlationId,
+      });
+
+      return res.status(503).json({
+        error: {
+          code: 'live_voice_connection_failed',
+          message: 'A conexão de voz não pôde ser preparada.',
+          correlationId: req.correlationId,
+        },
+      });
+    }
+  }
+);
+
+/**
  * POST /api/ai/speech
  *
  * Modo tradicional.

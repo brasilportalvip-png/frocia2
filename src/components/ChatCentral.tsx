@@ -5,12 +5,16 @@ import React, {
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getProgressiveSpeechOpening, selectPreferredMalePortugueseVoice, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
-import { classifyFrocMediaVoiceCommand, classifyFrocMobileVoiceTranscript, classifyFrocVoiceTranscript, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
+import { classifyFrocMediaVoiceCommand, classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
 } from '../services/neuralSpeechService';
+import {
+  startFrocLiveTranscription,
+  type FrocLiveSession
+} from '../services/frocLiveTranscription';
 import {
   ChevronDown,
   Code2,
@@ -240,6 +244,7 @@ export const ChatCentral: React.FC<
   const isGeneratingRef = useRef(isGenerating);
   const voiceAwaitingResponseRef = useRef(false);
   const lastSpokenMessageRef = useRef<string | null>(null);
+  const responsePreviousAiIdRef = useRef<string | null>(null);
   const progressiveSpeechRef = useRef<{
     messageId: string;
     spokenText: string;
@@ -254,6 +259,9 @@ export const ChatCentral: React.FC<
   const neuralAudioRef = useRef<HTMLAudioElement | null>(null);
   const neuralAudioUrlRef = useRef<string | null>(null);
   const neuralSpeechControllersRef = useRef<Set<AbortController>>(new Set());
+  const liveSessionRef = useRef<FrocLiveSession | null>(null);
+  const liveConnectingRef = useRef(false);
+  const liveAttemptRef = useRef(0);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -290,10 +298,16 @@ export const ChatCentral: React.FC<
   };
 
   const disableVoiceConversation = () => {
+    liveAttemptRef.current += 1;
+    liveConnectingRef.current = false;
+    liveSessionRef.current?.stop();
+    liveSessionRef.current = null;
+
     speechSessionRef.current += 1;
     voiceEnabledRef.current = false;
     voiceArmedRef.current = false;
     voiceAwaitingResponseRef.current = false;
+    responsePreviousAiIdRef.current = null;
     progressiveSpeechRef.current = null;
     queuedSpeechRef.current = null;
     setVoiceEnabled(false);
@@ -309,7 +323,11 @@ export const ChatCentral: React.FC<
     if (
       !voiceEnabledRef.current ||
       recognitionRef.current ||
+      liveConnectingRef.current ||
+      liveSessionRef.current !== null ||
       isGeneratingRef.current ||
+      voiceAwaitingResponseRef.current ||
+      speakingMsgIdRef.current !== null ||
       ('speechSynthesis' in window && window.speechSynthesis.speaking)
     ) return;
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -331,20 +349,13 @@ export const ChatCentral: React.FC<
         transcript += event.results[index][0].transcript;
         isFinal = isFinal || event.results[index].isFinal;
       }
-      const intent = mobileVoiceModeRef.current
-        ? classifyFrocMobileVoiceTranscript(transcript, isFinal)
-        : classifyFrocVoiceTranscript(transcript, isFinal, voiceArmedRef.current);
+      const intent = classifyFrocVoiceTranscript(
+        transcript,
+        isFinal,
+        voiceArmedRef.current
+      );
       if (intent.type === 'preview') setInputText(intent.text);
       if (intent.type === 'wake') {
-        if (mobileVoiceModeRef.current) {
-          voiceEnabledRef.current = false;
-          voiceArmedRef.current = false;
-          setVoiceEnabled(false);
-          setVoicePhase('idle');
-          setInputText('');
-          setAttachmentError('No celular, diga “Ok Froc” e o pedido na mesma frase. Toque no microfone para tentar novamente.');
-          return;
-        }
         voiceArmedRef.current = true;
         setVoicePhase('awake');
         setInputText('');
@@ -361,33 +372,40 @@ export const ChatCentral: React.FC<
     };
     recognition.onerror = (event: any) => {
       recognitionRef.current = null;
-      if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
-        voiceEnabledRef.current = false;
-        setVoiceEnabled(false);
-        setVoicePhase('error');
-        setAttachmentError('Permissão de microfone negada. Libere o microfone nas configurações do navegador.');
-      } else if (mobileVoiceModeRef.current) {
-        voiceEnabledRef.current = false;
-        voiceArmedRef.current = false;
-        setVoiceEnabled(false);
-        setVoicePhase('idle');
-        setAttachmentError(
-          event?.error === 'no-speech'
-            ? 'Não ouvi uma frase completa. Toque no microfone e diga “Ok Froc” junto com o pedido.'
-            : 'A escuta foi encerrada pelo Chrome. Toque no microfone para falar novamente.'
-        );
+
+      if (event?.error === 'no-speech' || event?.error === 'aborted') {
+        return;
       }
+
+      voiceEnabledRef.current = false;
+      voiceArmedRef.current = false;
+      setVoiceEnabled(false);
+      setVoicePhase('error');
+
+      setAttachmentError(
+        event?.error === 'not-allowed' ||
+        event?.error === 'service-not-allowed'
+          ? 'Permissão de microfone negada. Libere o microfone no navegador.'
+          : 'A escuta falhou. Ative a conversa por voz novamente.'
+      );
     };
+
     recognition.onend = () => {
-      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+
       if (
-        !mobileVoiceModeRef.current &&
         voiceEnabledRef.current &&
         !isGeneratingRef.current &&
         !voiceAwaitingResponseRef.current &&
+        speakingMsgIdRef.current === null &&
         !window.speechSynthesis?.speaking
       ) {
-        restartVoiceTimerRef.current = window.setTimeout(startVoiceRecognition, 350);
+        restartVoiceTimerRef.current = window.setTimeout(
+          startVoiceRecognition,
+          350
+        );
       }
     };
     recognitionRef.current = recognition;
@@ -405,6 +423,7 @@ export const ChatCentral: React.FC<
       disableVoiceConversation();
       return;
     }
+
     voiceEnabledRef.current = true;
     mobileVoiceModeRef.current =
       isAndroidChromeVoiceClient(navigator.userAgent) ||
@@ -412,31 +431,177 @@ export const ChatCentral: React.FC<
     voiceArmedRef.current = false;
     setVoiceEnabled(true);
     setVoicePhase('listening');
-    // Desbloqueia a saída de áudio dentro do gesto do usuário. Chrome e
-    // Edge podem bloquear a primeira fala automática sem esta ativação.
+
     if ('speechSynthesis' in window) {
       const unlockUtterance = new SpeechSynthesisUtterance(' ');
       unlockUtterance.volume = 0;
       window.speechSynthesis.speak(unlockUtterance);
       window.speechSynthesis.cancel();
     }
-    startVoiceRecognition();
+
+    const attempt = ++liveAttemptRef.current;
+    liveConnectingRef.current = true;
+
+    void startFrocLiveTranscription({
+      onPartial: (text) => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current ||
+          voiceAwaitingResponseRef.current ||
+          isGeneratingRef.current ||
+          speakingMsgIdRef.current !== null
+        ) return;
+
+        const intent = classifyFrocVoiceTranscript(
+          text,
+          false,
+          voiceArmedRef.current
+        );
+
+        if (intent.type === 'preview' &&
+            (voiceArmedRef.current || hasFrocWakePhrase(text))) {
+          setInputText(intent.text);
+        }
+      },
+
+      onFinal: (text) => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current ||
+          voiceAwaitingResponseRef.current ||
+          isGeneratingRef.current ||
+          speakingMsgIdRef.current !== null
+        ) return;
+
+        const intent = classifyFrocVoiceTranscript(
+          text,
+          true,
+          voiceArmedRef.current
+        );
+
+        if (intent.type === 'wake') {
+          voiceArmedRef.current = true;
+          setVoicePhase('awake');
+          setInputText('');
+          return;
+        }
+
+        if (intent.type === 'stop') {
+          disableVoiceConversation();
+          return;
+        }
+
+        if (intent.type === 'command') {
+          voiceArmedRef.current = false;
+          voiceAwaitingResponseRef.current = true;
+          liveSessionRef.current?.pause();
+
+          setVoicePhase('thinking');
+          setInputText(intent.command);
+          setVoiceCommandToSend(intent.command);
+        }
+      },
+
+      onError: () => {
+        if (
+          attempt !== liveAttemptRef.current ||
+          !voiceEnabledRef.current
+        ) return;
+
+        liveAttemptRef.current += 1;
+        liveSessionRef.current?.stop();
+        liveSessionRef.current = null;
+        liveConnectingRef.current = false;
+
+        setAttachmentError(
+          'Gemini Live indisponível. Usando reconhecimento de voz do navegador.'
+        );
+
+        startVoiceRecognition();
+      },
+    }).then((session) => {
+      if (
+        attempt !== liveAttemptRef.current ||
+        !voiceEnabledRef.current
+      ) {
+        session.stop();
+        return;
+      }
+
+      liveConnectingRef.current = false;
+      liveSessionRef.current = session;
+
+      if (
+        voiceAwaitingResponseRef.current ||
+        isGeneratingRef.current ||
+        speakingMsgIdRef.current !== null
+      ) {
+        session.pause();
+      }
+
+      setAttachmentError(null);
+    }).catch(() => {
+      if (
+        attempt !== liveAttemptRef.current ||
+        !voiceEnabledRef.current
+      ) return;
+
+      liveConnectingRef.current = false;
+
+      setAttachmentError(
+        'Não foi possível conectar ao Gemini Live. O reconhecimento anterior continua disponível.'
+      );
+
+      startVoiceRecognition();
+    });
+  };
+
+  // Retorna à escuta somente quando toda a resposta neural terminou.
+  const resumeVoiceListening = (delayMs = 300) => {
+    if (
+      !voiceEnabledRef.current ||
+      isGeneratingRef.current ||
+      voiceAwaitingResponseRef.current ||
+      speakingMsgIdRef.current !== null ||
+      queuedSpeechRef.current !== null
+    ) return;
+
+    setVoicePhase('listening');
+
+    if (liveSessionRef.current) {
+      liveSessionRef.current.resume();
+    } else if (!liveConnectingRef.current) {
+      if (restartVoiceTimerRef.current !== null) {
+        window.clearTimeout(restartVoiceTimerRef.current);
+      }
+      restartVoiceTimerRef.current = window.setTimeout(() => {
+        restartVoiceTimerRef.current = null;
+        startVoiceRecognition();
+      }, delayMs);
+    }
   };
 
   useEffect(() => {
     isGeneratingRef.current = isGenerating;
     if (!voiceEnabledRef.current) return;
+
     if (isGenerating) {
       setVoicePhase('thinking');
       stopVoiceRecognition();
-    } else if (!voiceAwaitingResponseRef.current && !window.speechSynthesis?.speaking) {
-      startVoiceRecognition();
+      liveSessionRef.current?.pause();
+    } else {
+      resumeVoiceListening();
     }
   }, [isGenerating]);
 
   useEffect(() => () => {
     voiceEnabledRef.current = false;
+    liveAttemptRef.current += 1;
+    liveConnectingRef.current = false;
+    liveSessionRef.current?.stop();
+    liveSessionRef.current = null;
     stopVoiceRecognition();
+    stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   }, []);
 
@@ -516,20 +681,18 @@ export const ChatCentral: React.FC<
     messageId: string,
     text: string
   ) => {
-    if (speakingMsgId === messageId) {
+    if (speakingMsgIdRef.current === messageId) {
       speechSessionRef.current += 1;
       stopNeuralAudio();
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
-      if (voiceEnabledRef.current) {
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 250);
-      }
+      resumeVoiceListening(250);
       return;
     }
 
     stopVoiceRecognition();
+    liveSessionRef.current?.pause();
     const speechSession = ++speechSessionRef.current;
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -537,6 +700,7 @@ export const ChatCentral: React.FC<
     const chunks = splitTextForProgressiveSpeech(text);
     if (chunks.length === 0) {
       setAttachmentError('Esta resposta não possui texto disponível para leitura.');
+      resumeVoiceListening();
       return;
     }
 
@@ -554,17 +718,7 @@ export const ChatCentral: React.FC<
         );
         return;
       }
-      if (voiceEnabledRef.current) {
-        if (mobileVoiceModeRef.current) {
-          voiceEnabledRef.current = false;
-          voiceArmedRef.current = false;
-          setVoiceEnabled(false);
-          setVoicePhase('idle');
-        } else {
-          setVoicePhase('listening');
-          window.setTimeout(startVoiceRecognition, 300);
-        }
-      }
+      resumeVoiceListening();
     };
 
     const failSpeaking = () => {
@@ -574,45 +728,7 @@ export const ChatCentral: React.FC<
       speakingMsgIdRef.current = null;
       setSpeakingMsgId(null);
       setAttachmentError('Não foi possível reproduzir a voz. Verifique se o áudio da aba está liberado.');
-      if (voiceEnabledRef.current) {
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 300);
-      }
-    };
-
-    const speakBrowserChunk = (index: number) => {
-      if (speechSession !== speechSessionRef.current) return;
-      if (index >= chunks.length) {
-        finishSpeaking();
-        return;
-      }
-      if (!('speechSynthesis' in window)) {
-        failSpeaking();
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(chunks[index]);
-      utterance.lang = 'pt-BR';
-      const preferredVoice = selectPreferredMalePortugueseVoice(
-        window.speechSynthesis.getVoices()
-      );
-      if (preferredVoice) utterance.voice = preferredVoice;
-      utterance.rate = 0.96;
-      utterance.pitch = 0.88;
-      utterance.onend = () => speakBrowserChunk(index + 1);
-      utterance.onerror = failSpeaking;
-      window.speechSynthesis.speak(utterance);
-    };
-
-    const speakWithBrowserFallback = () => {
-      if (speechSession !== speechSessionRef.current) return;
-      if (!('speechSynthesis' in window)) {
-        failSpeaking();
-        return;
-      }
-      window.speechSynthesis.resume();
-      window.setTimeout(() => {
-        if (speechSession === speechSessionRef.current) speakBrowserChunk(0);
-      }, 60);
+      resumeVoiceListening();
     };
 
     const pendingAudio = new Map<
@@ -655,7 +771,7 @@ export const ChatCentral: React.FC<
         };
         audio.onerror = () => {
           stopNeuralAudio();
-          speakBrowserChunk(index);
+          failSpeaking();
         };
         await audio.play();
         setAttachmentError(null);
@@ -664,12 +780,12 @@ export const ChatCentral: React.FC<
       } catch {
         if (speechSession === speechSessionRef.current) {
           stopNeuralAudio();
-          speakBrowserChunk(index);
+          failSpeaking();
         }
       }
     };
 
-      const startLegacyNeuralSpeech = () => {
+    const startLegacyNeuralSpeech = () => {
       if (speechSession !== speechSessionRef.current) return;
 
       prepareChunk(0);
@@ -709,7 +825,7 @@ export const ChatCentral: React.FC<
       }
     };
 
-     speakingMsgIdRef.current = messageId;
+    speakingMsgIdRef.current = messageId;
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
 
@@ -722,6 +838,8 @@ export const ChatCentral: React.FC<
       .reverse()
       .find((message) => message.sender === 'ai');
     if (!latestAiMessage || !latestAiMessage.text.trim()) return;
+    // Não leia a resposta antiga enquanto uma nova pergunta está sendo processada.
+    if (latestAiMessage.id === responsePreviousAiIdRef.current) return;
 
     if (isGenerating) {
       if (progressiveSpeechRef.current) return;
@@ -742,11 +860,12 @@ export const ChatCentral: React.FC<
     voiceAwaitingResponseRef.current = false;
     lastSpokenMessageRef.current = latestAiMessage.id;
     const progressive = progressiveSpeechRef.current;
+    const completedSpeechText = normalizeTextForSpeech(latestAiMessage.text);
     const remainingText =
       progressive?.messageId === latestAiMessage.id &&
-      latestAiMessage.text.startsWith(progressive.spokenText)
-        ? latestAiMessage.text.slice(progressive.spokenText.length).trim()
-        : latestAiMessage.text;
+      completedSpeechText.startsWith(progressive.spokenText)
+        ? completedSpeechText.slice(progressive.spokenText.length).trim()
+        : completedSpeechText;
     progressiveSpeechRef.current = null;
     if (remainingText && speakingMsgIdRef.current) {
       queuedSpeechRef.current = {
@@ -754,7 +873,7 @@ export const ChatCentral: React.FC<
         text: remainingText,
       };
     } else if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
-    else if (voiceEnabledRef.current) startVoiceRecognition();
+    else resumeVoiceListening();
   }, [messages, isGenerating, voiceEnabled]);
 
   const appendAttachment = (file: UploadedFile) => {
@@ -988,6 +1107,17 @@ export const ChatCentral: React.FC<
       'Analise os arquivos que foram anexados.';
 
     try {
+      if (voiceEnabledRef.current) {
+        // Ignore uma mensagem antiga enquanto aguardamos a nova resposta.
+        responsePreviousAiIdRef.current = [...messages]
+          .reverse()
+          .find((message) => message.sender === 'ai')?.id ?? null;
+        voiceAwaitingResponseRef.current = true;
+        stopVoiceRecognition();
+        liveSessionRef.current?.pause();
+        setVoicePhase('thinking');
+      }
+
       await onSendMessage(
         textToSend,
         modeOverride ?? selectedMode,
@@ -998,10 +1128,9 @@ export const ChatCentral: React.FC<
       setAttachedFiles([]);
       setIsAttachmentMenuOpen(false);
     } catch {
-      if (voiceText && voiceEnabledRef.current) {
+      if (voiceEnabledRef.current) {
         voiceAwaitingResponseRef.current = false;
-        setVoicePhase('listening');
-        window.setTimeout(startVoiceRecognition, 300);
+        resumeVoiceListening();
       }
       return;
     }
