@@ -34,6 +34,36 @@ export interface FrocLiveSession {
   stop: () => void;
 }
 
+interface LiveServerMessage {
+  setupComplete?: Record<string, never>;
+  error?: { code?: number; status?: string; message?: string };
+  serverContent?: {
+    interimInputTranscription?: { text?: string };
+    inputTranscription?: { text?: string };
+  };
+}
+
+/** O Gemini Live pode entregar JSON em quadros de texto ou binários. */
+async function parseLiveServerMessage(data: unknown): Promise<LiveServerMessage> {
+  let json: string;
+
+  if (typeof data === 'string') {
+    json = data;
+  } else if (data instanceof ArrayBuffer) {
+    json = new TextDecoder().decode(data);
+  } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    json = await data.text();
+  } else {
+    throw new Error('Tipo de mensagem Live não suportado.');
+  }
+
+  const message: unknown = JSON.parse(json);
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    throw new Error('A resposta Live não contém um objeto JSON.');
+  }
+  return message as LiveServerMessage;
+}
+
 /** Linear resampling, sufficient for speech capture at browser sample rates. */
 function pcm16Base64(samples: Float32Array, inputSampleRate: number): string {
   if (!Number.isFinite(inputSampleRate) || inputSampleRate <= 0 || !samples.length) {
@@ -156,6 +186,7 @@ export async function startFrocLiveTranscription(
     const connection = new WebSocket(
       `${WS_ENDPOINT}?access_token=${encodeURIComponent(credentials.token)}`
     );
+    connection.binaryType = 'arraybuffer';
     socket = connection;
 
     await new Promise<void>((resolve, reject) => {
@@ -190,18 +221,29 @@ export async function startFrocLiveTranscription(
         }
       };
       const onHandshake = (event: MessageEvent) => {
-        try {
-          const message = JSON.parse(String(event.data));
-          if (message.setupComplete) complete();
-        } catch {
-          complete(new Error('Resposta inicial inválida do Gemini Live.'));
-        }
+        void parseLiveServerMessage(event.data).then((message) => {
+          if (finished) return;
+
+          if ('setupComplete' in message) {
+            complete();
+            return;
+          }
+
+          if (message.error) {
+            const status = message.error.status || 'erro de configuração';
+            complete(new Error(`Gemini Live recusou a sessão: ${status}.`));
+          }
+        }).catch(() => {
+          complete(new Error('A primeira mensagem Gemini Live não é JSON válido.'));
+        });
       };
       const onHandshakeError = () => {
         complete(new Error('Falha de rede ao abrir o Gemini Live.'));
       };
-      const onHandshakeClose = () => {
-        complete(new Error('Gemini Live encerrou a conexão durante a abertura.'));
+      const onHandshakeClose = (event: CloseEvent) => {
+        complete(new Error(
+          `Gemini Live encerrou a abertura da sessão (código ${event.code}).`
+        ));
       };
 
       connection.addEventListener('open', onOpen);
@@ -222,20 +264,23 @@ export async function startFrocLiveTranscription(
     liveReady = true;
     connection.addEventListener('message', (event: MessageEvent) => {
       if (stopped || paused || socket !== connection) return;
-      try {
-        const response = JSON.parse(String(event.data));
-        const content = response?.serverContent;
+
+      void parseLiveServerMessage(event.data).then((response) => {
+        if (stopped || paused || socket !== connection) return;
+
+        const content = response.serverContent;
         const interim = content?.interimInputTranscription?.text;
         const final = content?.inputTranscription?.text;
+
         if (typeof interim === 'string' && interim.trim()) {
           callbacks.onPartial(interim.trim());
         }
         if (typeof final === 'string' && final.trim()) {
           callbacks.onFinal(final.trim());
         }
-      } catch {
-        // Ignore mensagens de controle desconhecidas; mantenha a sessão ativa.
-      }
+      }).catch(() => {
+        // Ignora quadros de controle não reconhecidos, sem desligar o microfone.
+      });
     });
 
     connection.addEventListener('close', () => {

@@ -311,9 +311,9 @@ export async function streamNeuralSpeechAudio(
       AudioBufferSourceNode
     >();
 
-  let nextStartTime =
-    audioContext.currentTime +
-    0.04;
+   const INITIAL_AUDIO_BUFFER_SECONDS = 0.18;
+
+  let nextStartTime: number | null = null;
 
   let remainder =
     new Uint8Array(0);
@@ -472,9 +472,11 @@ export async function streamNeuralSpeechAudio(
         audioContext.destination
       );
 
-      const scheduledAt =
+          const scheduledAt =
         Math.max(
-          nextStartTime,
+          nextStartTime ??
+            audioContext.currentTime +
+              INITIAL_AUDIO_BUFFER_SECONDS,
           audioContext.currentTime +
             0.01
         );

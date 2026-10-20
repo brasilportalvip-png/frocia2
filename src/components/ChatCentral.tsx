@@ -253,6 +253,17 @@ export const ChatCentral: React.FC<
     messageId: string;
     text: string;
   } | null>(null);
+  // Prepara o próximo trecho neural enquanto a abertura ainda está tocando.
+  // O modelo e a voz continuam sendo os configurados no servidor.
+  const prefetchedSpeechRef = useRef<{
+    messageId: string;
+    text: string;
+    chunks: string[];
+    pending: Map<number, {
+      promise: ReturnType<typeof createNeuralSpeechAudio>;
+      controller: AbortController;
+    }>;
+  } | null>(null);
   const restartVoiceTimerRef = useRef<number | null>(null);
   const speechSessionRef = useRef(0);
   const mobileVoiceModeRef = useRef(false);
@@ -298,7 +309,41 @@ export const ChatCentral: React.FC<
     }
   };
 
+  const disposePrefetchedSpeech = () => {
+    const prepared = prefetchedSpeechRef.current;
+    prefetchedSpeechRef.current = null;
+    if (!prepared) return;
+    for (const { promise, controller } of prepared.pending.values()) {
+      controller.abort();
+      // Uma resposta já pronta possui um object URL que precisa ser liberado.
+      void promise.then(({ audio, objectUrl }) => {
+        audio.pause();
+        URL.revokeObjectURL(objectUrl);
+      }).catch(() => undefined);
+    }
+  };
+
+  const prefetchQueuedSpeech = (messageId: string, text: string) => {
+    disposePrefetchedSpeech();
+    // Primeiro segmento relativamente curto para reduzir tempo de síntese.
+    // Os demais são maiores e serão preparados durante a reprodução.
+    const chunks = splitTextForProgressiveSpeech(text, 220, 420);
+    const pending = new Map<number, {
+      promise: ReturnType<typeof createNeuralSpeechAudio>;
+      controller: AbortController;
+    }>();
+    for (let index = 0; index < Math.min(2, chunks.length); index += 1) {
+      const controller = new AbortController();
+      const promise = createNeuralSpeechAudio(chunks[index], controller.signal);
+      // A primeira chamada pode falhar antes de ser consumida: evite unhandled rejection.
+      void promise.catch(() => undefined);
+      pending.set(index, { promise, controller });
+    }
+    prefetchedSpeechRef.current = { messageId, text, chunks, pending };
+  };
+
   const disableVoiceConversation = () => {
+    disposePrefetchedSpeech();
     liveAttemptRef.current += 1;
     liveConnectingRef.current = false;
     liveSessionRef.current?.stop();
@@ -602,6 +647,7 @@ export const ChatCentral: React.FC<
     liveConnectingRef.current = false;
     liveSessionRef.current?.stop();
     liveSessionRef.current = null;
+    disposePrefetchedSpeech();
     stopVoiceRecognition();
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -703,7 +749,17 @@ export const ChatCentral: React.FC<
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 
-    const chunks = splitTextForProgressiveSpeech(text);
+    const prepared = prefetchedSpeechRef.current;
+    const usePrepared = prepared?.messageId === messageId && prepared.text === text;
+    // Transfere as requisições antecipadas sem abortá-las.
+    if (usePrepared) {
+      prefetchedSpeechRef.current = null;
+    } else {
+      disposePrefetchedSpeech();
+    }
+    const chunks = usePrepared
+      ? prepared!.chunks
+      : splitTextForProgressiveSpeech(text);
     if (chunks.length === 0) {
       setAttachmentError('Esta resposta não possui texto disponível para leitura.');
       resumeVoiceListening();
@@ -742,6 +798,16 @@ export const ChatCentral: React.FC<
       ReturnType<typeof createNeuralSpeechAudio>
     >();
 
+    if (usePrepared) {
+      for (const [index, { promise, controller }] of prepared!.pending) {
+        pendingAudio.set(index, promise);
+        neuralSpeechControllersRef.current.add(controller);
+        void promise.finally(() => {
+          neuralSpeechControllersRef.current.delete(controller);
+        }).catch(() => undefined);
+      }
+    }
+
     const prepareChunk = (index: number) => {
       if (index >= chunks.length || pendingAudio.has(index)) return;
       const controller = new AbortController();
@@ -777,7 +843,11 @@ export const ChatCentral: React.FC<
         };
         audio.onerror = () => {
           stopNeuralAudio();
-          failSpeaking();
+          if (usePrepared && index === 0) {
+            void startStreamingSpeech();
+          } else {
+            failSpeaking();
+          }
         };
         await audio.play();
         setAttachmentError(null);
@@ -786,7 +856,11 @@ export const ChatCentral: React.FC<
       } catch {
         if (speechSession === speechSessionRef.current) {
           stopNeuralAudio();
-          failSpeaking();
+          if (usePrepared && index === 0) {
+            void startStreamingSpeech();
+          } else {
+            failSpeaking();
+          }
         }
       }
     };
@@ -835,7 +909,13 @@ export const ChatCentral: React.FC<
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
 
-    void startStreamingSpeech();
+    // Se o áudio foi sintetizado durante a abertura, reproduza-o de imediato.
+    // Evita aguardar uma segunda chamada apenas depois do fim da primeira fala.
+    if (usePrepared) {
+      void playNeuralChunk(0);
+    } else {
+      void startStreamingSpeech();
+    }
   };
 
   useEffect(() => {
@@ -878,6 +958,9 @@ export const ChatCentral: React.FC<
         messageId: latestAiMessage.id,
         text: remainingText,
       };
+      // A resposta já está pronta; sintetize a continuação em paralelo
+      // com a fala de abertura, nunca depois que ela acabar.
+      prefetchQueuedSpeech(latestAiMessage.id, remainingText);
     } else if (remainingText) handleSpeak(latestAiMessage.id, remainingText);
     else resumeVoiceListening();
   }, [messages, isGenerating, voiceEnabled]);
