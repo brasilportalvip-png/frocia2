@@ -709,11 +709,11 @@ export const ChatCentral: React.FC<
       }
     };
 
-       speakingMsgIdRef.current = messageId;
+     speakingMsgIdRef.current = messageId;
     setSpeakingMsgId(messageId);
     setVoicePhase('speaking');
 
-    startLegacyNeuralSpeech();
+    void startStreamingSpeech();
   };
 
   useEffect(() => {

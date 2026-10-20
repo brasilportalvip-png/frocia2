@@ -248,11 +248,21 @@ export async function streamNeuralSpeechAudio(
     );
   }
 
-  const response =
-    await openSpeechStream(
-      text,
-      signal
-    );
+   const audioContext = new AudioContextConstructor({
+    sampleRate: DEFAULT_STREAM_SAMPLE_RATE,
+  });
+
+  if (audioContext.state === 'suspended') {
+    void audioContext.resume().catch(() => undefined);
+  }
+
+  let response: Response;
+  try {
+    response = await openSpeechStream(text, signal);
+  } catch (error) {
+    await audioContext.close().catch(() => undefined);
+    throw error;
+  }
 
   const sampleRateValue =
     Number(
@@ -292,12 +302,7 @@ export async function streamNeuralSpeechAudio(
     );
   }
 
-  const audioContext =
-    new AudioContextConstructor({
-      sampleRate,
-    });
-
-  const reader =
+    const reader =
     response.body!
       .getReader();
 
@@ -511,6 +516,10 @@ export async function streamNeuralSpeechAudio(
         'Operação cancelada.',
         'AbortError'
       );
+    }
+
+        if (!lastSource) {
+      throw new Error('neural_speech_stream_empty_audio');
     }
 
     /*
