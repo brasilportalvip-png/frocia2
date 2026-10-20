@@ -71,7 +71,21 @@ export function trustedOrigins(req: AuthenticatedRequest): Set<string> {
     if (currentOrigin) result.add(currentOrigin);
   }
 
-  const configured = [process.env.APP_URL, ...(process.env.TRUSTED_ORIGINS || '').split(',')];
+    const configured = [process.env.APP_URL, ...(process.env.TRUSTED_ORIGINS || '').split(',')];
+
+  // Autoriza apenas os domínios oficiais desta implantação Preview.
+  // A lista de produção permanece protegida.
+  if (process.env.VERCEL_ENV === 'preview') {
+    for (const hostname of [
+      process.env.VERCEL_URL,
+      process.env.VERCEL_BRANCH_URL
+    ]) {
+      if (hostname?.trim()) {
+        configured.push(`https://${hostname.trim()}`);
+      }
+    }
+  }
+
   for (const value of configured) {
     if (!value?.trim()) continue;
     const origin = normalizedOrigin(value.trim());
