@@ -272,6 +272,7 @@ export const ChatCentral: React.FC<
   };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
 
   const stopVoiceRecognition = () => {
@@ -502,7 +503,7 @@ export const ChatCentral: React.FC<
         }
       },
 
-      onError: () => {
+      onError: (message) => {
         if (
           attempt !== liveAttemptRef.current ||
           !voiceEnabledRef.current
@@ -513,11 +514,10 @@ export const ChatCentral: React.FC<
         liveSessionRef.current = null;
         liveConnectingRef.current = false;
 
-        setAttachmentError(
-          'Gemini Live indisponível. Usando reconhecimento de voz do navegador.'
-        );
-
         startVoiceRecognition();
+        setAttachmentError(
+          `${message} Usando reconhecimento do navegador.`
+        );
       },
     }).then((session) => {
       if (
@@ -540,7 +540,7 @@ export const ChatCentral: React.FC<
       }
 
       setAttachmentError(null);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (
         attempt !== liveAttemptRef.current ||
         !voiceEnabledRef.current
@@ -548,11 +548,11 @@ export const ChatCentral: React.FC<
 
       liveConnectingRef.current = false;
 
-      setAttachmentError(
-        'Não foi possível conectar ao Gemini Live. O reconhecimento anterior continua disponível.'
-      );
-
       startVoiceRecognition();
+      const message = error instanceof Error
+        ? error.message
+        : 'Não foi possível conectar ao Gemini Live.';
+      setAttachmentError(`${message} Usando reconhecimento do navegador.`);
     });
   };
 
@@ -613,9 +613,13 @@ export const ChatCentral: React.FC<
   const CurrentModeIcon = currentMode.icon;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: 'smooth'
-    });
+    const scroll = chatScrollRef.current;
+    if (scroll) {
+      scroll.scrollTo({
+        top: scroll.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
   }, [messages, isGenerating]);
 
   useEffect(() => {
@@ -1158,7 +1162,7 @@ export const ChatCentral: React.FC<
   };
 
   return (
-    <section className="froc-app-background relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#050505] text-white">
+    <section className="froc-app-background relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#050505] text-white">
       <div
         aria-hidden="true"
         className="froc-ambient-light -right-32 top-10"
@@ -1270,7 +1274,7 @@ export const ChatCentral: React.FC<
         </div>
       </header>
 
-      <div className="custom-scrollbar relative z-10 flex-1 overflow-y-auto">
+      <div ref={chatScrollRef} className="custom-scrollbar relative z-10 min-h-0 flex-1 overflow-y-scroll overscroll-contain">
         {messages.length === 0 ? (
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col items-center justify-center px-4 py-10 text-center md:px-8">
             <MascotWidget
@@ -1325,7 +1329,7 @@ export const ChatCentral: React.FC<
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-3xl px-4 pb-36 pt-7 md:px-6">
+          <div className="mx-auto w-full max-w-3xl px-4 pb-8 pt-7 md:px-6">
             <div className="space-y-8">
               {messages.map((message) => {
                 const isAi = message.sender === 'ai';
@@ -1620,8 +1624,8 @@ export const ChatCentral: React.FC<
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-[#050505] via-[#050505]/96 to-transparent px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-16 md:px-6">
-        <div className="pointer-events-auto mx-auto max-w-3xl">
+      <div className="relative z-20 shrink-0 border-t border-white/10 bg-[#050505] px-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3 md:px-6">
+        <div className="mx-auto max-w-3xl">
           {attachmentError && (
             <div className="mb-2 flex items-start justify-between gap-3 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-2 text-[10px] text-red-200">
               <span>{attachmentError}</span>

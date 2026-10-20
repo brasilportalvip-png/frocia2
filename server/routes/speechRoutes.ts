@@ -88,9 +88,29 @@ speechRouter.post(
         }
       );
 
-      if (!response.ok) {
+         if (!response.ok) {
+        const providerBody = await response.json().catch(() => null) as {
+          error?: {
+            code?: number;
+            status?: string;
+            message?: string;
+          };
+        } | null;
+
+        const providerError = providerBody?.error;
+
+        const safeMessage =
+          typeof providerError?.message === 'string'
+            ? providerError.message
+                .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]')
+                .slice(0, 500)
+            : 'O Google não forneceu detalhes do erro.';
+
         console.error('live_voice_token_provider_error', {
           status: response.status,
+          providerCode: providerError?.code,
+          providerStatus: providerError?.status,
+          providerMessage: safeMessage,
           correlationId: req.correlationId,
         });
 
