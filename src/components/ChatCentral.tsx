@@ -88,7 +88,7 @@ type VoicePhase = 'idle' | 'listening' | 'awake' | 'thinking' | 'speaking' | 'er
 
 const VOICE_PHASE_LABELS: Record<VoicePhase, string> = {
   idle: 'Voz desativada',
-  listening: 'Aguardando “Ok, Froc”',
+  listening: 'Ouvindo sua próxima pergunta',
   awake: 'Estou ouvindo seu pedido',
   thinking: 'Pensando na resposta',
   speaking: 'Conversando com você',
@@ -362,7 +362,7 @@ export const ChatCentral: React.FC<
         setInputText('');
       }
       if (intent.type === 'command') {
-        voiceArmedRef.current = false;
+        // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
         voiceAwaitingResponseRef.current = true;
         setVoicePhase('thinking');
         setInputText(intent.command);
@@ -429,9 +429,11 @@ export const ChatCentral: React.FC<
     mobileVoiceModeRef.current =
       isAndroidChromeVoiceClient(navigator.userAgent) ||
       window.matchMedia?.('(pointer: coarse)').matches === true;
-    voiceArmedRef.current = false;
+    // O clique de ativação autoriza a primeira pergunta direta sem exigir "Ok, Froc".
+    // A escuta continua armada após as respostas enquanto o usuário mantiver o microfone ligado.
+    voiceArmedRef.current = true;
     setVoiceEnabled(true);
-    setVoicePhase('listening');
+    setVoicePhase('awake');
 
     if ('speechSynthesis' in window) {
       const unlockUtterance = new SpeechSynthesisUtterance(' ');
@@ -493,7 +495,7 @@ export const ChatCentral: React.FC<
         }
 
         if (intent.type === 'command') {
-          voiceArmedRef.current = false;
+          // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
           voiceAwaitingResponseRef.current = true;
           liveSessionRef.current?.pause();
 
@@ -1693,8 +1695,8 @@ export const ChatCentral: React.FC<
                   <span className="block truncate text-[9px] text-white/40">
                     {voicePhase === 'listening'
                       ? mobileVoiceModeRef.current
-                        ? 'Diga em uma frase: “Ok Froc” e o seu pedido'
-                        : 'Diga “Ok, Froc” e depois faça seu pedido'
+                        ? 'Pode falar normalmente ou começar com “Ok Froc”'
+                        : 'Pode falar normalmente ou começar com “Ok, Froc”'
                       : voicePhase === 'awake'
                         ? 'Pode falar naturalmente'
                         : voicePhase === 'speaking'
