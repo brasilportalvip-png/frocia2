@@ -75,15 +75,6 @@ speechRouter.post(
             uses: 1,
             expireTime: expiresAt,
             newSessionExpireTime: newSessionExpiresAt,
-            liveConnectConstraints: {
-              model: `models/${model}`,
-              config: {
-                responseModalities: ['TEXT'],
-                inputAudioTranscription: {
-                  languageCodes: ['pt-BR'],
-                },
-              },
-            },
           }),
         }
       );
