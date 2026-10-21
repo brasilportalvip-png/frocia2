@@ -145,7 +145,25 @@ export class MediaGenerationService {
       );
     }
 
-    return result.media;
+        return result.media;
+  }
+
+  static async getStoredImageUrl(
+    imageId: string
+  ): Promise<string> {
+    if (!/^img_\d+_[a-z0-9]+$/.test(imageId)) {
+      throw new Error(
+        'Identificador de imagem inválido.'
+      );
+    }
+
+    const imageBlob = await apiClientBlob(
+      `/api/ai/media/image/${encodeURIComponent(imageId)}/content`,
+      {},
+      'image'
+    );
+
+    return URL.createObjectURL(imageBlob);
   }
 
   static async startVideo(

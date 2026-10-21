@@ -29,6 +29,14 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   isHtmlUpdate?: boolean;
+  media?: {
+    type: 'image' | 'video';
+    url?: string;
+    prompt: string;
+    status: 'processing' | 'completed' | 'failed';
+    progress?: number;
+    creditsSpent?: number;
+  };
   citations?: Array<{
     index?: number;
     title: string;

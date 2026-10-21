@@ -291,12 +291,38 @@ mediaRouter.post(
           .toString(36)
           .substring(2, 9)}`;
 
-      const createdAt = new Date().toISOString();
+        const createdAt = new Date().toISOString();
 
-      /*
-       * O Base64 não é gravado no Firestore porque documentos possuem
-       * limite de tamanho. A imagem é devolvida diretamente ao navegador.
-       */
+      let storagePath: string | null = null;
+
+      if (process.env.FIREBASE_STORAGE_BUCKET?.trim()) {
+        try {
+          const { getMediaStorageBucket } =
+            await import('../lib/firebaseAdmin.js');
+
+          const bucket = await getMediaStorageBucket();
+          const objectPath = `media/${uid}/images/${docId}.jpg`;
+
+          await bucket.file(objectPath).save(
+            Buffer.from(imageBytes, 'base64'),
+            {
+              resumable: false,
+              contentType: mimeType,
+              metadata: {
+                cacheControl: 'private, no-store',
+              },
+            }
+          );
+
+          storagePath = objectPath;
+        } catch (storageError) {
+          console.error(
+            'Falha ao salvar imagem no Storage:',
+            storageError
+          );
+        }
+      }
+
       const mediaRecord = {
         id: docId,
         userId: uid,
@@ -307,7 +333,10 @@ mediaRouter.post(
         mimeType,
         model: IMAGE_MODEL,
         status: 'completed',
-        storageStatus: 'temporary_browser_delivery',
+        storageStatus: storagePath
+          ? 'private_bucket'
+          : 'temporary_browser_delivery',
+        ...(storagePath ? { storagePath } : {}),
         creditsSpent: IMAGE_COST,
         createdAt,
         updatedAt: createdAt,
@@ -1143,6 +1172,70 @@ mediaRouter.get(
       return res.status(500).json({
         error:
           'Não foi possível carregar o histórico de mídia.',
+      });
+    }
+  }
+);
+/**
+ * GET /api/ai/media/image/:id/content
+ * Recupera imagem privada do próprio usuário.
+ */
+mediaRouter.get(
+  '/image/:id/content',
+  requireAuth,
+  async (req: AuthenticatedRequest, res) => {
+    const uid = req.user!.uid;
+    const { id } = req.params;
+
+    if (!/^img_\d+_[a-z0-9]+$/.test(id)) {
+      return res.status(404).json({
+        error: 'Imagem não encontrada.',
+      });
+    }
+
+    try {
+      const snapshot = await adminDb
+        .collection('media_generations')
+        .doc(id)
+        .get();
+
+      const media = snapshot.data();
+      const expectedPath = `media/${uid}/images/${id}.jpg`;
+
+      if (
+        media?.userId !== uid ||
+        media?.type !== 'image' ||
+        media?.storageStatus !== 'private_bucket' ||
+        media?.storagePath !== expectedPath
+      ) {
+        return res.status(404).json({
+          error: 'Imagem não encontrada ou indisponível.',
+        });
+      }
+
+      const { getMediaStorageBucket } =
+        await import('../lib/firebaseAdmin.js');
+
+      const bucket = await getMediaStorageBucket();
+      const [imageBytes] = await bucket
+        .file(expectedPath)
+        .download();
+
+      res.setHeader(
+        'Content-Type',
+        media.mimeType === 'image/png'
+          ? 'image/png'
+          : 'image/jpeg'
+      );
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+
+      return res.send(imageBytes);
+    } catch (error) {
+      console.error('Falha ao recuperar imagem:', error);
+
+      return res.status(503).json({
+        error: 'Não foi possível recuperar a imagem.',
       });
     }
   }
