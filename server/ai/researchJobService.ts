@@ -297,10 +297,7 @@ export function attachCitationMarkers(
       ...citation,
       startIndex: span.start,
       endIndex: span.end,
-      supportedText: text
-        .slice(span.start, span.end)
-        .replace(/\[S\d+\]/g, '')
-        .trim(),
+       supportedText: undefined,
     };
   });
 }

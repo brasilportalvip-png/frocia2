@@ -1219,11 +1219,14 @@ const creationIntent =
 
 const requestedMode: ChatMode =
   modeOverride ??
-  (creationIntent && /\b(videos?|animacao)\b/.test(normalizedRequest)
+  (creationIntent &&
+  /\b(video|videos|vidio|vidios|animacao|animacoes|filme|filmes|clipe|clipes|reel|reels|short|shorts)\b/.test(normalizedRequest)
     ? 'Vídeo'
-    : creationIntent && /\b(imagem|imagens|foto|fotos|ilustracao|arte)\b/.test(normalizedRequest)
+    : creationIntent &&
+        /\b(imagem|imagens|imagen|imagenes|image|images|foto|fotos|fotografia|ilustracao|arte|desenho|desenhos|figura|figuras)\b/.test(normalizedRequest)
       ? 'Imagem'
-      : creationIntent && /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
+      : creationIntent &&
+          /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
         ? 'Criador de projetos'
         : /^(?:froc[\s,.:]*)?(?:pesquise|investigue|faca uma pesquisa)\b/.test(normalizedRequest)
           ? 'Pesquisa'
@@ -1507,6 +1510,56 @@ await onSendMessage(
                           </div>
                         )}
                       </div>
+                      {isAi && message.media && (
+                        <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                          {message.media.status === 'processing' ? (
+                            <p className="text-sm text-amber-200">
+                              Gerando {message.media.type === 'image' ? 'imagem' : 'vídeo'}...
+                              {message.media.progress !== undefined
+                                ? ` ${message.media.progress}%`
+                                : ''}
+                            </p>
+                          ) : message.media.status === 'failed' ? (
+                            <p className="text-sm text-red-300">
+                              Não foi possível concluir a geração.
+                            </p>
+                          ) : message.media.url ? (
+                            message.media.type === 'image' ? (
+                              <img
+                                src={message.media.url}
+                                alt={message.media.prompt}
+                                className="max-h-[600px] w-full rounded-xl object-contain"
+                              />
+                            ) : (
+                              <video
+                                src={message.media.url}
+                                controls
+                                playsInline
+                                className="w-full rounded-xl"
+                              />
+                            )
+                                                    ) : (
+                            <p className="text-sm text-white/60">
+                              Arquivo de mídia indisponível.
+                            </p>
+                          )}
+
+                          {message.media.status === 'completed' &&
+                            message.media.url && (
+                              <a
+                                href={message.media.url}
+                                download={
+                                  message.media.type === 'image'
+                                    ? `frocia-imagem-${message.id}.jpg`
+                                    : `frocia-video-${message.id}.mp4`
+                                }
+                                className="mt-3 inline-flex rounded-xl bg-amber-400 px-4 py-2 text-sm font-bold text-black hover:bg-amber-300"
+                              >
+                                Baixar {message.media.type === 'image' ? 'imagem' : 'vídeo'}
+                              </a>
+                            )}
+                        </div>
+                      )}
 
                       {isAi &&
                         message.citations &&

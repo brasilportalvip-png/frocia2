@@ -1491,20 +1491,241 @@ const handleGeneralChat = async (
   }
 
   if (mode === 'Imagem') {
-    setMediaModal({
+    const prompt = text.trim();
+    if (!prompt) return;
+
+    if (!isAuthenticated || !authUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    let started = false;
+
+    setCostModal({
       isOpen: true,
-      mode: 'image',
-      initialPrompt: text,
+      opType: 'Geração de imagem',
+      credits: 18,
+      desc: 'Criar imagem diretamente na conversa da Froc.IA.',
+      onConfirm: () => {
+        if (started) return;
+        started = true;
+
+        const requestId =
+          `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assistantId = `ai-${requestId}`;
+
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: `user-${requestId}`,
+            sender: 'user',
+            text: prompt,
+            timestamp: Date.now(),
+          },
+          {
+            id: assistantId,
+            sender: 'ai',
+            text: 'Gerando sua imagem...',
+            timestamp: Date.now(),
+            media: {
+              type: 'image',
+              prompt,
+              status: 'processing',
+            },
+          },
+        ]);
+
+        setIsGenerating(true);
+
+        void (async () => {
+          try {
+            const { MediaGenerationService } =
+              await import('./services/mediaGenerationService');
+
+            const image = await MediaGenerationService.generateImage({
+              prompt,
+              aspectRatio: '1:1',
+            });
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: 'Imagem criada com sucesso.',
+                      media: {
+                        type: 'image',
+                        prompt,
+                        status: 'completed',
+                        url: image.url,
+                        creditsSpent: image.creditsSpent,
+                      },
+                    }
+                  : message
+              )
+            );
+          } catch (error) {
+            const detail =
+              error instanceof Error
+                ? error.message
+                : 'Erro desconhecido.';
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: `Não foi possível gerar a imagem: ${detail}`,
+                      media: {
+                        type: 'image',
+                        prompt,
+                        status: 'failed',
+                      },
+                    }
+                  : message
+              )
+            );
+          } finally {
+            setIsGenerating(false);
+            void refreshProfile();
+          }
+        })();
+      },
     });
+
     return;
   }
 
   if (mode === 'Vídeo') {
-    setMediaModal({
+    const prompt = text.trim();
+    if (!prompt) return;
+
+    if (!isAuthenticated || !authUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    let started = false;
+
+    setCostModal({
       isOpen: true,
-      mode: 'video',
-      initialPrompt: text,
+      opType: 'Geração de vídeo',
+      credits: 30,
+      desc: 'Criar vídeo de 4 segundos na qualidade Lite.',
+      onConfirm: () => {
+        if (started) return;
+        started = true;
+
+        const requestId =
+          `video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assistantId = `ai-${requestId}`;
+
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: `user-${requestId}`,
+            sender: 'user',
+            text: prompt,
+            timestamp: Date.now(),
+          },
+          {
+            id: assistantId,
+            sender: 'ai',
+            text: 'Gerando seu vídeo...',
+            timestamp: Date.now(),
+            media: {
+              type: 'video',
+              prompt,
+              status: 'processing',
+              progress: 0,
+            },
+          },
+        ]);
+
+        setIsGenerating(true);
+
+        void (async () => {
+          try {
+            const { MediaGenerationService } =
+              await import('./services/mediaGenerationService');
+
+            const job = await MediaGenerationService.startVideo({
+              prompt,
+              aspectRatio: '16:9',
+              durationSeconds: 4,
+              quality: 'lite',
+            });
+
+            const completed = await MediaGenerationService.waitForVideo(
+              job.jobId,
+              {
+                onProgress: (updated) => {
+                  setChatMessages((current) =>
+                    current.map((message) =>
+                      message.id === assistantId
+                        ? {
+                            ...message,
+                            media: {
+                              type: 'video',
+                              prompt,
+                              status: 'processing',
+                              progress: updated.progress,
+                            },
+                          }
+                        : message
+                    )
+                  );
+                },
+              }
+            );
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: 'Vídeo criado com sucesso.',
+                      media: {
+                        type: 'video',
+                        prompt,
+                        status: 'completed',
+                        progress: 100,
+                        url: completed.videoUrl ?? undefined,
+                        creditsSpent: completed.creditsReserved,
+                      },
+                    }
+                  : message
+              )
+            );
+          } catch (error) {
+            const detail =
+              error instanceof Error
+                ? error.message
+                : 'Erro desconhecido.';
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: `Não foi possível concluir o vídeo: ${detail}`,
+                      media: {
+                        type: 'video',
+                        prompt,
+                        status: 'failed',
+                      },
+                    }
+                  : message
+              )
+            );
+          } finally {
+            setIsGenerating(false);
+            void refreshProfile();
+          }
+        })();
+      },
     });
+
     return;
   }
 

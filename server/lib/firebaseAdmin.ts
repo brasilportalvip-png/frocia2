@@ -84,4 +84,18 @@ export const adminDb: Firestore = getFirestore(app);
 
 export const adminApp: App = app;
 
+export async function getMediaStorageBucket() {
+  const bucketName = process.env.FIREBASE_STORAGE_BUCKET?.trim();
+
+  if (!bucketName) {
+    throw new Error(
+      'Armazenamento de mídia indisponível: FIREBASE_STORAGE_BUCKET não configurado.'
+    );
+  }
+
+  const { getStorage } = await import('firebase-admin/storage');
+
+  return getStorage(app).bucket(bucketName);
+}
+
 export default app;

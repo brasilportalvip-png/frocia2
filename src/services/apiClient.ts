@@ -241,7 +241,8 @@ export async function apiClient<T = any>(
 
 export async function apiClientBlob(
   endpoint: string,
-  options: ApiClientOptions = {}
+  options: ApiClientOptions = {},
+  expectedType: 'video' | 'image' = 'video'
 ): Promise<Blob> {
   const headers = new Headers(options.headers);
 
@@ -336,14 +337,16 @@ export async function apiClientBlob(
 
   const blob = await response.blob();
 
-  if (
+    if (
     blob.size === 0 ||
-    !blob.type.toLowerCase().startsWith('video/')
+    !blob.type.toLowerCase().startsWith(`${expectedType}/`)
   ) {
     throw new ApiClientError(
-      'O servidor não retornou um arquivo de vídeo válido.',
+      `O servidor não retornou um arquivo de ${
+        expectedType === 'image' ? 'imagem' : 'vídeo'
+      } válido.`,
       502,
-      'invalid_video_blob'
+      'invalid_media_blob'
     );
   }
 
