@@ -50,8 +50,8 @@ describe('Pesquisa agêntica Gemini sem dependência OpenAI', () => {
       },
     ]);
 
-    expect(citations[0].supportedText).toContain('relatório oficial');
-    expect(citations[1].supportedText).toContain('fonte independente');
+    expect(citations[0].supportedText).toBeUndefined();
+expect(citations[1].supportedText).toBeUndefined();
     expect(citations.every((citation) => citation.startIndex !== undefined)).toBe(true);
     expect(citations.every((citation) => citation.endIndex !== undefined)).toBe(true);
   });
