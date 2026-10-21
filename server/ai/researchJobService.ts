@@ -324,6 +324,7 @@ function planningInstructions(): string {
     'Crie um plano de pesquisa verificável para a pergunta recebida.',
     `Retorne somente JSON no formato {"queries":["...","..."]}, com 3 a ${MAX_RESEARCH_QUERIES} consultas independentes.`,
     'Cubra fonte oficial, informação recente e contraponto independente.',
+'Em perguntas de continuação, identifique a cidade ou o assunto mais recente no histórico da conversa e inclua esse contexto nas consultas de pesquisa. Não invente localizações.',
     'Não responda à pergunta e não use Markdown.',
   ].join('\n');
 }
@@ -758,9 +759,12 @@ export class ResearchJobService {
       model: job.model,
       systemInstruction: findingInstructions(),
       userMessage: [
-        `Pergunta principal: ${payload.prompt}`,
-        `Subconsulta atual: ${query}`,
-        payload.externalContext
+  `Pergunta principal: ${payload.prompt}`,
+  `Subconsulta atual: ${query}`,
+  payload.conversationContext
+    ? `Histórico para interpretar a pergunta atual, sem tratar respostas antigas como fatos verificados:\n${payload.conversationContext.slice(-6000)}`
+    : '',
+  payload.externalContext
           ? `Evidência adicional de APIs oficiais e auditoria já coletada:\n${payload.externalContext}`
           : '',
       ]

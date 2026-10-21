@@ -1207,11 +1207,33 @@ export const ChatCentral: React.FC<
         setVoicePhase('thinking');
       }
 
-      await onSendMessage(
-        textToSend,
-        modeOverride ?? selectedMode,
-        attachedFiles
-      );
+      const normalizedRequest = textToSend
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toLowerCase();
+
+const creationIntent =
+  /^(?:(?:froc|por favor|pode|voce pode|quero que voce|preciso que voce)[\s,.:]+){0,3}(?:crie|cria|gere|gera|faca|desenhe|produza|construa|desenvolva|monte)\b/.test(normalizedRequest) ||
+  /^(?:eu\s+)?(?:quero|preciso)\s+(?:que voce\s+)?(?:crie|criar|gere|gerar|faca|fazer|produza|produzir)\b/.test(normalizedRequest);
+
+const requestedMode: ChatMode =
+  modeOverride ??
+  (creationIntent && /\b(videos?|animacao)\b/.test(normalizedRequest)
+    ? 'Vídeo'
+    : creationIntent && /\b(imagem|imagens|foto|fotos|ilustracao|arte)\b/.test(normalizedRequest)
+      ? 'Imagem'
+      : creationIntent && /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
+        ? 'Criador de projetos'
+        : /^(?:froc[\s,.:]*)?(?:pesquise|investigue|faca uma pesquisa)\b/.test(normalizedRequest)
+          ? 'Pesquisa'
+          : 'Inteligente');
+
+await onSendMessage(
+  textToSend,
+  requestedMode,
+  attachedFiles
+);
 
       setInputText('');
       setAttachedFiles([]);
@@ -1261,8 +1283,8 @@ export const ChatCentral: React.FC<
           <button
             type="button"
             onClick={() => {
-              setIsModeMenuOpen((current) => !current);
-            }}
+  setIsModeMenuOpen(false);
+}}
             disabled={isGenerating}
             className="glass-button flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-xs"
             aria-expanded={isModeMenuOpen}
@@ -1270,8 +1292,8 @@ export const ChatCentral: React.FC<
             <CurrentModeIcon className="h-4 w-4 shrink-0 text-amber-300" />
 
             <span className="truncate font-bold">
-              {currentMode.name}
-            </span>
+  Froc.IA — Automática
+</span>
 
             {currentMode.laboratory && (
               <span className="hidden rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[8px] uppercase tracking-wider text-amber-200/80 sm:inline">
@@ -1843,7 +1865,7 @@ export const ChatCentral: React.FC<
                 disabled={
                   isGenerating || isPreparingAttachment
                 }
-                placeholder={`Mensagem para Froc.IA — ${selectedMode}`}
+                placeholder="Mensagem para Froc.IA — Inteligência Automática"
                 className="max-h-36 min-h-10 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm leading-relaxed text-white placeholder:text-white/28 focus:outline-none disabled:opacity-60"
               />
 

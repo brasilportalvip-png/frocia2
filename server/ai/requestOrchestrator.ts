@@ -103,15 +103,20 @@ export class AIRequestOrchestrator {
           input.contextSizeEstimate,
       });
 
-    const effectiveMode: AIMode =
-      input.mode === 'smart'
-        ? classification.requiresCode
-          ? 'code'
-          : classification.requiresSearch
-            ? 'research'
-            : 'smart'
-        : input.mode;
+    const needsDeepReasoning =
+  classification.complexity === 'complex' ||
+  classification.sensitivity === 'high-stakes';
 
+const effectiveMode: AIMode =
+  input.mode === 'smart'
+    ? classification.requiresCode
+      ? 'code'
+      : needsDeepReasoning
+        ? 'deep'
+        : classification.requiresSearch
+          ? 'research'
+          : 'smart'
+    : input.mode;
     const automaticTools: string[] = [];
 
     if (classification.requiresSearch) {
