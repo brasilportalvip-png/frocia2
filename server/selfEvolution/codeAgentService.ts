@@ -15,9 +15,24 @@ const MIN_WORKER_TIMEOUT_MS = 60_000;
 const MAX_WORKER_TIMEOUT_MS = 30 * 60_000;
 
 function workerTimeoutMs(): number {
+  const runningInGithubActions =
+    process.env.GITHUB_ACTIONS === 'true' &&
+    process.env.CI === 'true';
+
+  if (runningInGithubActions) {
+    return 50 * 60_000;
+  }
+
   const configured = Number(process.env.SELF_EVOLUTION_WORKER_TIMEOUT_MS);
-  if (!Number.isFinite(configured)) return DEFAULT_WORKER_TIMEOUT_MS;
-  return Math.max(MIN_WORKER_TIMEOUT_MS, Math.min(MAX_WORKER_TIMEOUT_MS, Math.trunc(configured)));
+
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_WORKER_TIMEOUT_MS;
+  }
+
+  return Math.max(
+    MIN_WORKER_TIMEOUT_MS,
+    Math.min(MAX_WORKER_TIMEOUT_MS, Math.trunc(configured))
+  );
 }
 
 function isProtectedGeneratedPath(value: string): boolean {
@@ -167,11 +182,22 @@ implements ICodeAgentAdapter {
     } catch {
       return createFailureResult('SELF_EVOLUTION_WORKER_URL é inválida.');
     }
-    const localDevelopmentWorker =
+       const localDevelopmentWorker =
       process.env.NODE_ENV !== 'production' &&
       ['localhost', '127.0.0.1', '::1'].includes(parsedWorkerUrl.hostname);
+
+    const localGithubActionsWorker =
+      process.env.GITHUB_ACTIONS === 'true' &&
+      process.env.CI === 'true' &&
+      parsedWorkerUrl.protocol === 'http:' &&
+      parsedWorkerUrl.hostname === '127.0.0.1' &&
+      parsedWorkerUrl.port === '8080' &&
+      parsedWorkerUrl.pathname === '/';
+
     if (
-      (parsedWorkerUrl.protocol !== 'https:' && !localDevelopmentWorker) ||
+      (parsedWorkerUrl.protocol !== 'https:' &&
+        !localDevelopmentWorker &&
+        !localGithubActionsWorker) ||
       parsedWorkerUrl.username || parsedWorkerUrl.password ||
       parsedWorkerUrl.search || parsedWorkerUrl.hash
     ) {

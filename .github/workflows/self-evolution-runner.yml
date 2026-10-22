@@ -34,6 +34,48 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
+      - name: Construir worker da Froc.IA
+        run: docker build -t frocia-worker ./worker
+
+      - name: Iniciar worker local
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+        run: |
+          docker run -d \
+            --name frocia-worker \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=2g \
+            --cap-drop ALL \
+            --cap-add CHOWN \
+            --cap-add SETUID \
+            --cap-add SETGID \
+            --security-opt no-new-privileges \
+            --pids-limit 256 \
+            --memory 4g \
+            --cpus 2 \
+            -p 127.0.0.1:8080:8080 \
+            -e GEMINI_API_KEY \
+            -e SELF_EVOLUTION_WORKER_TOKEN \
+            -e SELF_EVOLUTION_WORKER_SIGNING_SECRET \
+            -e SANDBOX_REPOSITORY_URL=https://github.com/brasilportalvip-png/frocia2.git \
+            -e GITHUB_BASE_BRANCH=main \
+            -e SANDBOX_NETWORK_POLICY=restricted \
+            frocia-worker
+
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health > /dev/null; then
+              echo "Worker iniciado com sucesso"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Worker nao respondeu"
+          docker logs frocia-worker
+          exit 1
+
       - name: Executar ciclo de autoevolucao
         env:
           NODE_ENV: production
@@ -43,7 +85,7 @@ jobs:
 
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
 
-          SELF_EVOLUTION_WORKER_URL: ${{ secrets.SELF_EVOLUTION_WORKER_URL }}
+          SELF_EVOLUTION_WORKER_URL: http://127.0.0.1:8080
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
 

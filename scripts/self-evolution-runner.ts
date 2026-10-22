@@ -62,19 +62,27 @@ async function main(): Promise<void> {
       String(a.createdAt).localeCompare(String(b.createdAt))
     )[0];
 
-  if (!candidate) {
+   let candidateId = candidate?.id;
+
+  if (!candidateId) {
     const discovery = await OperationalAutoDiscoveryService.discoverOne();
+
     console.log('[self-evolution-runner] Descoberta:', discovery.status);
-    return;
+
+    if (discovery.status !== 'created' || !discovery.candidateId) {
+      return;
+    }
+
+    candidateId = discovery.candidateId;
   }
 
   const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
-    candidate.id,
+    candidateId,
     `external-runner-${randomUUID()}`
   );
 
-  console.log('[self-evolution-runner] Resultado:', {
-    candidateId: candidate.id,
+   console.log('[self-evolution-runner] Resultado:', {
+    candidateId,
     state: result.state,
     message: result.message,
   });

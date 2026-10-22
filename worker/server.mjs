@@ -49,9 +49,16 @@ function safeRepoPath(value) {
 async function run(command, args, cwd, timeoutMs, extraEnv = {}, isolated = false) {
   const started = Date.now();
   const startedAt = new Date(started).toISOString();
-  const minimalEnv = {
-    PATH: process.env.PATH, HOME: cwd, CI: 'true', NODE_ENV: 'test',
-    npm_config_audit: 'false', npm_config_fund: 'false', npm_config_registry: 'https://registry.npmjs.org', ...extraEnv,
+   const minimalEnv = {
+    PATH: process.env.PATH,
+    HOME: cwd,
+    CI: 'true',
+    NODE_ENV: 'test',
+    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/ms-playwright',
+    npm_config_audit: 'false',
+    npm_config_fund: 'false',
+    npm_config_registry: 'https://registry.npmjs.org',
+    ...extraEnv,
   };
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {

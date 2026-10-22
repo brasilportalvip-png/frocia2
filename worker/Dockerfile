@@ -7,8 +7,15 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /worker
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npx playwright install --with-deps chromium
+
+RUN npm ci --omit=dev \
+    && npx playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
+
 COPY *.mjs ./
 
 ENV NODE_ENV=production PORT=8080
