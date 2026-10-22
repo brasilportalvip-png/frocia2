@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   execute:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.SELF_EVOLUTION_RUNNER_ENABLED == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SELF_EVOLUTION_RUNNER_ENABLED != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -116,7 +116,7 @@ jobs:
 
       - name: Executar ciclo de autoevolucao
         env:
-          NODE_ENV: production
+          NODE_ENV: test
           SELF_EVOLUTION_RUNNER_ENABLED: 'true'
           SELF_EVOLUTION_ENABLED: 'true'
           AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED }}
