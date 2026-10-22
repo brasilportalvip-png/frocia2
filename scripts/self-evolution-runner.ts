@@ -37,6 +37,8 @@ async function main(): Promise<void> {
     await import('../server/selfEvolution/selfEvolutionPolicyEngine.js');
   const { OperationalAutoDiscoveryService } =
     await import('../server/selfEvolution/operationalAutoDiscoveryService.js');
+  const { InnovationDiscoveryService } =
+    await import('../server/selfEvolution/innovationDiscoveryService.js');
   const { SelfEvolutionOrchestrator } =
     await import('../server/selfEvolution/selfEvolutionOrchestrator.js');
 
@@ -69,11 +71,14 @@ async function main(): Promise<void> {
 
     console.log('[self-evolution-runner] Descoberta:', discovery.status);
 
-    if (discovery.status !== 'created' || !discovery.candidateId) {
-      return;
+    if (discovery.status === 'created' && discovery.candidateId) {
+      candidateId = discovery.candidateId;
+    } else {
+      const innovation = await InnovationDiscoveryService.discoverOne();
+      console.log('[self-evolution-runner] Inovacao:', innovation.agentId, innovation.status);
+      if (innovation.status !== 'created' || !innovation.candidateId) return;
+      candidateId = innovation.candidateId;
     }
-
-    candidateId = discovery.candidateId;
   }
 
   const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
