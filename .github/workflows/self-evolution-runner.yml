@@ -16,10 +16,19 @@ concurrency:
 jobs:
   execute:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.SELF_EVOLUTION_RUNNER_ENABLED != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
 
     steps:
+      - name: Conferir acesso seguro ao GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verificando GitHub na rede protegida..."
+          getent ahostsv4 github.com | head -n 5 || true
+          curl --ipv4 --fail --silent --show-error --head --connect-timeout 10 --max-time 25 https://github.com/ > /dev/null
+          echo "GitHub acessivel."
+
       - name: Baixar codigo
         uses: actions/checkout@v4
         with:
