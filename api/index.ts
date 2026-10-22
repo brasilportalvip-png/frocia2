@@ -42,6 +42,20 @@ function validCronAuthorization(header: string | undefined): boolean {
 async function runScheduledSelfEvolution(req: Request, res: Response) {
   res.setHeader('Cache-Control', 'no-store');
 
+  const startedAt = Date.now();
+
+  console.info('[self-evolution-cron] INICIO', {
+    data: new Date().toISOString(),
+    metodo: req.method,
+  });
+
+  res.once('finish', () => {
+    console.info('[self-evolution-cron] FIM', {
+      status: res.statusCode,
+      duracaoMs: Date.now() - startedAt,
+    });
+  });
+
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Metodo nao permitido.' });
   }
