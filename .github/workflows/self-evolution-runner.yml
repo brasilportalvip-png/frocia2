@@ -20,6 +20,11 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Restringir conexoes externas
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
@@ -44,11 +49,6 @@ jobs:
             oauth2.googleapis.com:443
             api.vercel.com:443
             *.vercel.app:443
-
-      - name: Baixar codigo
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Preparar Node.js
         uses: actions/setup-node@v4
