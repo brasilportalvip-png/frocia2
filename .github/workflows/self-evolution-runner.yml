@@ -55,12 +55,26 @@ jobs:
             deb.debian.org:80
             security.debian.org:80
             cdn.playwright.dev:443
+            playwright.download.prss.microsoft.com:443
+            storage.googleapis.com:443
             playwright.azureedge.net:443
             generativelanguage.googleapis.com:443
             firestore.googleapis.com:443
             oauth2.googleapis.com:443
             api.vercel.com:443
             *.vercel.app:443
+
+      - name: Validar destinos do build e navegador
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in github.com nodejs.org release-assets.githubusercontent.com registry.npmjs.org auth.docker.io registry-1.docker.io production.cloudfront.docker.com cdn.playwright.dev playwright.download.prss.microsoft.com storage.googleapis.com generativelanguage.googleapis.com firestore.googleapis.com; do
+            echo "Verificando TLS para ${host}:443"
+            if ! curl --ipv4 --head --silent --show-error --connect-timeout 6 --max-time 15 "https://${host}/" --output /dev/null; then
+              echo "::error::Destino necessario bloqueado ou inacessivel: ${host}:443"
+              exit 1
+            fi
+          done
 
       - name: Preparar Node.js
         uses: actions/setup-node@v4
