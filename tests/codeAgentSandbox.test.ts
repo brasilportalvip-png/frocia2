@@ -71,10 +71,36 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
     });
   });
 
-  it('fica indisponível sem segredo independente de assinatura', async () => {
+   it('fica indisponível sem segredo independente de assinatura', async () => {
     process.env.SELF_EVOLUTION_WORKER_URL = 'https://worker.example.com';
     process.env.SELF_EVOLUTION_WORKER_TOKEN = 'bearer-token';
     const result = await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
     expect(result.status).toBe('not_configured');
+  });
+
+  it('permite worker HTTP local no GitHub Actions', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('GITHUB_ACTIONS', 'true');
+    vi.stubEnv('CI', 'true');
+
+    process.env.SELF_EVOLUTION_WORKER_URL = 'http://127.0.0.1:8080';
+    process.env.SELF_EVOLUTION_WORKER_TOKEN = 'bearer-token';
+    process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET = 'z'.repeat(32);
+
+    const workerFetch = vi.fn(async (_url: string) =>
+      new Response(null, { status: 503 })
+    );
+    vi.stubGlobal('fetch', workerFetch);
+
+    try {
+      await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
+
+      expect(workerFetch).toHaveBeenCalledOnce();
+      expect(workerFetch.mock.calls[0][0]).toBe(
+        'http://127.0.0.1:8080/api/worker/patch'
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
