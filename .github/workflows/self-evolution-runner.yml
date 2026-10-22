@@ -20,6 +20,31 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      - name: Restringir conexoes externas
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: |
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            registry.npmjs.org:443
+            auth.docker.io:443
+            registry-1.docker.io:443
+            production.cloudflare.docker.com:443
+            *.docker.io:443
+            deb.debian.org:80
+            security.debian.org:80
+            cdn.playwright.dev:443
+            playwright.azureedge.net:443
+            generativelanguage.googleapis.com:443
+            firestore.googleapis.com:443
+            oauth2.googleapis.com:443
+            api.vercel.com:443
+            *.vercel.app:443
+
       - name: Baixar codigo
         uses: actions/checkout@v4
         with:
@@ -75,6 +100,19 @@ jobs:
           echo "Worker nao respondeu"
           docker logs frocia-worker
           exit 1
+
+      - name: Verificar isolamento de rede do worker
+        run: |
+          echo "Testando conexao permitida com Google..."
+          docker exec --user 10001:10001 frocia-worker node -e "fetch('https://generativelanguage.googleapis.com', {signal: AbortSignal.timeout(10000)}).then(() => process.exit(0)).catch(() => process.exit(1))"
+
+          echo "Testando bloqueio de conexao nao autorizada..."
+          if docker exec --user 10001:10001 frocia-worker node -e "fetch('https://example.com', {signal: AbortSignal.timeout(8000)}).then(() => process.exit(0)).catch(() => process.exit(1))"; then
+            echo "FALHA: worker conseguiu acessar destino nao autorizado."
+            exit 1
+          fi
+
+          echo "Teste de bloqueio concluido."
 
       - name: Executar ciclo de autoevolucao
         env:
