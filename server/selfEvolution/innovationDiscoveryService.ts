@@ -126,9 +126,9 @@ export class InnovationDiscoveryService {
     }
 
     let parsed: unknown;
-    try { parsed = JSON.parse(response.text); }
+       try { parsed = JSON.parse(response.text.replace(/^```json\s*|\s*```$/g, '').trim()); }
     catch {
-      await cycleRef.update({ status: 'no_proposal' });
+      await cycleRef.update({ status: 'no_proposal', reason: 'invalid_json' });
       return result('no_proposal');
     }
     const proposal = validateInnovationProposal(parsed, agent, evidence);
