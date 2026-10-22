@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Shield, AlertTriangle, Zap, CheckCircle, RefreshCw, GitPullRequest, ExternalLink, OctagonAlert, Play, RotateCcw } from 'lucide-react';
 import { auth } from '../../lib/firebase';
+import { INNOVATION_AGENTS } from '../../../server/selfEvolution/innovationAgentCatalog.js';
 
 interface Budget {
   dailyCreditLimit: number;
@@ -293,6 +294,32 @@ export const SelfEvolutionDashboard: React.FC = () => {
           <p className="text-[10px] text-white/40">Classificados por Risco (R1, R2, R3)</p>
         </div>
       </div>
+
+      {/* Catalogo real de agentes; nao declara execucao sem evidencia. */}
+      <section className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <h3 className="text-lg font-bold">Equipe Froc.IA: 20 agentes especializados</h3>
+          <span className="text-xs text-white/50">10 revisores + 10 agentes de inovacao</span>
+        </div>
+        <p className="text-xs text-white/55">
+          Catalogo configurado no codigo. O trabalho dos agentes depende das execucoes reais do GitHub Actions;
+          os dez agentes de inovacao se revezam em ciclos diarios, sem prometer conclusoes antecipadas.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-xl bg-black/15 border border-white/10 p-4 space-y-2">
+            <h4 className="text-sm font-bold text-cyan-300">10 revisores de engenharia</h4>
+            <ul className="space-y-1 text-xs text-white/65">
+              {Object.entries(ROLE_LABELS).map(([key, name]) => <li key={key}>{name}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-xl bg-black/15 border border-white/10 p-4 space-y-2">
+            <h4 className="text-sm font-bold text-amber-300">10 agentes de evolucao tecnologica</h4>
+            <ul className="space-y-1 text-xs text-white/65">
+              {INNOVATION_AGENTS.map((agent) => <li key={agent.id} title={agent.mission}>{agent.name}</li>)}
+            </ul>
+          </div>
+        </div>
+      </section>
 
       {/* Candidate List Section */}
       <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
