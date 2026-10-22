@@ -1,0 +1,58 @@
+name: Froc.IA - Autoevolucao Externa
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 12 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: frocia-self-evolution-external
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    if: ${{ vars.SELF_EVOLUTION_RUNNER_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Executar ciclo de autoevolucao
+        env:
+          NODE_ENV: production
+          SELF_EVOLUTION_RUNNER_ENABLED: 'true'
+          SELF_EVOLUTION_ENABLED: 'true'
+          AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED }}
+
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+
+          SELF_EVOLUTION_WORKER_URL: ${{ secrets.SELF_EVOLUTION_WORKER_URL }}
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: brasilportalvip-png
+          GITHUB_REPO: frocia2
+          GITHUB_BASE_BRANCH: main
+
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+        run: node --import tsx scripts/self-evolution-runner.ts --run
