@@ -36,7 +36,9 @@ function workerTimeoutMs(): number {
 }
 
 function isProtectedGeneratedPath(value: string): boolean {
-  return /(?:^|\/)(?:\.git|\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(value);
+  if (/(?:^|\/)(?:\.git|\.env(?:\.[^/]*)?|id_rsa|id_ed25519)(?:\/|$)|(?:credentials|service[-_]?account)|\.(?:pem|key|p12|keystore)$/i.test(value)) return true;
+  return process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS !== 'true' &&
+    /(?:^|\/)(?:\.github|worker)(?:\/|$)|(?:^|\/)package-lock\.json$/.test(value);
 }
 
 export interface GeneratedFileChange {
@@ -236,6 +238,7 @@ implements ICodeAgentAdapter {
             requestNonce,
             executionPolicy: {
               schemaVersion: 'engineering-sandbox-v1',
+              allowRepositoryMaintenance: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true',
               networkPolicy: 'restricted',
               allowedPaths: candidate.probableFiles
                 .map(normalizeRepositoryPath)

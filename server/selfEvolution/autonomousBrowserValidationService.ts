@@ -33,6 +33,7 @@ export interface AutonomousBrowserReport {
     details: string;
     traceSha256: string;
   }>;
+  navigationCatalog?: string[];
   consoleErrors: string[];
   failedRequests: string[];
   passed: boolean;
@@ -47,6 +48,8 @@ export class AutonomousBrowserValidationService {
     previewUrl: string;
     commitSha: string;
     candidateId: string;
+    navigationViews?: string[];
+    expectedNavigationViews?: string[];
   }): Promise<AutonomousBrowserReport> {
     const workerUrl = process.env.SELF_EVOLUTION_WORKER_URL?.trim().replace(/\/+$/, '');
     const token = process.env.SELF_EVOLUTION_WORKER_TOKEN?.trim();
@@ -66,6 +69,7 @@ export class AutonomousBrowserValidationService {
         schemaVersion: 'browser-validation-v1', requestNonce: nonce,
         previewUrl: preview.toString(), commitSha: input.commitSha,
         candidateId: input.candidateId, requiredScenarios: REQUIRED_BROWSER_SCENARIOS,
+        navigationViews: input.navigationViews, expectedNavigationViews: input.expectedNavigationViews,
       }),
       signal: AbortSignal.timeout(5 * 60_000),
     });
@@ -97,6 +101,8 @@ export class AutonomousBrowserValidationService {
       typeof view.view !== 'string' || !['passed', 'failed', 'external_blocker'].includes(view.status) ||
       typeof view.details !== 'string' || !sha(view.traceSha256)
     ))) throw new Error('browser_navigation_evidence_invalid');
+    if (report.navigationCatalog && (!Array.isArray(report.navigationCatalog) ||
+      report.navigationCatalog.some(view => typeof view !== 'string' || view.length > 160))) throw new Error('browser_navigation_catalog_invalid');
     const computedPassed = report.scenarios.every((scenario) => scenario.status === 'passed') &&
       report.consoleErrors.length === 0 && report.failedRequests.length === 0 &&
       (!report.navigation || report.navigation.every(view => view.status === 'passed'));

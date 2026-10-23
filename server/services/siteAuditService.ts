@@ -75,6 +75,17 @@ export interface SiteAuditReport {
   failures: SiteAuditFailure[];
   siteWideIssues: SiteAuditIssue[];
   limitations: string[];
+  checkpoint?: SiteAuditCheckpoint;
+}
+
+/** Cada chamada e um lote; a fronteira restante nunca e tratada como site concluido. */
+export interface SiteAuditCheckpoint {
+  origin: string;
+  pendingUrls: string[];
+  visitedUrls: string[];
+  pendingSitemaps: string[];
+  processedSitemaps: string[];
+  loadedSitemaps: string[];
 }
 
 interface SiteAuditRuntime {
@@ -156,7 +167,7 @@ function cleanImportedContent(imported: ExternalImportResult): string {
   return imported.content.replace(/^Fonte:.*\nTítulo:.*\n\n/, '').trim();
 }
 
-function parseRobots(content: string, origin: string): RobotsPolicy {
+function parseRobots(content: string, origin: string, fullCoverage = false): RobotsPolicy {
   const groups: Array<{
     agents: string[];
     rules: Array<{ type: 'allow' | 'disallow'; path: string }>;
@@ -216,7 +227,7 @@ function parseRobots(content: string, origin: string): RobotsPolicy {
 
   return {
     status: 'loaded',
-    sitemaps: sitemaps.slice(0, MAX_SITEMAPS),
+    sitemaps: fullCoverage ? sitemaps : sitemaps.slice(0, MAX_SITEMAPS),
     crawlDelaySeconds,
     allows: (url: URL) => {
       const candidate = `${url.pathname}${url.search}`;
@@ -238,14 +249,14 @@ function missingRobots(status: RobotsPolicy['status'] = 'missing'): RobotsPolicy
   return { status, sitemaps: [], crawlDelaySeconds: 0, allows: () => true };
 }
 
-function extractSitemapLocations(content: string, origin: string): string[] {
+function extractSitemapLocations(content: string, origin: string, fullCoverage = false): string[] {
   const locations = new Set<string>();
   for (const match of content.matchAll(/<loc\b[^>]*>([\s\S]*?)<\/loc>/gi)) {
     const decoded = (match[1] || '')
       .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').trim();
     const normalized = normalizedInternalUrl(decoded, origin, { allowXml: true });
     if (normalized) locations.add(normalized);
-    if (locations.size >= MAX_DISCOVERED_URLS) break;
+    if (!fullCoverage && locations.size >= MAX_DISCOVERED_URLS) break;
   }
   return [...locations];
 }
@@ -343,11 +354,16 @@ export class SiteAuditService {
   }
 
   static async audit(
-    input: { url: string; maxPages?: number },
+    input: { url: string; maxPages?: number; fullCoverage?: boolean; checkpoint?: SiteAuditCheckpoint; respectRobots?: boolean },
     runtime: SiteAuditRuntime = {}
   ): Promise<SiteAuditReport> {
     const startUrl = normalizeStartUrl(input.url);
     const origin = startUrl.origin;
+    const fullCoverage = input.fullCoverage === true;
+    const checkpoint = input.checkpoint;
+    if (checkpoint && checkpoint.origin !== origin) throw new ExternalImportError('invalid_url', 'Checkpoint pertence a outro site.');
+    const normalizeUrls = (urls: string[], allowXml = false) => [...new Set(urls.map(value =>
+      normalizedInternalUrl(value, origin, { allowXml })).filter((value): value is string => Boolean(value)))];
     const maxPages = Math.max(1, Math.min(HARD_MAX_PAGES, Math.floor(input.maxPages || DEFAULT_MAX_PAGES)));
     const maxDurationMs = Math.max(10_000, Math.min(50_000, runtime.maxDurationMs || DEFAULT_MAX_DURATION_MS));
     const now = runtime.now || (() => new Date());
@@ -362,7 +378,7 @@ export class SiteAuditService {
     let robots = missingRobots();
 
     try {
-      robots = parseRobots(cleanImportedContent(await importer(robotsUrl)), origin);
+      robots = parseRobots(cleanImportedContent(await importer(robotsUrl)), origin, fullCoverage);
     } catch (error) {
       if (error instanceof ExternalImportError && error.status === 404) robots = missingRobots('missing');
       else if (error instanceof ExternalImportError && error.code === 'private_destination') robots = missingRobots('blocked');
@@ -370,22 +386,27 @@ export class SiteAuditService {
     }
 
     const defaultSitemap = new URL('/sitemap.xml', origin).toString();
-    const sitemapQueue = [...new Set([...robots.sitemaps, defaultSitemap])].slice(0, MAX_SITEMAPS);
-    const sitemapUrls: string[] = [];
+    const processedSitemaps = new Set(normalizeUrls(checkpoint?.processedSitemaps || [], true));
+    const allSitemaps = normalizeUrls([...(checkpoint?.pendingSitemaps || []), ...robots.sitemaps, defaultSitemap], true)
+      .filter(url => !processedSitemaps.has(url));
+    const sitemapQueue = fullCoverage ? allSitemaps : allSitemaps.slice(0, MAX_SITEMAPS);
+    const sitemapUrls = normalizeUrls(checkpoint?.loadedSitemaps || [], true);
     const discovered = new Set<string>();
-    const processedSitemaps = new Set<string>();
-    while (sitemapQueue.length > 0 && processedSitemaps.size < MAX_SITEMAPS && Date.now() < deadline - 3_000) {
+    let sitemapsThisBatch = 0;
+    while (sitemapQueue.length > 0 && sitemapsThisBatch < MAX_SITEMAPS && Date.now() < deadline - 3_000) {
       const sitemapUrl = sitemapQueue.shift()!;
       if (processedSitemaps.has(sitemapUrl)) continue;
       processedSitemaps.add(sitemapUrl);
+      sitemapsThisBatch += 1;
       try {
         const imported = await importer(sitemapUrl);
         sitemapUrls.push(imported.finalUrl);
         const sitemapContent = cleanImportedContent(imported);
         const isSitemapIndex = /<sitemapindex\b/i.test(sitemapContent);
-        for (const location of extractSitemapLocations(sitemapContent, origin)) {
-          if ((isSitemapIndex || /sitemap[^/]*\.xml(?:$|\?)/i.test(location)) && sitemapQueue.length < MAX_SITEMAPS) sitemapQueue.push(location);
-          else if (discovered.size < MAX_DISCOVERED_URLS) {
+        for (const location of extractSitemapLocations(sitemapContent, origin, fullCoverage)) {
+          if (isSitemapIndex || /sitemap[^/]*\.xml(?:$|\?)/i.test(location)) {
+            if (!processedSitemaps.has(location) && !sitemapQueue.includes(location) && (fullCoverage || sitemapQueue.length < MAX_SITEMAPS)) sitemapQueue.push(location);
+          } else if (fullCoverage || discovered.size < MAX_DISCOVERED_URLS) {
             const pageUrl = normalizedInternalUrl(location, origin);
             if (pageUrl) discovered.add(pageUrl);
           }
@@ -397,9 +418,10 @@ export class SiteAuditService {
 
     const normalizedRoot = normalizedInternalUrl(startUrl.toString(), origin);
     if (!normalizedRoot) throw new ExternalImportError('unsupported_site_url', 'Informe a página inicial HTML do site, não um arquivo ou mídia isolada.', 415);
-    const queue = [normalizedRoot, ...discovered];
-    const queued = new Set(queue);
-    const visited = new Set<string>();
+    const visited = new Set(normalizeUrls(checkpoint?.visitedUrls || []));
+    const queue = normalizeUrls([...(checkpoint?.pendingUrls || []), normalizedRoot, ...discovered])
+      .filter(url => !visited.has(url));
+    const queued = new Set([...visited, ...queue]);
     const pages: SiteAuditPage[] = [];
     const failures: SiteAuditFailure[] = [];
     let robotsBlockedUrls = 0;
@@ -413,16 +435,16 @@ export class SiteAuditService {
         const current = queue.shift();
         if (!current) return;
         if (visited.has(current)) continue;
-        visited.add(current);
-        if (!robots.allows(new URL(current))) { robotsBlockedUrls += 1; continue; }
+        if (input.respectRobots !== false && !robots.allows(new URL(current))) { visited.add(current); robotsBlockedUrls += 1; continue; }
         if (attempts >= maxPages) return;
         attempts += 1;
         if (robots.crawlDelaySeconds > 0) {
           const pendingWait = Math.max(0, robots.crawlDelaySeconds * 1_000 - (Date.now() - lastRequestAt));
-          if (Date.now() + pendingWait >= deadline - 1_500) { reachedTimeLimit = true; return; }
+          if (Date.now() + pendingWait >= deadline - 1_500) { queue.unshift(current); reachedTimeLimit = true; return; }
           if (pendingWait > 0) await wait(pendingWait);
         }
         lastRequestAt = Date.now();
+        visited.add(current);
         try {
           const imported = await importer(current);
           if (!imported.pageSignals?.isHtml) {
@@ -433,7 +455,7 @@ export class SiteAuditService {
           pages.push(page);
           for (const link of page.signals.links) {
             const normalized = normalizedInternalUrl(link, origin);
-            if (!normalized || queued.has(normalized) || queued.size >= MAX_DISCOVERED_URLS) continue;
+            if (!normalized || queued.has(normalized) || (!fullCoverage && queued.size >= MAX_DISCOVERED_URLS)) continue;
             queued.add(normalized);
             queue.push(normalized);
           }
@@ -461,6 +483,7 @@ export class SiteAuditService {
     for (const failure of failures) if (failure.status && failure.status >= 400) siteWideIssues.push(issue('INTERNAL_PAGE_UNAVAILABLE', failure.status >= 500 ? 'high' : 'medium', 'access', failure.url, 'Uma página interna não pôde ser carregada.', `${failure.status} ${failure.code}`));
 
     const reachedPageLimit = attempts >= maxPages && queue.length > 0;
+    if (fullCoverage && sitemapQueue.length > 0) reachedTimeLimit = true;
     const allIssues = [...pages.flatMap((page) => page.issues), ...siteWideIssues];
     const bySeverity = emptySeverityCount();
     const byCategory = emptyCategoryCount();
@@ -495,7 +518,9 @@ export class SiteAuditService {
       pages,
       failures,
       siteWideIssues,
-      limitations
+      limitations,
+      ...(fullCoverage ? { checkpoint: { origin, pendingUrls: queue, visitedUrls: [...visited],
+        pendingSitemaps: sitemapQueue, processedSitemaps: [...processedSitemaps], loadedSitemaps: sitemapUrls } } : {})
     };
   }
 }

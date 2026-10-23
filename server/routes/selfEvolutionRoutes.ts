@@ -8,6 +8,8 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { requireAdmin } from '../middlewares/requireAdmin.js';
 import { AuthenticatedRequest } from '../types.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
+import { SelfSiteKnowledgeService } from '../selfEvolution/selfSiteKnowledgeService.js';
+import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
 import { ImprovementPlannerService } from '../selfEvolution/improvementPlannerService.js';
 import { SelfEvolutionOrchestrator } from '../selfEvolution/selfEvolutionOrchestrator.js';
 import { EvaluationEngine } from '../selfEvolution/evaluationEngine.js';
@@ -28,6 +30,41 @@ import {
 } from '../ai/continuousCapabilityEvaluationService.js';
 
 export const selfEvolutionRouter = Router();
+
+selfEvolutionRouter.get('/site-map', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const knowledge = await SelfSiteKnowledgeService.latest();
+    const operations = await SelfSiteOwnerService.operationalSnapshot();
+    return res.status(knowledge ? 200 : 503).json({ status: knowledge ? 'indexed' : 'not_indexed', knowledge, operations });
+  } catch { return res.status(503).json({ error: 'Nao foi possivel consultar o mapa do proprio projeto.' }); }
+});
+
+selfEvolutionRouter.get('/repository/source', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const knowledge = await SelfSiteKnowledgeService.latest();
+    if (!knowledge) return res.status(503).json({ error: 'Indice do proprio repositorio ainda nao disponivel.' });
+    const part = req.query.part === undefined ? 0 : Number(req.query.part);
+    const source = await SelfSiteKnowledgeService.readSource(knowledge.commitSha, String(req.query.path || ''), part);
+    return res.json(source);
+  } catch { return res.status(400).json({ error: 'Arquivo, parte ou acesso indisponivel no indice.' }); }
+});
+
+selfEvolutionRouter.post('/control/run', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (reason.length < 10 || reason.length > 5000) return res.status(400).json({ error: 'Descreva o pedido em 10 a 5000 caracteres.' });
+  try {
+    const receipt = await SelfSiteOwnerService.requestRun(req.user!.uid, reason);
+    return res.status(receipt.status === 'blocked' || receipt.status === 'paused' ? 409 : 202).json(receipt);
+  } catch { return res.status(503).json({ error: 'O pedido de manutencao nao pode ser confirmado. Consulte o estado antes de repetir.' }); }
+});
+
+selfEvolutionRouter.post('/control/enabled', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled true ou false.' });
+  try {
+    const receipt = await SelfSiteOwnerService.setEnabled(req.user!.uid, req.body.enabled, 'Comando autenticado do administrador.');
+    return res.status(receipt.status === 'blocked' ? 503 : 200).json(receipt);
+  } catch { return res.status(503).json({ error: 'Nao foi possivel confirmar o controle global.' }); }
+});
 
 // Middleware: inject correlation ID
 selfEvolutionRouter.use((req, res, next) => {

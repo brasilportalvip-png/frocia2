@@ -45,6 +45,7 @@ function safeRepoPath(value) {
   const normalized = String(value || '').trim().replaceAll('\\', '/').replace(/^\.\//, '');
   if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return null;
   if (normalized.split('/').some((part) => !part || part === '.' || part === '..' || part === '.git')) return null;
+  if (/(?:^|\/)(?:\.env(?:\.[^/]*)?|id_rsa|id_ed25519)(?:\/|$)|(?:credentials|service[-_]?account)|\.(?:pem|key|p12|keystore)$/i.test(normalized)) return null;
   return normalized.length <= 240 ? normalized : null;
 }
 async function run(command, args, cwd, timeoutMs, extraEnv = {}, isolated = false) {
@@ -121,7 +122,9 @@ async function repositoryContext(body, cwd) {
   const context = buildEngineeringContext(files, {
     title: body.title, summary: body.summary, hypothesis: body.hypothesis,
     expectedBehavior: body.expectedBehavior, testPlan: body.testPlan,
-  }, body.probableFiles || []);
+  }, body.probableFiles || [], {
+    allowRepositoryMaintenance: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true' && body.executionPolicy?.allowRepositoryMaintenance === true,
+  });
   context.languageIntelligence = analyzeTypeScriptLanguage(context.sourceFiles, context.queryTerms);
   const history = await run('git', ['log', '--format=%H%x09%aI%x09%s', '-n', '50', '--', ...context.selectedFiles.slice(0, 20)], cwd, 30_000);
   context.gitHistory = history.exitCode === 0 ? history.stdout.toString().split('\n').filter(Boolean).slice(0, 50) : [];
@@ -272,7 +275,11 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext(); const page = await context.newPage();
     const consoleErrors = []; const failedRequests = [];
-    let navigation = [];
+    let navigation = []; let navigationCatalog = [];
+    const navigationOptions = {
+      ...(Array.isArray(body.navigationViews) ? { views: body.navigationViews.filter(v => typeof v === 'string' && v.length <= 160) } : {}),
+      ...(Array.isArray(body.expectedNavigationViews) ? { expectedViews: body.expectedNavigationViews.filter(v => typeof v === 'string' && v.length <= 160) } : {}),
+    };
     page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 500)); });
     page.on('pageerror', error => consoleErrors.push(String(error.message).slice(0, 500)));
     page.on('requestfailed', (request) => {
@@ -300,7 +307,8 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     await record('public-navigation', async () => {
       const response = await page.goto(target, { waitUntil: 'networkidle' });
       if (!response?.ok()) throw new Error(`HTTP ${response?.status()}`);
-      navigation = await auditSelfSiteViews(page, target);
+      navigation = await auditSelfSiteViews(page, target, navigationOptions);
+      navigationCatalog = navigation.catalog;
       if (navigation.some(view => view.status === 'failed')) throw new Error('Uma ou mais vistas internas falharam; consulte navigation.');
     });
     await record('direct-route-refresh', async () => { await page.reload({ waitUntil: 'networkidle' }); });
@@ -323,7 +331,8 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
         await page.locator(process.env.BROWSER_AUTHENTICATED_SELECTOR || 'input[type=password]').waitFor({
           state: process.env.BROWSER_AUTHENTICATED_SELECTOR ? 'visible' : 'hidden', timeout: 15_000,
         });
-        navigation = await auditSelfSiteViews(page, target);
+        navigation = await auditSelfSiteViews(page, target, navigationOptions);
+        navigationCatalog = navigation.catalog;
         if (navigation.some(view => view.status !== 'passed')) throw new Error('Vistas autenticadas nao foram validadas integralmente.');
       });
       await record('expired-session', async () => { await context.clearCookies(); await page.reload({ waitUntil: 'networkidle' }); });
@@ -336,7 +345,7 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
       schemaVersion: 'browser-validation-v1', requestNonce: body.requestNonce,
       sandboxId: process.env.SANDBOX_INSTANCE_ID || `browser:${crypto.randomUUID()}`,
       commitSha: body.commitSha, previewUrl: target, startedAt: validationStartedAt,
-      completedAt: new Date().toISOString(), scenarios, navigation, consoleErrors, failedRequests, passed,
+      completedAt: new Date().toISOString(), scenarios, navigation, navigationCatalog, consoleErrors, failedRequests, passed,
     });
   } catch (error) {
     return sendSigned(res, { error: error instanceof Error ? error.message : 'browser_failed' }, 422);

@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: frocia-self-evolution-external
@@ -198,6 +199,7 @@ jobs:
             -e BROWSER_AUTHENTICATED_SELECTOR \
             -e SANDBOX_REPOSITORY_URL=https://github.com/brasilportalvip-png/frocia2.git \
             -e GITHUB_BASE_BRANCH=main \
+            -e SELF_EVOLUTION_FULL_REPOSITORY_ACCESS=true \
             -e SANDBOX_NETWORK_POLICY=restricted \
             frocia-worker
 
@@ -232,7 +234,9 @@ jobs:
           NODE_ENV: test
           SELF_EVOLUTION_RUNNER_ENABLED: 'true'
           SELF_EVOLUTION_ENABLED: 'true'
-          AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED }}
+          SELF_EVOLUTION_FULL_REPOSITORY_ACCESS: 'true'
+          # Autonomia solicitada pelo proprietario; a variavel false continua como parada explicita.
+          AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED || 'true' }}
 
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -241,8 +245,9 @@ jobs:
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
 
-          # O token padrao do Actions nao permite CI automatico sem aprovacao em PRs criados por ele.
-          GITHUB_TOKEN: ${{ secrets.SELF_EVOLUTION_GITHUB_TOKEN }}
+          # App/token proprio tem prioridade. O token do Actions usa dispatch explicito do CI.
+          GITHUB_TOKEN: ${{ secrets.SELF_EVOLUTION_GITHUB_TOKEN || (secrets.FROC_GITHUB_APP_PRIVATE_KEY == '' && secrets.FROC_GITHUB_APP_TOKEN == '' && github.token) || '' }}
+          SELF_EVOLUTION_CI_DISPATCH_REQUIRED: ${{ secrets.SELF_EVOLUTION_GITHUB_TOKEN == '' && secrets.FROC_GITHUB_APP_PRIVATE_KEY == '' && secrets.FROC_GITHUB_APP_TOKEN == '' && 'true' || 'false' }}
           GITHUB_APP_TOKEN: ${{ secrets.FROC_GITHUB_APP_TOKEN }}
           GITHUB_READ_TOKEN: ${{ github.token }}
           GITHUB_APP_ID: ${{ secrets.FROC_GITHUB_APP_ID || vars.FROC_GITHUB_APP_ID }}
@@ -254,6 +259,7 @@ jobs:
 
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID || vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID || vars.VERCEL_TEAM_ID }}
           SELF_EVOLUTION_TARGET_URL: ${{ vars.SELF_EVOLUTION_TARGET_URL || 'https://frocia2.vercel.app/' }}
 
         run: node --import tsx scripts/self-evolution-runner.ts --run

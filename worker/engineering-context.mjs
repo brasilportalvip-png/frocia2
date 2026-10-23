@@ -26,13 +26,16 @@ function resolveImport(from, specifier, paths) {
   const baseParts = from.split('/'); baseParts.pop();
   for (const part of specifier.split('/')) part === '..' ? baseParts.pop() : part !== '.' && baseParts.push(part);
   const base = baseParts.join('/');
+  if (/\.[cm]?js$/.test(base)) {
+    for (const candidate of [base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), base.replace(/\.mjs$/, '.mts'), base.replace(/\.cjs$/, '.cts')]) if (paths.has(candidate)) return candidate;
+  }
   for (const suffix of ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js']) {
     if (paths.has(`${base}${suffix}`)) return `${base}${suffix}`;
   }
   return null;
 }
 
-export function buildEngineeringContext(files, task, probableFiles = []) {
+export function buildEngineeringContext(files, task, probableFiles = [], options = {}) {
   const safe = new Map();
   for (const file of files) {
     const path = normalize(file.path);
@@ -60,7 +63,11 @@ export function buildEngineeringContext(files, task, probableFiles = []) {
   const digest = crypto.createHash('sha256').update(JSON.stringify({ task, selectedFiles, query })).digest('hex');
   return {
     schemaVersion: 'engineering-context-v1', digest, queryTerms: query, selectedFiles,
-    editablePaths: selectedFiles.filter((path) => !/(?:^|\/)(?:package-lock\.json|\.github\/|worker\/)/.test(path)),
+    repositoryInventory: [...safe].map(([path, content]) => ({ path,
+      sha256: crypto.createHash('sha256').update(content).digest('hex'), imports: imports.get(path), dependents: dependents.get(path) || [] })),
+    repositoryCoverage: { indexedFiles: safe.size, selectedForThisTask: selectedFiles.length },
+    editablePaths: selectedFiles.filter((path) => !/(?:^|\/)(?:\.git\/|\.env(?:\.|$))|\.(?:pem|key|p12|keystore)$/.test(path) &&
+      (options.allowRepositoryMaintenance === true || !/(?:^|\/)(?:package-lock\.json|\.github\/|worker\/)/.test(path))),
     relatedTests: selectedFiles.filter((path) => /(?:^|\/)(?:tests?|e2e|__tests__)(?:\/|$)|\.(?:test|spec)\./.test(path)),
     sourceFiles: selectedFiles.map((path) => ({ path, content: safe.get(path) })),
     rootCauseQuestions: ['Qual teste reproduz a falha?', 'Qual contrato foi violado?', 'Quais dependentes podem regredir?', 'A alteração trata causa ou apenas sintoma?'],

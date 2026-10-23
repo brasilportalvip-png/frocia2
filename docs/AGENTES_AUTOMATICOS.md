@@ -1,67 +1,107 @@
-# Agentes: agendamento, auditoria do proprio site e correcoes
+# Froc.IA: conhecimento do proprio projeto e manutencao autonoma
 
-Esta alteracao conecta a auditoria de producao a fila de autoevolucao. Ela nao equivale a uma homologacao completa do site nem comprova que as credenciais de producao estejam autorizadas.
+## Escopo implementado no codigo
 
-## Comportamento
+A Froc.IA passa a indexar seu proprio repositorio, consultar esse conhecimento na conversa do administrador, auditar o site e encaminhar falhas a esteira que gera codigo, testa, abre PR, verifica preview, revisa, faz merge e comprova a versao publicada. A ativacao real ainda depende da instalacao e dos acessos do ambiente.
 
-- Primeira tentativa as 09h17 de Brasilia; recuperacao e retomada a cada 30 minutos ate 20h47. O GitHub pode atrasar ou descartar eventos de agenda; isto adiciona oportunidades de recuperacao, sem prometer pontualidade absoluta.
-- A verificacao inicial le somente metadados do Actions. Um workflow verde aguardando CI, preview ou outras tarefas nao encerra as retomadas. A conclusao explicita da rodada evita reconstruir o worker sem necessidade.
-- Antes de investigar novidades externas, o executor audita o proprio site: crawler de ate 40 URLs, navegador com sete vistas internas, cenarios de desktop/tablet/celular, acessibilidade, console, rede e sessao.
-- Os resultados observados geram ate cinco novas tarefas por auditoria. Erros detectados nao dependem de cinco ocorrencias anteriores na telemetria nem da vontade do modelo de sugerir uma novidade.
-- Os dados sao registrados em `self_evolution_site_audits`, ligados a `self_evolution_candidates` e resumidos na trilha de auditoria e no Actions. Um clique manual solicita uma nova auditoria, sem duplicar candidatos ativos.
-- Falta de login, tempo esgotado, limites do crawler e cobertura incompleta sao registrados como limitacoes. A auditoria nao prova todos os fluxos de negocio, pagamentos ou respostas possiveis do chat.
-- Antes de gerar um patch pago, o executor verifica a leitura autenticada do repositorio e consulta o deployment da Vercel. Uma falha de acesso tem mensagem propria; ela nao vira `no_proposal`.
-- Branch, testes, CI, preview, comite, verificacao independente, politica de risco e autorizacao de producao continuam compondo o caminho de publicacao. Ter uma integracao configurada nao comprova que uma correcao foi publicada.
-- A importacao do GitHub foi corrigida para ajustar objetos completos ao limite de 700.000 bytes, mantendo JSON valido e declarando a cobertura parcial. O JSON nunca e cortado no meio.
+### Conhecimento do projeto
 
-## Configuracao do executor no GitHub
+- Cada execucao indexa os arquivos versionados do checkout, vinculados ao SHA completo. Fontes e configuracoes de texto sao armazenadas integralmente em partes; arquivos grandes nao sao cortados em 150 ou 700 mil caracteres nesse indice.
+- O mapa inclui caminhos, hashes, dependencias, rotas encontradas no codigo, menu de navegacao e os vinte agentes: dez revisores e dez agentes de inovacao.
+- Arquivos binarios recebem metadados; credenciais e arquivos de segredo ficam protegidos. Arquivos que nao puderam ser lidos sao declarados como pendentes.
+- O grafo resolve imports ESM `.js` para os arquivos `.ts`/`.tsx` versionados. O worker recebe o inventario completo e seleciona o contexto pertinente a cada correcao.
+- A importacao publica de repositorios continua tendo seu limite de transporte, agora com JSON valido e declaracao de leitura parcial. Esse importador e diferente do indice interno do proprio projeto.
 
-As configuracoes da aplicacao hospedada na Vercel e as do executor do Actions sao ambientes diferentes. Reutilize as credenciais existentes nos campos apropriados do repositorio; o pacote nao contem credenciais.
+### Varredura e fila
 
-Escolha UMA forma de autenticar a automacao de escrita:
+- O crawler trabalha em lotes de ate quarenta URLs para caber em uma chamada. A fronteira restante e persistida e retomada, inclusive no dia seguinte. Nao ha teto total de quarenta paginas ou duas mil URLs no modo interno retomavel.
+- No proprio site autorizado pelo dono, robots nao e usado para descartar paginas. O auditor de sites de terceiros conserva o comportamento anterior.
+- O navegador verifica as entradas do menu extraidas do codigo e as entradas marcadas no DOM. Hoje o menu tem oito entradas, incluindo Criar projeto; novas entradas marcadas tambem entram na descoberta. Navegar para essa tela nao cria um projeto nem envia formularios.
+- Vistas pendentes podem ser retomadas. Falta de sessao, acesso ou tempo permanece visivel na cobertura.
+- Todos os grupos distintos de falhas observadas entram na fila; o limite anterior de cinco novas tarefas foi removido. O historico integral dos achados fica nos documentos da geracao da auditoria.
+- Falhas de HTML/HTTP, console, rede e navegacao nao dependem de o modelo propor uma novidade. A pesquisa externa dos agentes de inovacao continua separada da manutencao corretiva.
+- Cobertura de codigo, paginas e navegacao nao e prova de todos os fluxos de negocio, pagamentos ou respostas possiveis do chat. Essas alegacoes exigem cenarios executados e evidencias correspondentes.
 
-1. GitHub App instalado no repositorio: secrets `FROC_GITHUB_APP_ID`, `FROC_GITHUB_APP_PRIVATE_KEY` e variable `FROC_GITHUB_APP_SLUG`.
-2. Token proprio de automacao: secret `SELF_EVOLUTION_GITHUB_TOKEN`. A alternativa `FROC_GITHUB_APP_TOKEN` aceita um token de instalacao ja emitido, considerando sua expiracao.
+### Controle pelo proprietario
 
-O App/token deve ter acesso ao repositorio, Contents e Pull requests com escrita e leitura dos checks/Actions necessarios. A verificacao de leitura nao certifica escrita: a criacao real do PR e a comprovacao dessa etapa. O token padrao `GITHUB_TOKEN` do Actions fica reservado a leituras; PRs criados com ele podem exigir aprovacao para iniciar o CI, impedindo uma esteira totalmente automatica.
+O papel de administrador vem da autenticacao do servidor; o cliente nao pode se promover enviando role ou userId no corpo.
 
-O workflow traduz os nomes `FROC_GITHUB_*` para as variaveis `GITHUB_APP_*` esperadas pelo servidor. Nomes de configuracao do GitHub que comecam com `GITHUB_` sao reservados.
+Na conversa autenticada do administrador, pedidos sobre o proprio site recebem o mapa do projeto e os ultimos resultados reais do executor. Ordens explicitas como "Corrija os erros do meu site Froc IA" registram uma tarefa e solicitam o workflow. O recibo distingue pedido registrado, execucao solicitada e publicacao comprovada. Perguntas explicativas e ordens negadas nao iniciam uma correcao.
 
-Configuracoes adicionais:
+Comandos explicitos para pausar ou retomar os proprios agentes atualizam o controle persistente. O merge automatico consulta novamente a parada antes da publicacao. Falta de acesso ao GitHub permanece no recibo e a tarefa fica registrada, sem inventar sucesso.
 
-| Local | Nome | Finalidade |
+Endpoints adicionais, todos com requireAuth e requireAdmin:
+
+| Endpoint | Funcao |
+| --- | --- |
+| GET /api/admin/self-evolution/site-map | Mapa do projeto, agentes e estado operacional |
+| GET /api/admin/self-evolution/repository/source?path=src/App.tsx&part=0 | Ler uma parte do arquivo indexado, com SHA e numero total de partes |
+| POST /api/admin/self-evolution/control/run | Registrar e solicitar manutencao; corpo com reason |
+| POST /api/admin/self-evolution/control/enabled | Pausar ou retomar; corpo com enabled true ou false |
+
+## Agendamento e publicacao
+
+- Primeira tentativa prevista para 09h17 de Brasilia; recuperacao/retomada a cada trinta minutos ate 20h47. O GitHub pode atrasar eventos; as tentativas extras reduzem a dependencia de um unico disparo, sem garantir pontualidade absoluta.
+- Um workflow verde aguardando CI, preview, varredura ou verificacao de producao nao encerra as retomadas. O marcador de conclusao depende de nao haver retomada indicada.
+- A selecao de tarefas considera todos os estados retomaveis, incluindo a verificacao depois do merge; nao fica limitada aos cem documentos mais recentes.
+- O modo desta esteira permite manutencao do codigo do repositorio, inclusive agentes/worker/workflows, com SELF_EVOLUTION_FULL_REPOSITORY_ACCESS=true. Isso nao dispensa sandbox, testes, CI, preview ou revisao independente. Segredos permanecem fora dos arquivos gerados.
+- A publicacao automatica fica habilitada por padrao no workflow, conforme o pedido do proprietario. A variable AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED=false conserva uma parada explicita da publicacao. A parada global persistente tambem e respeitada.
+- O token proprio ou GitHub App tem prioridade. Sem esses tokens, o executor usa GITHUB_TOKEN com Contents/Pull requests/Actions e solicita o CI oficial por workflow_dispatch; assim nao depende do evento pull_request disparado pelo proprio token. O repositorio precisa permitir que Actions crie PRs.
+- O ci.yml passa a aceitar workflow_dispatch. Um pedido de CI e persistido como ci_pending e nao regenera nem cobra outro patch nas retomadas.
+- Antes de trabalho pago, a esteira verifica leitura autenticada de GitHub e Vercel. A escrita so e comprovada quando a acao real e aceita. Uma versao atualmente quebrada do site nao impede a verificacao de acesso para iniciar seu reparo.
+- Apos o merge, approved_for_release/monitoring continuam retomaveis. O verificador resolve o alias de producao na Vercel, confirma projeto e SHA do deployment, executa /api/live, /api/ready, /api/health e navegador assinado, e confere novamente o alias. Apenas entao marca accepted.
+- Falha comprovada da versao publicada aciona a reversao existente, agora compativel tambem com GitHub App. Merge da reversao e recuperacao publicada sao evidencias distintas.
+- Os limites de orcamento existentes continuam aplicados; uma reserva concorrente recusada impede gerar codigo. Uma integracao configurada nao e prova de funcionamento de ponta a ponta.
+
+## Configuracao dos ambientes
+
+O aplicativo na Vercel e o executor do Actions sao ambientes distintos. O executor precisa receber as credenciais de servicos que utiliza. O pacote nao contem credenciais.
+
+Para GitHub, pode-se usar o token padrao do Actions quando as configuracoes do repositorio permitem criar PRs e executar workflows. Para App/token proprio, configure uma das opcoes:
+
+1. GitHub App: secrets FROC_GITHUB_APP_ID, FROC_GITHUB_APP_PRIVATE_KEY e variable FROC_GITHUB_APP_SLUG.
+2. Token de automacao: secret SELF_EVOLUTION_GITHUB_TOKEN.
+3. Token de instalacao ja emitido: secret FROC_GITHUB_APP_TOKEN, considerando a expiracao.
+
+O App/token deve ter Contents, Pull requests e Actions com escrita, e leitura dos checks necessarios. Os nomes FROC_GITHUB_* do workflow sao traduzidos para as variaveis GITHUB_APP_* esperadas pelos servicos. Configuracoes do repositorio que comecam com GITHUB_ sao reservadas.
+
+Para modificar arquivos de workflow, o App precisa tambem de Workflows com escrita, ou o token pessoal precisa da permissao correspondente. O token padrao do Actions nao concede essa capacidade; uma tentativa recusada permanece registrada como falha de acesso.
+
+| Local | Nome | Funcao |
 | --- | --- | --- |
-| Secret | `FIREBASE_SERVICE_ACCOUNT_KEY` | Firestore persistente e fila |
-| Secret | `GEMINI_API_KEY` | Modelo dos agentes |
-| Secrets | `SELF_EVOLUTION_WORKER_TOKEN`, `SELF_EVOLUTION_WORKER_SIGNING_SECRET` | Autenticacao e assinatura do worker |
-| Secrets | `VERCEL_TOKEN`, `VERCEL_PROJECT_ID` | Consultar e validar deployments; o project ID tambem pode ser variable |
-| Variable | `SELF_EVOLUTION_TARGET_URL` | Site auditado; padrao `https://frocia2.vercel.app/` |
-| Variable | `SELF_EVOLUTION_RUNNER_ENABLED` | `false` pausa somente o automatico |
-| Variable | `AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED` | `true` permite a publicacao automatica depois dos gates existentes |
-| Variable | `BROWSER_TEST_LOGIN_URL` | URL de login da conta de teste |
-| Secrets | `BROWSER_TEST_USER`, `BROWSER_TEST_PASSWORD` | Conta de teste para areas autenticadas |
-| Variables opcionais | `BROWSER_LOGIN_OPEN_SELECTOR`, `BROWSER_USER_SELECTOR`, `BROWSER_PASSWORD_SELECTOR`, `BROWSER_SUBMIT_SELECTOR`, `BROWSER_AUTHENTICATED_SELECTOR` | Ajustar o fluxo de login e confirmar a sessao |
+| Secret | FIREBASE_SERVICE_ACCOUNT_KEY | Indice, fila, locks, resultados e auditoria persistente |
+| Secret | GEMINI_API_KEY | Modelos dos agentes |
+| Secrets | SELF_EVOLUTION_WORKER_TOKEN, SELF_EVOLUTION_WORKER_SIGNING_SECRET | Autenticacao e assinatura do worker |
+| Secrets | VERCEL_TOKEN, VERCEL_PROJECT_ID | Consultar deployments e confirmar publicacao; o project ID tambem pode ser variable |
+| Secret ou variable opcional | VERCEL_TEAM_ID | Identificar a equipe da Vercel |
+| Variable | SELF_EVOLUTION_TARGET_URL | Padrao https://frocia2.vercel.app/ |
+| Variable | SELF_EVOLUTION_RUNNER_ENABLED | false pausa os disparos automaticos |
+| Variable | AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED | true por padrao no workflow; false pausa publicacao |
+| Variable | BROWSER_TEST_LOGIN_URL | URL de login da conta de teste |
+| Secrets | BROWSER_TEST_USER, BROWSER_TEST_PASSWORD | Sessao de teste das areas autenticadas |
+| Variables opcionais | BROWSER_LOGIN_OPEN_SELECTOR, BROWSER_USER_SELECTOR, BROWSER_PASSWORD_SELECTOR, BROWSER_SUBMIT_SELECTOR, BROWSER_AUTHENTICATED_SELECTOR | Ajustar abertura do modal, login e confirmacao da sessao |
 
-O login padrao usa email, senha e botao `type=submit`. Se o formulario ficar num modal, configure o seletor que o abre. Prefira um marcador visivel apos o login em `BROWSER_AUTHENTICATED_SELECTOR`. Sem uma sessao de teste valida, a cobertura privada fica explicitamente pendente.
+Para comandos administrativos na conversa do site, o backend da Vercel precisa do Firebase Admin e da integracao GitHub/App que possa solicitar Actions. O papel administrativo e verificado pelo servidor. O executor externo confirma sua propria habilitacao e acessos quando recebe o pedido.
 
-## Aplicacao do pacote no Windows
+Sem conta de teste ou com recurso externo indisponivel, a homologacao correspondente continua pendente. O sistema nao deve declarar essas areas saudaveis.
 
-1. Extraia o ZIP em uma pasta.
-2. Execute `APLICAR_CORRECAO.cmd`. Ele usa `%USERPROFILE%\Desktop\frocia2`; para outro caminho, passe-o como primeiro argumento.
-3. O aplicador exige uma arvore de trabalho limpa, confirma o repositorio de destino, busca a `main`, cria uma branch, verifica e aplica o patch, cria o commit e envia a branch. Ele nao modifica a `main` nem faz merge.
-4. Na pagina que abrir, crie o Pull Request. Aguarde os checks e revise as configuracoes acima antes de integrar a correcao.
-5. Execute o workflow uma vez manualmente na nova versao e confira o resumo: cobertura, falhas, candidatos e bloqueios. A rodada automatica real so pode ser confirmada apos um evento `schedule`.
+## Atualizacao do PR 84
 
-Se qualquer comando falhar, o aplicador para e preserva a branch e as alteracoes. Ele nao faz `reset --hard`, stash, force-push ou descarte de arquivos.
+1. Extraia a versao nova do ZIP em uma pasta nova.
+2. Execute ATUALIZAR_PR84.cmd no computador com o clone usado no primeiro pacote. O padrao e Desktop/frocia2; para outra pasta, arraste-a sobre o CMD.
+3. O aplicador confirma o repositorio, exige trabalho local salvo, busca a branch fix/agentes-auditoria-20261023, confere e aplica o patch incremental, cria o commit e atualiza o mesmo PR 84. Nenhum arquivo e descartado e nao ha force-push.
+4. Confira a nova execucao do CI no PR 84. Depois de integrar a branch, a esteira nova estara na main. A execucao real e a publicacao precisam ser confirmadas nos resultados da propria esteira.
 
-## Evidencias desta preparacao
+O aplicador antigo nao deve ser usado para esta atualizacao. Ele criava a branch que agora ja existe.
 
-- Verificacao local: 564 testes em 87 arquivos aprovados; TypeScript, build, integridade de producao e validacao do workflow aprovados.
-- Base: `e57f4d7c706fa5f9e13d238fc793d6903221f08d` da `main`.
-- O ZIP fornecido contem a versao anterior do diagnostico `model_declined`; a base atual do GitHub ja inclui esse diagnostico. O aplicador parte da `main` atual para evitar regressao.
-- Regressao reproduzida antes da correcao: `O resumo seguro do repositorio excedeu o limite permitido` na importacao de arquivos elegiveis que cabiam no limite bruto, mas excediam o JSON final.
-- Teste de leitura real de `brasilportalvip-png/frocia2` depois da correcao: JSON valido com 697.456 bytes, 366 caminhos listados e 15 arquivos de conteudo retornados, com cobertura parcial declarada.
-- Foram preparados testes de navegador com fixtures para as sete vistas, pagina vazia e falta de login. A execucao local desses testes ficou bloqueada porque o download do Chromium retornou um arquivo invalido; a coleta dos seis casos foi validada. Execute-os no CI antes de considerar a navegacao homologada.
-- A integracao desta conversa recusou gravacao no GitHub com HTTP 403. Nenhum PR ou deployment foi criado por esta preparacao. Isso nao demonstra ausencia de acesso da propria Froc.IA.
+## Evidencias desta versao
 
-Documentacao oficial: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule e https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow .
+- Falha original do PR 84: seis casos E2E expiravam porque as fixtures HTML eram servidas sem UTF-8. O trace registrou InÃ­cio no lugar de Inicio acentuado. Foi corrigido o charset no HTML e nas respostas HTTP.
+- 599 testes em 93 arquivos aprovados.
+- Navegador Chromium 151: 18 casos aprovados, inclusive com CI=true; quatro casos de ambiente publicado ficaram ignorados porque E2E_BASE_URL nao foi fornecida.
+- TypeScript, build, validacoes de tracker/migrations/integridade e actionlint aprovados. A validacao de migrations foi estatica; nao executou uma migracao na base real.
+- npm audit --omit=dev --audit-level=moderate: nenhuma vulnerabilidade encontrada.
+- O patch de atualizacao parte do commit 0577b727843d6d3d215d5f92692fc33d79459dbb do PR 84, cuja base e e57f4d7c706fa5f9e13d238fc793d6903221f08d.
+- A API de gravacao desta conversa retornou HTTP 403 Resource not accessible by integration. Nenhuma destas atualizacoes foi enviada por esta conversa ao PR, mesclada na main ou publicada. Isso nao comprova ausencia de acesso da propria Froc.IA.
+
+Referencias de implementacao: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow e https://vercel.com/docs/rest-api/aliases/get-an-alias e https://vercel.com/docs/rest-api/deployments/get-a-deployment-by-id-or-url .

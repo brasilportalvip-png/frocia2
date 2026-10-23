@@ -555,6 +555,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={item.id}
               type="button"
+              aria-label={item.label}
+              data-site-audit-view={item.label}
               onClick={item.action}
               title={isCollapsed ? item.label : undefined}
               className={`flex w-full items-center rounded-xl border border-transparent text-left text-xs font-semibold transition-all ${
