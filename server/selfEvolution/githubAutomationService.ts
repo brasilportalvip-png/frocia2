@@ -64,6 +64,28 @@ export interface MergePullRequestResult {
 }
 
 export class GithubAutomationService {
+  /** Leitura autenticada, sem criar branch/PR e sem expor o token no resultado. */
+  static async verifyRepositoryAccess(): Promise<{ success: boolean; message: string }> {
+    if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial de automacao no executor externo.' };
+    const owner = (process.env.GITHUB_OWNER || 'brasilportalvip-png').trim();
+    const repo = (process.env.GITHUB_REPO || 'frocia2').trim();
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const response = await this.githubFetch(
+        `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { headers: this.getHeaders(token) }
+      );
+      if (!response.ok) return { success: false, message: `GitHub recusou o acesso do executor ao repositorio: HTTP ${response.status}.` };
+      const metadata = await response.json() as { permissions?: { push?: boolean } };
+      if (metadata.permissions?.push === false) {
+        return { success: false, message: 'A credencial do executor possui leitura, mas nao possui escrita no repositorio.' };
+      }
+      return { success: true, message: 'Leitura autenticada do repositorio confirmada. A escrita sera comprovada pela criacao do PR.' };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Falha ao verificar acesso ao GitHub.' };
+    }
+  }
+
   private static isConfigured(): boolean {
     const token =
       process.env.GITHUB_TOKEN ||

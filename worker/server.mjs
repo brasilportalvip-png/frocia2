@@ -10,6 +10,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { buildEngineeringContext } from './engineering-context.mjs';
 import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
 import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
+import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -271,8 +272,20 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext(); const page = await context.newPage();
     const consoleErrors = []; const failedRequests = [];
+    let navigation = [];
     page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 500)); });
-    page.on('requestfailed', (request) => failedRequests.push(`${request.method()} ${request.url()}`.slice(0, 800)));
+    page.on('pageerror', error => consoleErrors.push(String(error.message).slice(0, 500)));
+    page.on('requestfailed', (request) => {
+      if (request.failure()?.errorText === 'net::ERR_ABORTED') return;
+      const url = new URL(request.url()); url.search = ''; url.hash = '';
+      failedRequests.push(`${request.method()} ${url.toString()}`.slice(0, 800));
+    });
+    page.on('response', response => {
+      const url = new URL(response.url()); url.search = ''; url.hash = '';
+      if (response.status() >= 500 && url.origin === new URL(target).origin) {
+        failedRequests.push(`HTTP ${response.status()} ${url.toString()}`.slice(0, 800));
+      }
+    });
     const scenarios = [];
     const record = async (id, action, screenshot = true) => {
       const started = Date.now(); let status = 'passed'; let details = 'ok'; let screenshotSha256;
@@ -284,7 +297,12 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
       const traceSha256 = sha(JSON.stringify({ id, status, details, url: page.url(), title: await page.title().catch(() => '') }));
       scenarios.push({ id, status, durationMs: Date.now() - started, screenshotSha256, traceSha256, details });
     };
-    await record('public-navigation', async () => { const response = await page.goto(target, { waitUntil: 'networkidle' }); if (!response?.ok()) throw new Error(`HTTP ${response?.status()}`); });
+    await record('public-navigation', async () => {
+      const response = await page.goto(target, { waitUntil: 'networkidle' });
+      if (!response?.ok()) throw new Error(`HTTP ${response?.status()}`);
+      navigation = await auditSelfSiteViews(page, target);
+      if (navigation.some(view => view.status === 'failed')) throw new Error('Uma ou mais vistas internas falharam; consulte navigation.');
+    });
     await record('direct-route-refresh', async () => { await page.reload({ waitUntil: 'networkidle' }); });
     for (const [id, viewport] of [['mobile-responsive', { width: 390, height: 844 }], ['tablet-responsive', { width: 820, height: 1180 }], ['desktop-responsive', { width: 1440, height: 900 }]]) {
       await record(id, async () => { await page.setViewportSize(viewport); if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2)) throw new Error('horizontal-overflow'); });
@@ -297,20 +315,28 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     const loginUrl = process.env.BROWSER_TEST_LOGIN_URL; const user = process.env.BROWSER_TEST_USER; const password = process.env.BROWSER_TEST_PASSWORD;
     if (loginUrl && user && password) {
       await record('authenticated-session', async () => {
-        await page.goto(publicHttps(loginUrl)); await page.locator(process.env.BROWSER_USER_SELECTOR || 'input[type=email]').fill(user);
+        await page.goto(publicHttps(loginUrl));
+        if (process.env.BROWSER_LOGIN_OPEN_SELECTOR) await page.locator(process.env.BROWSER_LOGIN_OPEN_SELECTOR).click();
+        await page.locator(process.env.BROWSER_USER_SELECTOR || 'input[type=email]').fill(user);
         await page.locator(process.env.BROWSER_PASSWORD_SELECTOR || 'input[type=password]').fill(password);
         await Promise.all([page.waitForLoadState('networkidle'), page.locator(process.env.BROWSER_SUBMIT_SELECTOR || 'button[type=submit]').click()]);
+        await page.locator(process.env.BROWSER_AUTHENTICATED_SELECTOR || 'input[type=password]').waitFor({
+          state: process.env.BROWSER_AUTHENTICATED_SELECTOR ? 'visible' : 'hidden', timeout: 15_000,
+        });
+        navigation = await auditSelfSiteViews(page, target);
+        if (navigation.some(view => view.status !== 'passed')) throw new Error('Vistas autenticadas nao foram validadas integralmente.');
       });
       await record('expired-session', async () => { await context.clearCookies(); await page.reload({ waitUntil: 'networkidle' }); });
     } else {
       for (const id of ['authenticated-session', 'expired-session']) scenarios.push({ id, status: 'external_blocker', durationMs: 0, traceSha256: sha(`${id}:credentials-missing`), details: 'Credenciais E2E não configuradas.' });
     }
-    const passed = scenarios.every((scenario) => scenario.status === 'passed') && !consoleErrors.length && !failedRequests.length;
+    const passed = scenarios.every((scenario) => scenario.status === 'passed') &&
+      navigation.every(view => view.status === 'passed') && !consoleErrors.length && !failedRequests.length;
     return sendSigned(res, {
       schemaVersion: 'browser-validation-v1', requestNonce: body.requestNonce,
       sandboxId: process.env.SANDBOX_INSTANCE_ID || `browser:${crypto.randomUUID()}`,
       commitSha: body.commitSha, previewUrl: target, startedAt: validationStartedAt,
-      completedAt: new Date().toISOString(), scenarios, consoleErrors, failedRequests, passed,
+      completedAt: new Date().toISOString(), scenarios, navigation, consoleErrors, failedRequests, passed,
     });
   } catch (error) {
     return sendSigned(res, { error: error instanceof Error ? error.message : 'browser_failed' }, 422);

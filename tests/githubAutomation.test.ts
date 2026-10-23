@@ -170,6 +170,34 @@ afterEach(() => {
 describe(
   'GitHub Automation with real commit',
   () => {
+    it('diagnostica acesso negado antes da geracao paga de um patch', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403 })));
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('HTTP 403');
+      expect(result.message).not.toContain('test-token');
+    });
+
+    it('distingue leitura autenticada de permissao de escrita no repositorio', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ permissions: { push: false } }))));
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('nao possui escrita');
+    });
+
+    it('verifica acesso sem criar recursos e sem devolver a credencial', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn(async (_input: unknown, _init: RequestInit) => new Response(JSON.stringify({ permissions: { push: true } })));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('test-token');
+    });
+
     it(
       'rejects creation when no generated patch is supplied',
       async () => {
