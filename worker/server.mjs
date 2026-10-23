@@ -11,6 +11,7 @@ import { buildEngineeringContext } from './engineering-context.mjs';
 import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
 import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
 import { auditSelfSiteViews } from './site-navigation-audit.mjs';
+import { authenticateSelfSite } from './site-session-audit.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -323,13 +324,14 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     const loginUrl = process.env.BROWSER_TEST_LOGIN_URL; const user = process.env.BROWSER_TEST_USER; const password = process.env.BROWSER_TEST_PASSWORD;
     if (loginUrl && user && password) {
       await record('authenticated-session', async () => {
-        await page.goto(publicHttps(loginUrl));
-        if (process.env.BROWSER_LOGIN_OPEN_SELECTOR) await page.locator(process.env.BROWSER_LOGIN_OPEN_SELECTOR).click();
-        await page.locator(process.env.BROWSER_USER_SELECTOR || 'input[type=email]').fill(user);
-        await page.locator(process.env.BROWSER_PASSWORD_SELECTOR || 'input[type=password]').fill(password);
-        await Promise.all([page.waitForLoadState('networkidle'), page.locator(process.env.BROWSER_SUBMIT_SELECTOR || 'button[type=submit]').click()]);
-        await page.locator(process.env.BROWSER_AUTHENTICATED_SELECTOR || 'input[type=password]').waitFor({
-          state: process.env.BROWSER_AUTHENTICATED_SELECTOR ? 'visible' : 'hidden', timeout: 15_000,
+        await authenticateSelfSite(page, target, {
+          loginUrl: publicHttps(loginUrl), user, password,
+          useTargetOrigin: process.env.BROWSER_LOGIN_USE_TARGET_ORIGIN === 'true',
+          openSelector: process.env.BROWSER_LOGIN_OPEN_SELECTOR,
+          userSelector: process.env.BROWSER_USER_SELECTOR,
+          passwordSelector: process.env.BROWSER_PASSWORD_SELECTOR,
+          submitSelector: process.env.BROWSER_SUBMIT_SELECTOR,
+          authenticatedSelector: process.env.BROWSER_AUTHENTICATED_SELECTOR,
         });
         navigation = await auditSelfSiteViews(page, target, navigationOptions);
         navigationCatalog = navigation.catalog;

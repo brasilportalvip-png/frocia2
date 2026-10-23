@@ -19,6 +19,7 @@ import { REQUIRED_ENGINEERING_COMMANDS } from '../server/selfEvolution/engineeri
 const BASE_COMMIT_SHA = 'a'.repeat(40);
 const BASE_TREE_SHA = 'b'.repeat(40);
 const BLOB_SHA = 'c'.repeat(40);
+const EMPTY_GIT_BLOB_SHA = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
 const CREATED_TREE_SHA = 'd'.repeat(40);
 const CREATED_COMMIT_SHA = 'e'.repeat(40);
 
@@ -179,23 +180,52 @@ describe(
       expect(result.message).not.toContain('test-token');
     });
 
-    it('distingue leitura autenticada de permissao de escrita no repositorio', async () => {
+    it('nao confunde permissions.push falso do GITHUB_TOKEN com recusa real de escrita', async () => {
       process.env.GITHUB_TOKEN = 'test-token';
-      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ permissions: { push: false } }))));
-      const result = await GithubAutomationService.verifyRepositoryAccess();
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('nao possui escrita');
-    });
-
-    it('verifica acesso sem criar recursos e sem devolver a credencial', async () => {
-      process.env.GITHUB_TOKEN = 'test-token';
-      const fetchMock = vi.fn(async (_input: unknown, _init: RequestInit) => new Response(JSON.stringify({ permissions: { push: true } })));
+      const fetchMock = vi.fn(async (_input: unknown, _init: RequestInit) => mockResponse({ sha: EMPTY_GIT_BLOB_SHA }, 201));
+      fetchMock.mockResolvedValueOnce(mockResponse({ permissions: { push: false } }));
       vi.stubGlobal('fetch', fetchMock);
       const result = await GithubAutomationService.verifyRepositoryAccess();
       expect(result.success).toBe(true);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][0]).toBe('https://api.github.com/repos/brasilportalvip-png/frocia2/git/blobs');
+      expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+      expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({ content: '', encoding: 'utf-8' });
+      expect(result.message).not.toContain('test-token');
+    });
+
+    it('prova escrita sem alterar referencias nem devolver a credencial', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn(async (_input: unknown, _init: RequestInit) => mockResponse({ sha: EMPTY_GIT_BLOB_SHA }, 201));
+      fetchMock.mockResolvedValueOnce(mockResponse({}));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+      expect(fetchMock.mock.calls.every(([url]) => !/\/git\/refs|\/git\/commits|\/pulls|\/contents\//.test(String(url)))).toBe(true);
       expect(JSON.stringify(result)).not.toContain('test-token');
+    });
+
+    it.each([401, 403, 404, 409, 422, 503])('recusa HTTP %s de escrita mesmo com metadata.push true', async (status) => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn(async () => mockResponse({}, status));
+      fetchMock.mockResolvedValueOnce(mockResponse({ permissions: { push: true } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain(`HTTP ${status}`);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('nao aceita uma resposta de escrita sem o objeto esperado', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn(async () => mockResponse({ sha: 'a'.repeat(40) }, 201));
+      fetchMock.mockResolvedValueOnce(mockResponse({ permissions: { push: true } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.verifyRepositoryAccess();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('nao foi comprovada');
     });
 
     it(

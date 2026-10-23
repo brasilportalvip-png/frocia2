@@ -11,6 +11,7 @@ import { GithubAppService } from '../services/githubAppService.js';
 const GITHUB_API_URL =
   'https://api.github.com';
 const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
+const EMPTY_GIT_BLOB_SHA = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
 
 export interface PullRequestResult {
   status:
@@ -101,7 +102,7 @@ export class GithubAutomationService {
     }
   }
 
-  /** Leitura autenticada, sem criar branch/PR e sem expor o token no resultado. */
+  /** Prova Contents:write com um blob vazio, sem alterar arquivos, branches ou PRs. */
   static async verifyRepositoryAccess(): Promise<{ success: boolean; message: string }> {
     if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial de automacao no executor externo.' };
     const owner = (process.env.GITHUB_OWNER || 'brasilportalvip-png').trim();
@@ -113,11 +114,24 @@ export class GithubAutomationService {
         { headers: this.getHeaders(token) }
       );
       if (!response.ok) return { success: false, message: `GitHub recusou o acesso do executor ao repositorio: HTTP ${response.status}.` };
-      const metadata = await response.json() as { permissions?: { push?: boolean } };
-      if (metadata.permissions?.push === false) {
-        return { success: false, message: 'A credencial do executor possui leitura, mas nao possui escrita no repositorio.' };
+      await response.json();
+      // permissions.push descreve metadados do repositorio e pode ser false para
+      // GITHUB_TOKEN mesmo com Contents:write. A prova e uma operacao real de escrita.
+      const writeResponse = await this.githubFetch(
+        `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/blobs`,
+        {
+          method: 'POST', headers: this.getHeaders(token, true),
+          body: JSON.stringify({ content: '', encoding: 'utf-8' }),
+        }
+      );
+      if (writeResponse.status !== 201) {
+        return { success: false, message: `GitHub recusou a prova de escrita do executor: HTTP ${writeResponse.status}. Confira Contents:write da credencial usada nesta rodada.` };
       }
-      return { success: true, message: 'Leitura autenticada do repositorio confirmada. A escrita sera comprovada pela criacao do PR.' };
+      const blob = await writeResponse.json() as GitHubBlobResponse;
+      if (blob.sha !== EMPTY_GIT_BLOB_SHA) {
+        return { success: false, message: 'GitHub nao devolveu o blob vazio esperado; a escrita nao foi comprovada.' };
+      }
+      return { success: true, message: 'Leitura e escrita de objetos Git confirmadas. Branch, PR e merge ainda dependem das operacoes reais.' };
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Falha ao verificar acesso ao GitHub.' };
     }

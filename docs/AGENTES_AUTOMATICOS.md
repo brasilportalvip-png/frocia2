@@ -48,7 +48,7 @@ Endpoints adicionais, todos com requireAuth e requireAdmin:
 - A publicacao automatica fica habilitada por padrao no workflow, conforme o pedido do proprietario. A variable AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED=false conserva uma parada explicita da publicacao. A parada global persistente tambem e respeitada.
 - O token proprio ou GitHub App tem prioridade. Sem esses tokens, o executor usa GITHUB_TOKEN com Contents/Pull requests/Actions e solicita o CI oficial por workflow_dispatch; assim nao depende do evento pull_request disparado pelo proprio token. O repositorio precisa permitir que Actions crie PRs.
 - O ci.yml passa a aceitar workflow_dispatch. Um pedido de CI e persistido como ci_pending e nao regenera nem cobra outro patch nas retomadas.
-- Antes de trabalho pago, a esteira verifica leitura autenticada de GitHub e Vercel. A escrita so e comprovada quando a acao real e aceita. Uma versao atualmente quebrada do site nao impede a verificacao de acesso para iniciar seu reparo.
+- Antes de trabalho pago, a esteira verifica leitura autenticada e escrita de um objeto Git vazio, sem alterar arquivos, branches ou PRs. O campo metadata.permissions.push nao decide a capacidade do GITHUB_TOKEN. Branch, PR e merge ainda precisam ser comprovados nas operacoes reais. O acesso a API da Vercel e verificado separadamente; uma versao atualmente quebrada do site nao impede iniciar seu reparo.
 - Apos o merge, approved_for_release/monitoring continuam retomaveis. O verificador resolve o alias de producao na Vercel, confirma projeto e SHA do deployment, executa /api/live, /api/ready, /api/health e navegador assinado, e confere novamente o alias. Apenas entao marca accepted.
 - Falha comprovada da versao publicada aciona a reversao existente, agora compativel tambem com GitHub App. Merge da reversao e recuperacao publicada sao evidencias distintas.
 - Os limites de orcamento existentes continuam aplicados; uma reserva concorrente recusada impede gerar codigo. Uma integracao configurada nao e prova de funcionamento de ponta a ponta.
@@ -77,15 +77,42 @@ Para modificar arquivos de workflow, o App precisa tambem de Workflows com escri
 | Variable | SELF_EVOLUTION_TARGET_URL | Padrao https://frocia2.vercel.app/ |
 | Variable | SELF_EVOLUTION_RUNNER_ENABLED | false pausa os disparos automaticos |
 | Variable | AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED | true por padrao no workflow; false pausa publicacao |
-| Variable | BROWSER_TEST_LOGIN_URL | URL de login da conta de teste |
-| Secrets | BROWSER_TEST_USER, BROWSER_TEST_PASSWORD | Sessao de teste das areas autenticadas |
+| Variable opcional | BROWSER_TEST_LOGIN_URL | URL de login; padrao e SELF_EVOLUTION_TARGET_URL |
+| Secrets opcionais | BROWSER_TEST_USER, BROWSER_TEST_PASSWORD | Conta existente; configurar os dois juntos para substituir a conta automatica |
+| Variable opcional | BROWSER_TEST_AUTO_PROVISION_ENABLED | true por padrao; false pausa a criacao e rotacao automaticas |
 | Variables opcionais | BROWSER_LOGIN_OPEN_SELECTOR, BROWSER_USER_SELECTOR, BROWSER_PASSWORD_SELECTOR, BROWSER_SUBMIT_SELECTOR, BROWSER_AUTHENTICATED_SELECTOR | Ajustar abertura do modal, login e confirmacao da sessao |
 
 Para comandos administrativos na conversa do site, o backend da Vercel precisa do Firebase Admin e da integracao GitHub/App que possa solicitar Actions. O papel administrativo e verificado pelo servidor. O executor externo confirma sua propria habilitacao e acessos quando recebe o pedido.
 
 Sem conta de teste ou com recurso externo indisponivel, a homologacao correspondente continua pendente. O sistema nao deve declarar essas areas saudaveis.
 
-## Atualizacao do PR 84
+### Conta automatica das areas com login
+
+Antes de iniciar o worker, o Actions usa o Firebase Admin ja configurado para preparar o UID frocia-maintenance-browser-test. A conta e exclusiva da auditoria, com role user, sem privilegios administrativos, sem creditos concedidos e sem afirmar verificacao de e-mail. O perfil normal e carregado pelo mesmo login e API usados pelos clientes.
+
+A senha e aleatoria e rotacionada em cada rodada, com revogacao das sessoes anteriores. Senha e usuario sao mascarados antes de seguir pelo ambiente privado do job; o registro persistente contem modo, UID e data, sem a senha. O worker recebe apenas as credenciais dessa conta, sem a chave administrativa do Firebase.
+
+Uma conta existente sem a marca exclusiva da auditoria, desativada, administrativa ou vinculada a outro tenant nao tem a senha redefinida. A parada persistente do sistema tambem e respeitada. O servico precisa de permissao Firebase Authentication Admin; uma recusa mantem o login como pendente e preserva a auditoria publica.
+
+No modo automatico, o login usa o dominio do destino de preview validado pelo backend. O formulario so e considerado autenticado quando o menu do perfil aparece; fechar a janela sozinho nao basta. Credenciais de conta ja configurada preservam sua URL e seletores.
+
+Essa conta verifica a experiencia de usuario comum. Operacoes administrativas, pagamentos e a expiracao real de JWTs exigem seus proprios cenarios e evidencias; a preparacao de uma conta nao comprova todos esses fluxos.
+
+### Acesso da Vercel no Actions
+
+A conexao GitHub-Vercel publica os pushes da main. O executor dos agentes precisa tambem de VERCEL_TOKEN e VERCEL_PROJECT_ID para consultar previews e comprovar a publicacao. Na rodada 23, ambos chegaram vazios; uma conexao feita em outro ambiente nao os preenche automaticamente.
+
+Cadastre os valores nas secrets do repositorio em https://github.com/brasilportalvip-png/frocia2/settings/secrets/actions . O Project ID fica nas configuracoes do projeto frocia2 da Vercel. Use um token com acesso a esse projeto/equipe. Nenhuma credencial deve ser adicionada ao Git ou enviada em mensagens.
+
+## Atualizacao de acessos depois do merge do PR 84
+
+O PR 84 ja foi integrado. O pacote atualizado parte da main f6d873fffc42df97010ccbc9f0e43da0a40eb011 e inclui a prova real de escrita e o provisionamento da conta de teste.
+
+Extraia o ZIP atualizado em uma pasta nova e execute ATUALIZAR_ACESSOS.cmd. O clone padrao e Desktop/frocia2; outra pasta pode ser passada como argumento. O aplicador exige trabalho local salvo, confere o repositorio e o patch, cria o commit e atualiza a main sem force-push. Depois inicie uma nova rodada do workflow na main.
+
+Evidencias locais desta atualizacao: 620 testes em 94 arquivos passaram, assim como TypeScript e validacao do workflow. A suite de navegador com CI=true passou em 24 casos; quatro verificacoes de ambiente publicado ficaram pendentes. Criacao da conta no Firebase, prova de escrita na API do GitHub e login do site publicado ainda dependem de executar esta versao no Actions. Esta conversa continua sem permissao de escrita no GitHub (HTTP 403).
+
+## Historico: instalacao inicial pelo PR 84
 
 1. Extraia a versao nova do ZIP em uma pasta nova.
 2. Execute ATUALIZAR_PR84.cmd no computador com o clone usado no primeiro pacote. O padrao e Desktop/frocia2; para outra pasta, arraste-a sobre o CMD.
@@ -94,7 +121,7 @@ Sem conta de teste ou com recurso externo indisponivel, a homologacao correspond
 
 O aplicador antigo nao deve ser usado para esta atualizacao. Ele criava a branch que agora ja existe.
 
-## Evidencias desta versao
+## Evidencias da entrega inicial do PR 84
 
 - Falha original do PR 84: seis casos E2E expiravam porque as fixtures HTML eram servidas sem UTF-8. O trace registrou InÃ­cio no lugar de Inicio acentuado. Foi corrigido o charset no HTML e nas respostas HTTP.
 - 599 testes em 93 arquivos aprovados.

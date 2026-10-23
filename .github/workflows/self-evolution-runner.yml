@@ -161,11 +161,14 @@ jobs:
       - name: Construir worker da Froc.IA
         run: docker build -t frocia-worker ./worker
 
-      - name: Iniciar worker local
+      - name: Preparar conta de teste autenticada
+        continue-on-error: true
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
-          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+          NODE_ENV: test
+          SELF_EVOLUTION_ENABLED: 'true'
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          BROWSER_TEST_AUTO_PROVISION_ENABLED: ${{ vars.BROWSER_TEST_AUTO_PROVISION_ENABLED || 'true' }}
+          SELF_EVOLUTION_TARGET_URL: ${{ vars.SELF_EVOLUTION_TARGET_URL || 'https://frocia2.vercel.app/' }}
           BROWSER_TEST_LOGIN_URL: ${{ vars.BROWSER_TEST_LOGIN_URL || secrets.BROWSER_TEST_LOGIN_URL }}
           BROWSER_TEST_USER: ${{ secrets.BROWSER_TEST_USER }}
           BROWSER_TEST_PASSWORD: ${{ secrets.BROWSER_TEST_PASSWORD }}
@@ -174,6 +177,13 @@ jobs:
           BROWSER_SUBMIT_SELECTOR: ${{ vars.BROWSER_SUBMIT_SELECTOR }}
           BROWSER_LOGIN_OPEN_SELECTOR: ${{ vars.BROWSER_LOGIN_OPEN_SELECTOR }}
           BROWSER_AUTHENTICATED_SELECTOR: ${{ vars.BROWSER_AUTHENTICATED_SELECTOR }}
+        run: node --import tsx scripts/prepare-browser-test-account.ts --run
+
+      - name: Iniciar worker local
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
         run: |
           docker run -d \
             --name frocia-worker \
@@ -194,6 +204,7 @@ jobs:
             -e BROWSER_TEST_LOGIN_URL \
             -e BROWSER_TEST_USER \
             -e BROWSER_TEST_PASSWORD \
+            -e BROWSER_LOGIN_USE_TARGET_ORIGIN \
             -e BROWSER_USER_SELECTOR \
             -e BROWSER_PASSWORD_SELECTOR \
             -e BROWSER_SUBMIT_SELECTOR \
