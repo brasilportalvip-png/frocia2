@@ -15,6 +15,8 @@ describe('Acessos e retomada da manutencao autonoma', () => {
     vi.stubGlobal('fetch', f);
     expect((await GithubAutomationService.dispatchOfficialCI('froc-evolution/r1/candidate')).success).toBe(true);
     expect(String(f.mock.calls[0][0])).toContain('/actions/workflows/ci.yml/dispatches');
+    expect(String(f.mock.calls[1][0])).toContain('/actions/workflows/capability-checks.yml/dispatches');
+    expect(f).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(f.mock.calls[0][1].body))).toEqual({ ref: 'froc-evolution/r1/candidate' });
   });
   it('nao solicita CI de manutencao para uma branch arbitraria', async () => {

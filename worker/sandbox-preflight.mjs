@@ -51,6 +51,8 @@ async function main() {
     for (const field of ['effective', 'permitted', 'ambient']) assert.match(identity[field] || '', /^0+$/);
     assert.equal(identity.noNewPrivileges, '1');
     assert.equal(identity.hasSecrets, false);
+    const terminated = await run('node', ['-e', 'setInterval(() => {}, 1000)'], cwd, 100, {}, true);
+    assert.equal(terminated.exitCode, 124, 'sandbox_controller_cannot_terminate_test_process');
     await checked('npm', ['test'], true);
     assert.match(await checked('git', ['diff', '--', 'value.txt'], true), /\+patch/);
     await checked('git', ['diff', '--check'], true);

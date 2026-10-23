@@ -44,7 +44,7 @@ Endpoints adicionais, todos com requireAuth e requireAdmin:
 - Primeira tentativa prevista para 09h17 de Brasilia; recuperacao/retomada a cada trinta minutos ate 20h47. O GitHub pode atrasar eventos; as tentativas extras reduzem a dependencia de um unico disparo, sem garantir pontualidade absoluta.
 - Um workflow verde aguardando CI, preview, varredura ou verificacao de producao nao encerra as retomadas. O marcador de conclusao depende de nao haver retomada indicada.
 - Uma resposta HTTP 422 do worker conserva um diagnostico assinado, com etapa, erro e trecho final da saida do comando, quando houver. O runner verifica assinatura, candidato, nonce e horario antes de registrar esse texto. Segredos conhecidos sao removidos. O estado legado tests_failed tambem pode indicar falha anterior aos testes; a etapa determina o que realmente ocorreu.
-- Uma tarefa tests_failed anterior ao PR pode voltar ao estado detected, preservando o mesmo documento e suas evidencias. Ha uma retomada automatica por versao/dia e ate tres retomadas no dia de Brasilia, incluindo pedidos manuais. A transacao confere novamente o estado; orcamento, lock, testes, CI e revisao continuam no caminho normal. Um defeito ainda pendente nao encerra o ciclo como concluido.
+- Uma tarefa tests_failed anterior ao PR pode voltar ao estado detected, preservando o mesmo documento e suas evidencias. Ha uma retomada automatica por versao/dia e ate tres retomadas por versao no dia de Brasilia, incluindo pedidos manuais. Codigo corrigido nao herda o bloqueio da versao antiga. A transacao confere novamente o estado; orcamento global, lock, testes, CI e revisao continuam no caminho normal. Um defeito ainda pendente nao encerra o ciclo como concluido.
 - A selecao de tarefas considera todos os estados retomaveis, incluindo a verificacao depois do merge; nao fica limitada aos cem documentos mais recentes.
 - O modo desta esteira permite manutencao do codigo do repositorio, inclusive agentes/worker/workflows, com SELF_EVOLUTION_FULL_REPOSITORY_ACCESS=true. Isso nao dispensa sandbox, testes, CI, preview ou revisao independente. Segredos permanecem fora dos arquivos gerados.
 - A publicacao automatica fica habilitada por padrao no workflow, conforme o pedido do proprietario. A variable AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED=false conserva uma parada explicita da publicacao. A parada global persistente tambem e respeitada.
@@ -106,7 +106,28 @@ A conexao GitHub-Vercel publica os pushes da main. O executor dos agentes precis
 
 Cadastre os valores nas secrets do repositorio em https://github.com/brasilportalvip-png/frocia2/settings/secrets/actions . O Project ID fica nas configuracoes do projeto frocia2 da Vercel. Use um token com acesso a esse projeto/equipe. Nenhuma credencial deve ser adicionada ao Git ou enviada em mensagens.
 
-## Permissoes da sandbox depois da rodada 26
+## Revisao integrada depois da rodada 27
+
+A rodada 27, no commit 47dab4033146a5d486e5ae0ebda56ed7f24627e5, passou no preflight real de Git, edicao, teste e rollback como UID 10001 sem capacidades nos filhos. Passou tambem nos acessos de GitHub/Vercel. A chamada seguinte ficou sem resposta de 19:08:02 a 19:13:04 UTC e terminou em fetch failed. O intervalo coincide com os 300 segundos do headersTimeout padrao do cliente fetch/Undici; o log antigo nao conservou o codigo interno da causa.
+
+A revisao corrigiu em conjunto:
+
+- A chamada longa usa node:http/node:https com o AbortSignal do prazo total: 50 minutos no Actions, 15 minutos por padrao fora dele ou o valor configurado entre 1 e 30 minutos. Nao ha o corte implicito de headers aos cinco minutos. TLS, HMAC, nonce, SHA, limites de tamanho e todos os gates permanecem.
+- O resultado de transporte conserva codigo de erro e o prazo real. O Actions registra sempre o estado do container, OOMKilled, ExitCode e os logs finais sanitizados; o worker registra etapa e inicio/fim de comandos sem imprimir fontes ou segredos.
+- A reserva do candidato dura 65 minutos, cobrindo o job externo de 60 minutos. Um agent_running abandonado so volta a tests_failed depois de poder adquirir uma nova reserva.
+- O patch certificado e salvo integralmente, em partes com hash, antes do estado tests_passed. tests_passed/patch_created voltam a fila e podem retomar a criacao do PR sem gerar ou cobrar outro patch. Mudanca da main exige nova certificacao; branch parcial so e reutilizada com a mesma arvore e a mesma base.
+- O token do Actions solicita ci.yml e capability-checks.yml por workflow_dispatch. Sem esse segundo disparo, as nove suites exigidas pela comparacao poderiam nunca iniciar.
+- O preview confere projeto, ambiente e SHA exato antes do health e do navegador. Um preview antigo da mesma branch fica pendente.
+- O controlador recebe KILL para encerrar os processos de teste como UID 10001 e seus descendentes no limite de tempo. O preflight real tambem testa esse encerramento; os filhos continuam sem capacidades efetivas/permitidas/ambientes.
+- A retomada contabiliza as tentativas por SHA/dia, mantendo o orcamento global. Uma versao nova pode ser testada mesmo depois de esgotadas as tentativas da versao anterior.
+
+O teste selfEvolutionWholeLifecycle usa um worker HTTP local real e fixtures das APIs/Firestore/modelos para atravessar patch, PR, os dois pedidos de CI, comparacao de capacidades, preview, dez pareceres, merge e confirmacao do dominio. Tambem cobre falha na API do PR sem nova cobranca, assinatura invalida, capacidades ausentes, rollback solicitado e executor interrompido. Essas fixtures testam a ligacao entre etapas; nao equivalem a gerar uma correcao real com Gemini nem a publicar na Vercel.
+
+Os testes de transporte usam um servidor HTTP real com headers atrasados, cancelamento antes/depois dos headers, conexao interrompida, redirect e resposta acima do limite. Checkpoints sao testados com partes ausentes, alteradas e gravacao interrompida. A verificacao no container e a publicacao real dessa revisao ainda dependem da nova execucao no Actions.
+
+Validacao local consolidada: 657 testes em 101 arquivos; 24 testes de navegador aprovados com CI=true e quatro testes do ambiente publicado pendentes; TypeScript, build, actionlint, integridade, tracker e validacao estatica de migrations aprovados; npm audit de producao sem vulnerabilidades. A validacao de migrations nao executou alteracoes na base real.
+
+## Historico: permissoes da sandbox depois da rodada 26
 
 A rodada 26 identificou restore_baseline: spawn git EACCES. O diretorio criado por mkdtemp tem modo 0700 e passa a pertencer ao UID 10001. O controlador root, limitado a CHOWN/SETUID/SETGID, perde acesso ao diretorio; o libuv entra no cwd antes de trocar o UID do filho. A configuracao passa a conceder DAC_OVERRIDE ao controlador do container para permitir essa operacao e a leitura/aplicacao do patch.
 

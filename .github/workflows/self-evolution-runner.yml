@@ -192,6 +192,7 @@ jobs:
             --cap-drop ALL \
             --cap-add CHOWN \
             --cap-add DAC_OVERRIDE \
+            --cap-add KILL \
             --cap-add SETUID \
             --cap-add SETGID \
             --security-opt no-new-privileges \
@@ -280,6 +281,14 @@ jobs:
           SELF_EVOLUTION_TARGET_URL: ${{ vars.SELF_EVOLUTION_TARGET_URL || 'https://frocia2.vercel.app/' }}
 
         run: node --import tsx scripts/self-evolution-runner.ts --run
+
+      - name: Registrar diagnostico do worker
+        if: ${{ always() }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+        run: node scripts/self-evolution-worker-diagnostics.mjs
 
       - name: Rodada diaria finalizada
         if: ${{ steps.cycle.outputs.requires_resume == 'false' }}

@@ -4,6 +4,7 @@ import { workerFailurePayload } from '../worker/worker-failure.mjs';
 import { EngineeringSandboxEvidenceService } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
 import type { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
+import { WorkerHttpClient } from '../server/selfEvolution/workerHttpClient.js';
 
 const secret = 's'.repeat(40);
 const body = { candidateId: 'site-fault', requestNonce: 'a'.repeat(48) };
@@ -18,7 +19,7 @@ function verify(payload: unknown) {
 const candidate = { id: body.candidateId, title: 'Falha real', probableFiles: ['src/App.tsx'] } as ImprovementCandidate;
 
 describe('Diagnostico autenticado do HTTP 422', () => {
-  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it('preserva a etapa de geracao e o erro do provedor sem declarar um teste reprovado', () => {
     const payload = workerFailurePayload({ body, stage: 'generation', error: Object.assign(new Error('MODEL_NOT_AVAILABLE'), { status: 404 }) });
@@ -59,13 +60,13 @@ describe('Diagnostico autenticado do HTTP 422', () => {
     vi.stubEnv('SELF_EVOLUTION_WORKER_URL', 'https://worker.example.com');
     vi.stubEnv('SELF_EVOLUTION_WORKER_TOKEN', 'private-worker-token');
     vi.stubEnv('SELF_EVOLUTION_WORKER_SIGNING_SECRET', secret);
-    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    vi.spyOn(WorkerHttpClient, 'postJson').mockImplementation(async (_url, init) => {
       const request = JSON.parse(String(init.body));
       const payload = workerFailurePayload({ body: request, stage: 'generation',
         error: Object.assign(new Error('PROVIDER_LIMIT private-worker-token'), { status: 429 }) });
       const response = signed(payload);
       return new Response(response.rawBody, { status: 422, headers: { 'x-frocia-worker-signature': response.signatureHeader } });
-    }));
+    });
     const result = await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
     expect(result.success).toBe(false);
     expect(result.errorMessage).toContain('HTTP 422 [generation], provedor HTTP 429');
@@ -78,7 +79,7 @@ describe('Diagnostico autenticado do HTTP 422', () => {
     vi.stubEnv('SELF_EVOLUTION_WORKER_URL', 'https://worker.example.com');
     vi.stubEnv('SELF_EVOLUTION_WORKER_TOKEN', 'private-worker-token');
     vi.stubEnv('SELF_EVOLUTION_WORKER_SIGNING_SECRET', secret);
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'UNTRUSTED_TEXT' }, { status: 422 })));
+    vi.spyOn(WorkerHttpClient, 'postJson').mockResolvedValue(Response.json({ error: 'UNTRUSTED_TEXT' }, { status: 422 }));
     const result = await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
     expect(result).toMatchObject({ success: false, files: [] });
     expect(result.errorMessage).toContain('diagnostico autenticado indisponivel');

@@ -16,6 +16,8 @@ import { CommitteeGateService } from './committeeGateService.js';
 import { AutonomousBrowserValidationService } from './autonomousBrowserValidationService.js';
 import { SpecialistCommitteeExecutionService } from './specialistCommitteeExecutionService.js';
 import { ProductionReleaseVerificationService } from './productionReleaseVerificationService.js';
+import { CertifiedPatchCheckpointService } from './certifiedPatchCheckpointService.js';
+import type { PatchResult } from './codeAgentService.js';
 export class SelfEvolutionOrchestrator {
   /**
    * Executa ou retoma cada etapa persistida, sem recriar um patch ja publicado.
@@ -37,7 +39,8 @@ export class SelfEvolutionOrchestrator {
       };
     }
 
-    const lock = await LockService.acquireLock(candidateId, actor);
+    // O job externo pode durar 60 min; a reserva nao pode expirar durante o patch.
+    const lock = await LockService.acquireLock(candidateId, actor, 65 * 60_000);
     if (!lock) {
       return {
         state: candidate.state,
@@ -53,6 +56,12 @@ export class SelfEvolutionOrchestrator {
     };
 
     try {
+      if (candidate.state === 'agent_running') {
+        // So chegamos aqui se o lease anterior expirou; uma execucao ativa
+        // conservaria o lock. A retomada limitada decide uma nova geracao.
+        await transition('tests_failed');
+        return { state: 'tests_failed', message: 'O executor anterior foi interrompido antes de registrar um patch certificado. Tarefa preservada para retomada limitada.' };
+      }
       if (candidate.state === 'approved_for_release' || candidate.state === 'monitoring') {
         const verification = await ProductionReleaseVerificationService.verify(candidateId, candidate.productionMergeSha || '');
         await AuditService.logEvent({ actor: 'production-release-verifier', action: 'verify_production_release',
@@ -101,6 +110,7 @@ export class SelfEvolutionOrchestrator {
         });
       }
 
+      let certifiedPatch: PatchResult | undefined;
       if (candidate.state === 'approved_for_work') {
         if (!(await BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits))) {
           return {
@@ -123,6 +133,8 @@ export class SelfEvolutionOrchestrator {
           };
         }
 
+        await CertifiedPatchCheckpointService.save(candidateId, patch);
+        certifiedPatch = patch;
         await transition('tests_passed');
         await AuditService.logEvent({
           actor: 'engineering-sandbox',
@@ -137,9 +149,21 @@ export class SelfEvolutionOrchestrator {
             `diff ${patch.executionEvidence?.diffSha256 || '(sem hash)'}.`,
         });
 
+      }
+
+      if (candidate.state === 'tests_passed' || candidate.state === 'patch_created') {
+        const patch = certifiedPatch || await CertifiedPatchCheckpointService.load(candidateId);
+        if (!patch) {
+          await transition('tests_failed');
+          return { state: 'tests_failed', message: 'Patch certificado nao encontrado. Tarefa preservada para nova tentativa sem publicar codigo nao comprovado.' };
+        }
         await transition('patch_created');
         const pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
         if (!pr.success || !pr.commitSha || !pr.branchName || !pr.pullRequestUrl) {
+          if (pr.requiresRegeneration) {
+            await transition('tests_failed');
+            return { state: 'tests_failed', message: pr.errorMessage || 'A base mudou; o patch precisa ser gerado e certificado novamente.' };
+          }
           return {
             state: 'patch_created',
             message: pr.errorMessage || 'Não foi possível comprovar a criação do Pull Request.',
@@ -206,7 +230,8 @@ export class SelfEvolutionOrchestrator {
 
         const preview = await PreviewDeploymentService.createPreviewDeployment(
           candidateId,
-          candidate.branchName
+          candidate.branchName,
+          candidate.headCommitSha
         );
         if (preview.status === 'pending' || preview.status === 'not_configured') {
           return {

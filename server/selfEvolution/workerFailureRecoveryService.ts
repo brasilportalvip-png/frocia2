@@ -9,7 +9,8 @@ interface RecoveryContext {
 
 // Uma falha anterior nao pode sumir da fila nem gerar cobrancas sem limite.
 // Cada versao pode retomar automaticamente uma vez por dia; o dono pode
-// solicitar outra tentativa manual. Em ambos os casos, o teto e tres retomadas.
+// solicitar ate tres retomadas por versao/dia. Uma correcao nova nao herda o
+// bloqueio das versoes anteriores. O orcamento global limita as geracoes.
 export function planWorkerFailureRecovery(candidate: Record<string, unknown>, context: RecoveryContext): Record<string, unknown> | null {
   if (candidate.state !== 'tests_failed' || candidate.pullRequestUrl || candidate.productionMergeSha ||
       !/^[a-f0-9]{40}$/i.test(context.sourceSha) || !context.runId) return null;
@@ -19,14 +20,19 @@ export function planWorkerFailureRecovery(candidate: Record<string, unknown>, co
   const prior = candidate.workerRecovery as Record<string, unknown> | undefined;
   if (prior?.runId === context.runId) return null;
   const sameDay = prior?.dateKey === dateKey;
-  const count = sameDay && Number.isSafeInteger(prior?.count) ? Number(prior.count) : 0;
+  const count = sameDay && Number.isSafeInteger(prior?.count) ? Math.max(0, Number(prior.count)) : 0;
   const sourceShas = sameDay && Array.isArray(prior?.sourceShas)
     ? prior.sourceShas.filter((sha): sha is string => typeof sha === 'string') : [];
-  if (count >= 3 || (!context.manual && sourceShas.includes(context.sourceSha))) return null;
+  const sourceCounts = sameDay && prior?.sourceCounts && typeof prior.sourceCounts === 'object'
+    ? prior.sourceCounts as Record<string, number>
+    : Object.fromEntries(sourceShas.map(sha => [sha, count]));
+  const sourceCount = Number.isSafeInteger(sourceCounts[context.sourceSha]) ? Math.max(0, sourceCounts[context.sourceSha]) : 0;
+  if (sourceCount >= 3 || (!context.manual && sourceShas.includes(context.sourceSha))) return null;
   return {
     state: 'detected', updatedAt: context.now.toISOString(),
     workerRecovery: { dateKey, count: count + 1, runId: context.runId,
       sourceShas: [...new Set([...sourceShas, context.sourceSha])],
+      sourceCounts: { ...sourceCounts, [context.sourceSha]: sourceCount + 1 },
       previousState: 'tests_failed', requestedManually: context.manual },
   };
 }

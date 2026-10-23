@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
 import { REQUIRED_ENGINEERING_COMMANDS } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
+import { WorkerHttpClient } from '../server/selfEvolution/workerHttpClient.js';
 
 const candidate = {
   id: 'candidate-sandbox', title: 'Corrigir API', summary: 'Corrige API', evidence: [],
@@ -17,6 +18,7 @@ const candidate = {
 describe('DefaultCodeAgentAdapter sandbox contract', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     delete process.env.SELF_EVOLUTION_WORKER_URL;
     delete process.env.SELF_EVOLUTION_WORKER_TOKEN;
     delete process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET;
@@ -27,7 +29,7 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
     process.env.SELF_EVOLUTION_WORKER_URL = 'https://worker.example.com';
     process.env.SELF_EVOLUTION_WORKER_TOKEN = 'bearer-token';
     process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET = secret;
-    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    vi.spyOn(WorkerHttpClient, 'postJson').mockImplementation(async (_url, init) => {
       const request = JSON.parse(String(init?.body));
       const startedAt = new Date().toISOString();
       const completedAt = startedAt;
@@ -62,7 +64,7 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
         status: 200,
         headers: { 'x-frocia-worker-signature': `sha256=${signature}` },
       });
-    }));
+    });
 
     const result = await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
     expect(result).toMatchObject({
@@ -90,7 +92,7 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
     const workerFetch = vi.fn(async (_url: string) =>
       new Response(null, { status: 503 })
     );
-    vi.stubGlobal('fetch', workerFetch);
+    vi.spyOn(WorkerHttpClient, 'postJson').mockImplementation(workerFetch);
 
     try {
       await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);

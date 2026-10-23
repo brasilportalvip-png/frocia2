@@ -25,6 +25,7 @@ export interface PullRequestResult {
   pullRequestUrl?: string;
   pullRequestId?: number;
   errorMessage?: string;
+  requiresRegeneration?: boolean;
 }
 
 interface GitHubBlobResponse {
@@ -40,6 +41,7 @@ interface GitHubCommitResponse {
   tree?: {
     sha?: string;
   };
+  parents?: Array<{ sha?: string }>;
 }
 
 interface GitHubReferenceResponse {
@@ -76,11 +78,14 @@ export class GithubAutomationService {
     const repo = process.env.GITHUB_REPO || 'frocia2';
     try {
       const token = await this.resolveAccessToken(owner, repo);
-      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/ci.yml/dispatches`, {
-        method: 'POST', headers: this.getHeaders(token, true), body: JSON.stringify({ ref: branchName }),
-      });
-      return { success: response.ok, message: response.ok ? 'CI oficial solicitado para a branch da correcao.'
-        : `GitHub recusou solicitar CI: HTTP ${response.status}. Confira Actions com escrita e o workflow_dispatch do ci.yml.` };
+      for (const workflow of ['ci.yml', 'capability-checks.yml']) {
+        const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/${workflow}/dispatches`, {
+          method: 'POST', headers: this.getHeaders(token, true), body: JSON.stringify({ ref: branchName }),
+        });
+        if (!response.ok) return { success: false,
+          message: `GitHub recusou solicitar ${workflow}: HTTP ${response.status}. Confira Actions com escrita e workflow_dispatch.` };
+      }
+      return { success: true, message: 'CI oficial e nove suites de capacidade solicitados para a branch da correcao.' };
     } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Falha ao solicitar CI.' }; }
   }
 
@@ -451,9 +456,9 @@ export class GithubAutomationService {
         patch.baseSha &&
         patch.baseSha !== currentBaseSha
       ) {
-        return this.createFailure(
+        return { ...this.createFailure(
           'A branch principal mudou depois da geração do patch. Gere novamente para evitar conflito ou perda de código.'
-        );
+        ), requiresRegeneration: true };
       }
 
       /*
@@ -617,7 +622,7 @@ export class GithubAutomationService {
         await commitResponse.json() as
           GitHubCommitResponse;
 
-      const createdCommitSha =
+      let createdCommitSha =
         createdCommit.sha;
 
       if (
@@ -681,9 +686,16 @@ export class GithubAutomationService {
             existingReference.object?.sha !==
             createdCommitSha
           ) {
-            return this.createFailure(
-              'Já existe uma branch desse candidato apontando para outro commit. A operação foi interrompida para evitar sobrescrita.'
-            );
+            const existingSha = existingReference.object?.sha;
+            if (!existingSha || !/^[a-f0-9]{40}$/i.test(existingSha)) return this.createFailure('SHA da branch existente invalido.');
+            const previousResponse = await this.githubFetch(`${repositoryUrl}/git/commits/${existingSha}`, { headers: this.getHeaders(token) });
+            const previous = previousResponse.ok ? await previousResponse.json() as GitHubCommitResponse : null;
+            if (previous?.tree?.sha !== createdTree.sha || previous.parents?.length !== 1 || previous.parents[0].sha !== currentBaseSha) {
+              return this.createFailure('Ja existe uma branch desse candidato com conteudo/base diferente. A operacao foi interrompida para evitar sobrescrita.');
+            }
+            // Um POST de PR pode falhar depois de a branch ter sido criada.
+            // Reutilizar o commit certificado evita cobrar outro patch.
+            createdCommitSha = existingSha;
           }
         } else {
           return this.createFailure(
@@ -722,7 +734,7 @@ export class GithubAutomationService {
                   .join('\n') +
                 `\n\n**Linhas adicionadas:** ${patch.linesAdded}\n` +
                 `**Linhas removidas:** ${patch.linesRemoved}\n\n` +
-                `Este PR foi criado pela autoevolução supervisionada da Froc.IA e exige revisão humana antes do merge.`
+                `Este PR foi criado pela manutencao autonoma da Froc.IA. O merge automatico depende de CI, preview, comparacao de capacidades e revisao independente aprovados.`
             })
           }
         );

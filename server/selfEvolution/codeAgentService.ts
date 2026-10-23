@@ -7,6 +7,7 @@ import {
   REQUIRED_ENGINEERING_COMMANDS,
 } from './engineeringSandboxEvidenceService.js';
 import { RedactionService } from './redactionService.js';
+import { WorkerHttpClient } from './workerHttpClient.js';
 
 const MAX_GENERATED_FILES = 25;
 const MAX_FILE_CONTENT_BYTES = 1_000_000;
@@ -211,12 +212,12 @@ implements ICodeAgentAdapter {
 
     const requestNonce =
       EngineeringSandboxEvidenceService.createRequestNonce();
+    const timeoutMs = workerTimeoutMs();
 
     try {
-      const response = await fetch(
+      const response = await WorkerHttpClient.postJson(
         `${workerUrl}/api/worker/patch`,
         {
-          method: 'POST',
           headers: {
             'Content-Type':
               'application/json',
@@ -250,9 +251,7 @@ implements ICodeAgentAdapter {
               maximumTotalContentBytes: MAX_TOTAL_CONTENT_BYTES,
             }
           }),
-          signal: AbortSignal.timeout(
-            workerTimeoutMs()
-          )
+          signal: AbortSignal.timeout(timeoutMs)
         }
       );
 
@@ -528,11 +527,12 @@ implements ICodeAgentAdapter {
         error?.name === 'TimeoutError' ||
         error?.name === 'AbortError';
 
-      return createFailureResult(
-        timedOut
-          ? 'O worker do Agente de Código excedeu o limite de 60 segundos.'
-          : `Erro ao comunicar com o worker isolado: ${error?.message || error}`
-      );
+      const causeCode = String(error?.cause?.code || error?.code || '').replace(/[^A-Z0-9_]/g, '').slice(0, 80);
+      let message = timedOut
+        ? `O worker do Agente de Codigo excedeu o prazo de ${Math.ceil(timeoutMs / 60_000)} minutos.`
+        : `Erro ao comunicar com o worker isolado${causeCode ? ` [${causeCode}]` : ''}: ${error?.message || error}`;
+      for (const secret of [workerToken, signingSecret]) message = message.split(secret).join('[REDACTED_SECRET]');
+      return createFailureResult(RedactionService.redactSensitiveData(message).replace(/[\r\n]+/g, ' ').slice(0, 4000));
     }
   }
 }

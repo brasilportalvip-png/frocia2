@@ -56,4 +56,15 @@ describe('Comandos reais do executor da sandbox', () => {
     expect(result.exitCode).toBe(124);
     expect(result.durationMs).toBeLessThan(5000);
   });
+
+  it.skipIf(process.platform === 'win32')('interrompe os descendentes antes de restaurar o workspace', async () => {
+    const result = await run(process.execPath, ['-e', `
+      require('node:child_process').spawn(process.execPath, ['-e',
+        "setTimeout(() => require('node:fs').writeFileSync('late-write.txt','unexpected'), 250)"]);
+      setInterval(() => {}, 1000);
+    `], cwd, 100);
+    expect(result.exitCode).toBe(124);
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await expect(fs.access(path.join(cwd, 'late-write.txt'))).rejects.toBeDefined();
+  });
 });

@@ -25,7 +25,7 @@ export class PreviewDeploymentService {
     return Boolean(vercelToken && vercelToken.trim().length > 0 && projectId && projectId.trim().length > 0);
   }
 
-  static async createPreviewDeployment(candidateId: string, branchName?: string): Promise<PreviewDeployResult> {
+  static async createPreviewDeployment(candidateId: string, branchName?: string, expectedSha?: string): Promise<PreviewDeployResult> {
     const vercelToken = process.env.VERCEL_TOKEN;
     const projectId = process.env.VERCEL_PROJECT_ID;
 
@@ -42,14 +42,18 @@ export class PreviewDeploymentService {
         errorMessage: 'Aguardando nome da branch para localizar o deployment de preview da Vercel.',
       };
     }
+    if (!expectedSha || !/^[a-f0-9]{40}$/i.test(expectedSha)) {
+      return { status: 'pending', errorMessage: 'SHA completo ausente para conferir o preview da correcao.' };
+    }
 
     try {
-      const params = new URLSearchParams({ projectId: projectId!, 'meta-githubCommitRef': branchName });
+      const params = new URLSearchParams({ projectId: projectId!, 'meta-githubCommitRef': branchName, 'meta-githubCommitSha': expectedSha, limit: '20' });
       if (process.env.VERCEL_TEAM_ID) params.set('teamId', process.env.VERCEL_TEAM_ID);
       const response = await fetch(`https://api.vercel.com/v6/deployments?${params}`, {
         headers: {
           'Authorization': `Bearer ${vercelToken}`,
         },
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
@@ -69,7 +73,9 @@ export class PreviewDeploymentService {
         };
       }
 
-      const latest = deployments[0];
+      const latest = deployments.find((item: any) => item.meta?.githubCommitSha === expectedSha) ||
+        deployments.find((item: any) => !item.meta?.githubCommitSha);
+      if (!latest?.uid) return { status: 'pending', errorMessage: 'Aguardando deployment do SHA exato da correcao.' };
       if (latest.state !== 'READY') {
         return {
           status: latest.state === 'ERROR' ? 'failed' : 'pending',
@@ -79,12 +85,29 @@ export class PreviewDeploymentService {
         };
       }
 
-      const previewUrl = `https://${latest.url}`;
+      const detailsParams = new URLSearchParams();
+      if (process.env.VERCEL_TEAM_ID) detailsParams.set('teamId', process.env.VERCEL_TEAM_ID);
+      const detailsResponse = await fetch(`https://api.vercel.com/v13/deployments/${encodeURIComponent(latest.uid)}?${detailsParams}`, {
+        headers: { Authorization: `Bearer ${vercelToken}` }, signal: AbortSignal.timeout(30_000),
+      });
+      if (!detailsResponse.ok) return { status: 'pending', errorMessage: `Nao foi possivel conferir o SHA do preview: HTTP ${detailsResponse.status}.` };
+      const details = await detailsResponse.json();
+      if (details.projectId !== projectId || details.target === 'production') {
+        return { status: 'failed', errorMessage: 'Preview nao pertence ao projeto/ambiente esperado.' };
+      }
+      if ((details.gitSource?.sha || details.meta?.githubCommitSha) !== expectedSha || details.readyState !== 'READY') {
+        return { status: 'pending', errorMessage: 'O preview do SHA exato ainda nao esta READY.' };
+      }
+      const preview = new URL(`https://${details.url}`);
+      if (!details.url || preview.username || preview.password || preview.pathname !== '/' || preview.search || preview.hash) {
+        return { status: 'failed', errorMessage: 'URL de preview invalida.' };
+      }
+      const previewUrl = preview.origin;
 
       // Run real smoke test on preview URL
       let smokeTestsPassed = false;
       try {
-        const pingRes = await fetch(`${previewUrl}/api/health`, { method: 'GET' });
+        const pingRes = await fetch(`${previewUrl}/api/health`, { method: 'GET', signal: AbortSignal.timeout(15_000), redirect: 'error' });
         smokeTestsPassed = pingRes.ok;
       } catch {
         smokeTestsPassed = false;

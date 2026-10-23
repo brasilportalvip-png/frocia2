@@ -19,16 +19,26 @@ export async function run(command, args, cwd, timeoutMs, extraEnv = {}, isolated
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd, env: minimalEnv, shell: false, windowsHide: true,
+      detached: process.platform !== 'win32',
       ...(isolated && process.platform !== 'win32' ? { uid: 10001, gid: 10001 } : {}),
     });
     const stdout = []; const stderr = []; let bytes = 0; let killed = false;
+    const terminate = () => {
+      killed = true;
+      try {
+        if (process.platform === 'win32') child.kill('SIGKILL');
+        else if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') reject(new Error(`sandbox_terminate_failed:${error.code}`));
+      }
+    };
     const collect = target => chunk => {
       bytes += chunk.length;
       if (bytes <= MAX_OUTPUT) target.push(Buffer.from(chunk));
-      if (bytes > MAX_OUTPUT && !killed) { killed = true; child.kill('SIGKILL'); }
+      if (bytes > MAX_OUTPUT && !killed) terminate();
     };
     child.stdout.on('data', collect(stdout)); child.stderr.on('data', collect(stderr));
-    const timer = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeoutMs);
+    const timer = setTimeout(terminate, timeoutMs);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('close', code => {
       clearTimeout(timer);

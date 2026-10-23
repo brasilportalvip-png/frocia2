@@ -39,7 +39,7 @@ describe('Retomada limitada das tarefas que falharam no worker', () => {
     expect(planWorkerFailureRecovery(failedAgain, { ...context, runId: 'run-27:1', sourceSha: 'b'.repeat(40) })).toMatchObject({ state: 'detected' });
   });
 
-  it('permite tentativa manual e respeita o teto de tres retomadas no dia', () => {
+  it('permite tentativa manual e respeita o teto de tres retomadas por versao no dia', () => {
     let candidate: Record<string, unknown> = failed();
     for (let i = 1; i <= 3; i++) {
       const update = planWorkerFailureRecovery(candidate, { ...context, manual: true, runId: `manual-${i}` });
@@ -47,6 +47,14 @@ describe('Retomada limitada das tarefas que falharam no worker', () => {
       candidate = { ...candidate, ...update, state: 'tests_failed' };
     }
     expect(planWorkerFailureRecovery(candidate, { ...context, manual: true, runId: 'manual-4' })).toBeNull();
+  });
+
+  it('permite testar codigo corrigido depois de esgotar as tentativas da versao antiga', () => {
+    const candidate = { ...failed(), workerRecovery: { dateKey: '2026-10-23', count: 3, runId: 'old', sourceShas: [context.sourceSha] } };
+    expect(planWorkerFailureRecovery(candidate, context)).toBeNull();
+    expect(planWorkerFailureRecovery(candidate, { ...context, sourceSha: 'c'.repeat(40) })).toMatchObject({
+      state: 'detected', workerRecovery: { count: 4, sourceCounts: { ['c'.repeat(40)]: 1 } },
+    });
   });
 
   it('usa o dia de Brasilia para liberar uma nova retomada diaria', () => {
