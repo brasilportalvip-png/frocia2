@@ -253,4 +253,13 @@ describe('Auditor completo e seguro de sites', () => {
     await expect(SiteAuditPolicyService.assertAllowed({ userId: 'u1', tenantId: 't1', nowMs: 2000 }, store)).rejects.toBeInstanceOf(SiteAuditRateLimitError);
     await expect(SiteAuditPolicyService.assertAllowed({ userId: 'u2', tenantId: 't1', nowMs: 2000 }, store)).resolves.toBeUndefined();
   });
+
+  it('index.html possui conteúdo textual suficiente para evitar THIN_CONTENT', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const withoutScripts = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+    const withoutStyles = withoutScripts.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+    const text = withoutStyles.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const wordCount = text.split(' ').filter(Boolean).length;
+    expect(wordCount).toBeGreaterThanOrEqual(100);
+  });
 });
