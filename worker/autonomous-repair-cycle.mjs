@@ -7,6 +7,8 @@ function safeFailure(value) {
     stdoutSha256: String(value?.stdoutSha256 || '').slice(0, 64),
     stderrSha256: String(value?.stderrSha256 || '').slice(0, 64),
     summary: String(value?.summary || 'certification failed').replace(/[\r\n]+/g, ' ').slice(0, 800),
+    stdoutTail: String(value?.stdoutTail || '').replace(/[\r\n]+/g, ' ').slice(-1800),
+    stderrTail: String(value?.stderrTail || '').replace(/[\r\n]+/g, ' ').slice(-1800),
   };
 }
 

@@ -71,6 +71,8 @@ async function main(): Promise<void> {
     await import('../server/selfEvolution/previewDeploymentService.js');
   const { SelfSiteKnowledgeService } =
     await import('../server/selfEvolution/selfSiteKnowledgeService.js');
+  const { WorkerFailureRecoveryService } =
+    await import('../server/selfEvolution/workerFailureRecoveryService.js');
 
   if (!isFirebaseAdminConfigured()) {
     throw new Error('Firebase Admin nao configurado.');
@@ -114,12 +116,22 @@ async function main(): Promise<void> {
       String(a.createdAt).localeCompare(String(b.createdAt))
     )[0];
 
-   let candidateId = candidate?.id;
+  let candidateId = candidate?.id;
+
+  if (!candidateId) {
+    candidateId = await WorkerFailureRecoveryService.recoverNext({
+      sourceSha: knowledge.commitSha,
+      runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,
+      manual: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch', now: new Date(),
+    });
+    if (candidateId) console.log('[self-evolution-runner] Retomando tarefa apos falha do worker:', candidateId);
+  }
 
   if (!candidateId) {
     if ((siteAudit.findings || 0) > 0) {
       console.warn('::warning::Ha falhas reais no site, mas nenhuma tarefa retomavel. Confira candidatos que falharam, rejeicoes e bloqueios.');
-      await recordOutcome({ status: 'audit_requires_attention', siteAudit }, Boolean(siteAudit.requiresResume));
+      await recordOutcome({ status: 'audit_requires_attention', siteAudit,
+        message: 'Falhas pendentes; a retomada pode estar limitada para evitar cobrancas repetidas. Consulte o ultimo diagnostico do candidato.' }, true);
       return;
     }
     const discovery = await OperationalAutoDiscoveryService.discoverOne();
@@ -165,7 +177,7 @@ async function main(): Promise<void> {
 
   const moreCandidates = snapshot.docs.some(doc => doc.id !== candidateId && RESUMABLE_STATES.has(String(doc.data().state)));
   await recordOutcome({ candidateId, siteAudit, state: result.state, message: result.message },
-    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state));
+    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state) || result.state === 'tests_failed');
 
   if (['failed', 'tests_failed', 'ci_failed'].includes(result.state)) {
     process.exitCode = 1;

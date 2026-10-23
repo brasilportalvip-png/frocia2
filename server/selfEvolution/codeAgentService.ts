@@ -6,6 +6,7 @@ import {
   EngineeringSandboxEvidenceService,
   REQUIRED_ENGINEERING_COMMANDS,
 } from './engineeringSandboxEvidenceService.js';
+import { RedactionService } from './redactionService.js';
 
 const MAX_GENERATED_FILES = 25;
 const MAX_FILE_CONTENT_BYTES = 1_000_000;
@@ -255,13 +256,21 @@ implements ICodeAgentAdapter {
         }
       );
 
+      const rawBody = await response.text();
       if (!response.ok) {
+        const diagnostic = EngineeringSandboxEvidenceService.verifySignedFailure({
+          rawBody, signatureHeader: response.headers.get('x-frocia-worker-signature'),
+          signingSecret, requestNonce, candidateId: candidate.id,
+        });
+        let message = diagnostic
+          ? `Worker retornou HTTP ${response.status} [${diagnostic.stage}]${diagnostic.providerStatus ? `, provedor HTTP ${diagnostic.providerStatus}` : ''}: ${diagnostic.error}${diagnostic.detail ? ` Detalhe: ${diagnostic.detail}` : ''}`
+          : `Worker retornou HTTP ${response.status}; diagnostico autenticado indisponivel.`;
+        for (const secret of [workerToken, signingSecret]) if (secret) message = message.split(secret).join('[REDACTED_SECRET]');
         return createFailureResult(
-          `Worker retornou HTTP ${response.status}.`
+          RedactionService.redactSensitiveData(message).replace(/[\r\n]+/g, ' ').slice(0, 4000)
         );
       }
 
-      const rawBody = await response.text();
       const verification =
         EngineeringSandboxEvidenceService.verifySignedResponse({
           rawBody,

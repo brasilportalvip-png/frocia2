@@ -12,6 +12,7 @@ import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
 import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
 import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 import { authenticateSelfSite } from './site-session-audit.mjs';
+import { safeDiagnosticText, workerFailurePayload } from './worker-failure.mjs';
 
 const app = express();
 app.disable('x-powered-by');
@@ -95,7 +96,10 @@ async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
     stdoutSha256: sha(result.stdout), stderrSha256: sha(result.stderr),
   };
   if (result.exitCode !== 0) {
-    const error = new Error(`command_failed:${id}`); error.evidence = evidence; throw error;
+    const error = new Error(`command_failed:${id}`); error.evidence = evidence;
+    error.stderrTail = safeDiagnosticText(result.stderr.toString());
+    error.stdoutTail = safeDiagnosticText(result.stdout.toString());
+    throw error;
   }
   return evidence;
 }
@@ -159,14 +163,17 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'frocia-engi
 app.post('/api/worker/patch', authenticate, async (req, res) => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'frocia-worker-'));
   const cwd = path.join(temp, 'repo'); const commands = [];
+  const body = req.body || {};
+  let stage = 'request'; let repairCycleReport;
   try {
-    const body = req.body || {};
     if (!/^[A-Za-z0-9._:-]{1,160}$/.test(body.candidateId || '') || !/^[a-f0-9]{48}$/i.test(body.requestNonce || '')) throw new Error('request_invalid');
     if (body.executionPolicy?.networkPolicy !== 'restricted' || process.env.SANDBOX_NETWORK_POLICY !== 'restricted') throw new Error('restricted_network_policy_required');
     const repository = new URL(required('SANDBOX_REPOSITORY_URL'));
     if (repository.protocol !== 'https:' || repository.username || repository.password) throw new Error('repository_https_without_embedded_credentials_required');
+    stage = 'clone';
     const clone = await run('git', ['clone', '--no-tags', '--depth', '50', '--branch', process.env.GITHUB_BASE_BRANCH || 'main', repository.toString(), cwd], temp, 120_000);
-    if (clone.exitCode !== 0) throw new Error('clone_failed');
+    if (clone.exitCode !== 0) { const error = new Error('clone_failed'); error.stderrTail = safeDiagnosticText(clone.stderr.toString()); throw error; }
+    stage = 'repository_context';
     const head = await run('git', ['rev-parse', 'HEAD'], cwd, 10_000);
     const baseSha = head.stdout.toString().trim();
     if (!/^[a-f0-9]{40}$/i.test(baseSha)) throw new Error('base_sha_invalid');
@@ -174,18 +181,21 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const engineeringContext = await repositoryContext(body, cwd);
     const allowed = new Set([...(body.probableFiles || []), ...engineeringContext.editablePaths].map(safeRepoPath).filter(Boolean));
     if (!allowed.size) throw new Error('allowed_paths_required');
+    stage = 'ownership';
     const initialOwnership = await run('chown', ['-R', '10001:10001', temp], temp, 30_000);
     if (initialOwnership.exitCode !== 0) throw new Error('sandbox_initial_ownership_failed');
     let outputFiles = [];
     const repairCycle = await executeAutonomousRepairCycle({
       maximumAttempts: Number(process.env.ENGINEERING_MAX_REPAIR_ATTEMPTS || 3),
       restoreBaseline: async () => {
+        stage = 'restore_baseline';
         const reset = await run('git', ['reset', '--hard', baseSha], cwd, 30_000, {}, true);
         const clean = await run('git', ['clean', '-fd'], cwd, 30_000, {}, true);
         if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
       },
-      generate: async ({ feedback }) => generatePatch(body, cwd, allowed, engineeringContext, feedback),
+      generate: async ({ feedback }) => { stage = 'generation'; return generatePatch(body, cwd, allowed, engineeringContext, feedback); },
       apply: async (patch) => {
+        stage = 'apply';
         const nextFiles = [];
         for (const file of patch.files) {
           const relative = safeRepoPath(file.path);
@@ -199,6 +209,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         if (ownership.exitCode !== 0) throw new Error('sandbox_ownership_failed');
       },
       certify: async () => {
+        stage = 'certification';
         const attemptCommands = [];
         try {
           const pkg = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf8'));
@@ -215,13 +226,16 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
           return { passed: true, evidenceRefs: attemptCommands.map((item) => `${item.id}:${item.stdoutSha256}`) };
         } catch (error) {
           const evidence = error?.evidence;
-          return { passed: false, failure: { stage: evidence?.id || 'certification', exitCode: evidence?.exitCode || 1, stdoutSha256: evidence?.stdoutSha256, stderrSha256: evidence?.stderrSha256, summary: error instanceof Error ? error.message : 'certification_failed' } };
+          commands.splice(0, commands.length, ...attemptCommands, ...(evidence ? [evidence] : []));
+          return { passed: false, failure: { stage: evidence?.id || 'certification', exitCode: evidence?.exitCode || 1, stdoutSha256: evidence?.stdoutSha256, stderrSha256: evidence?.stderrSha256, summary: error instanceof Error ? error.message : 'certification_failed', stderrTail: error?.stderrTail, stdoutTail: error?.stdoutTail } };
         }
       },
     });
+    repairCycleReport = repairCycle;
     if (!repairCycle.passed || !repairCycle.patch) throw new Error('autonomous_repair_exhausted');
     const generated = repairCycle.patch;
     if (!REQUIRED_COMMANDS.every((id) => commands.some((command) => command.id === id))) throw new Error('required_commands_missing');
+    stage = 'diff';
     const diff = await run('git', ['diff', '--binary', '--no-ext-diff'], cwd, 30_000);
     const after = await workspaceDigest(cwd);
     const stats = await run('git', ['diff', '--numstat'], cwd, 30_000);
@@ -230,6 +244,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
       const [added, removed] = line.split('\t');
       if (/^\d+$/.test(added)) linesAdded += Number(added); if (/^\d+$/.test(removed)) linesRemoved += Number(removed);
     }
+    stage = 'rollback';
     await mustRun('rollback-reset', 'git', ['reset', '--hard', baseSha], 'git reset --hard', cwd);
     await mustRun('rollback-clean', 'git', ['clean', '-fd'], 'git clean -fd', cwd);
     const status = await run('git', ['status', '--porcelain'], cwd, 10_000);
@@ -256,7 +271,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
       },
     });
   } catch (error) {
-    return sendSigned(res, { error: error instanceof Error ? error.message : 'worker_failed', commands }, 422);
+    return sendSigned(res, workerFailurePayload({ body, stage, error, commands, repairCycle: repairCycleReport }), 422);
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

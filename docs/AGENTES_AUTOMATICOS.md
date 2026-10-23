@@ -43,6 +43,8 @@ Endpoints adicionais, todos com requireAuth e requireAdmin:
 
 - Primeira tentativa prevista para 09h17 de Brasilia; recuperacao/retomada a cada trinta minutos ate 20h47. O GitHub pode atrasar eventos; as tentativas extras reduzem a dependencia de um unico disparo, sem garantir pontualidade absoluta.
 - Um workflow verde aguardando CI, preview, varredura ou verificacao de producao nao encerra as retomadas. O marcador de conclusao depende de nao haver retomada indicada.
+- Uma resposta HTTP 422 do worker conserva um diagnostico assinado, com etapa, erro e trecho final da saida do comando, quando houver. O runner verifica assinatura, candidato, nonce e horario antes de registrar esse texto. Segredos conhecidos sao removidos. O estado legado tests_failed tambem pode indicar falha anterior aos testes; a etapa determina o que realmente ocorreu.
+- Uma tarefa tests_failed anterior ao PR pode voltar ao estado detected, preservando o mesmo documento e suas evidencias. Ha uma retomada automatica por versao/dia e ate tres retomadas no dia de Brasilia, incluindo pedidos manuais. A transacao confere novamente o estado; orcamento, lock, testes, CI e revisao continuam no caminho normal. Um defeito ainda pendente nao encerra o ciclo como concluido.
 - A selecao de tarefas considera todos os estados retomaveis, incluindo a verificacao depois do merge; nao fica limitada aos cem documentos mais recentes.
 - O modo desta esteira permite manutencao do codigo do repositorio, inclusive agentes/worker/workflows, com SELF_EVOLUTION_FULL_REPOSITORY_ACCESS=true. Isso nao dispensa sandbox, testes, CI, preview ou revisao independente. Segredos permanecem fora dos arquivos gerados.
 - A publicacao automatica fica habilitada por padrao no workflow, conforme o pedido do proprietario. A variable AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED=false conserva uma parada explicita da publicacao. A parada global persistente tambem e respeitada.
@@ -104,7 +106,15 @@ A conexao GitHub-Vercel publica os pushes da main. O executor dos agentes precis
 
 Cadastre os valores nas secrets do repositorio em https://github.com/brasilportalvip-png/frocia2/settings/secrets/actions . O Project ID fica nas configuracoes do projeto frocia2 da Vercel. Use um token com acesso a esse projeto/equipe. Nenhuma credencial deve ser adicionada ao Git ou enviada em mensagens.
 
-## Atualizacao de acessos depois do merge do PR 84
+## Diagnostico e retomada depois da rodada 25
+
+A rodada 25, na main 0526afebed02d32f37e3cd3a7d862ec718f269ff, confirmou a prova de escrita no GitHub e Vercel ready. O worker respondeu HTTP 422, mas o adaptador descartou o corpo da resposta. Esse log nao comprova qual etapa falhou nem que algum teste chegou a ser executado.
+
+O pacote de diagnostico parte dessa main. Extraia o ZIP atualizado em uma pasta nova, fora do clone, e execute ATUALIZAR_WORKER.cmd. Depois inicie uma nova execucao do workflow na main para reconstruir o worker, retomar a tarefa existente e obter sua causa real. Reexecutar uma rodada antiga usa o codigo antigo.
+
+Esta atualizacao corrige o descarte do diagnostico e a exclusao da tarefa da fila retomavel. Ela nao afirma corrigir a causa ainda desconhecida do 422. A publicacao de um reparo do site continua dependendo de uma execucao real com todos os gates aprovados.
+
+## Historico: atualizacao de acessos depois do merge do PR 84
 
 O PR 84 ja foi integrado. O pacote atualizado parte da main f6d873fffc42df97010ccbc9f0e43da0a40eb011 e inclui a prova real de escrita e o provisionamento da conta de teste.
 

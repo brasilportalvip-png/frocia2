@@ -20,12 +20,12 @@ describe('autonomous repair cycle', () => {
     const restoreBaseline = vi.fn(async () => undefined);
     const apply = vi.fn(async () => undefined);
     const certify = vi.fn(async ({ attempt }) => attempt === 1
-      ? { passed: false, failure: { stage: 'typecheck', exitCode: 2, summary: 'TS2322', stdoutSha256: 'a'.repeat(64), stderrSha256: 'b'.repeat(64) } }
+      ? { passed: false, failure: { stage: 'typecheck', exitCode: 2, summary: 'TS2322', stdoutTail: 'src/fix.ts: TS2322', stdoutSha256: 'a'.repeat(64), stderrSha256: 'b'.repeat(64) } }
       : { passed: true, evidenceRefs: ['typecheck:sha256', 'tests:sha256'] });
     const result = await executeAutonomousRepairCycle({ maximumAttempts: 3, generate, restoreBaseline, apply, certify });
     expect(result.passed).toBe(true);
     expect(result.selectedAttempt).toBe(2);
-    expect(generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ feedback: expect.objectContaining({ stage: 'typecheck' }) }));
+    expect(generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ feedback: expect.objectContaining({ stage: 'typecheck', stdoutTail: 'src/fix.ts: TS2322' }) }));
     expect(result.attempts).toHaveLength(2);
     expect(result.digest).toMatch(/^[a-f0-9]{64}$/);
   });

@@ -73,6 +73,25 @@ function secureSignature(rawBody: string, secret: string): string {
 }
 
 export class EngineeringSandboxEvidenceService {
+  static verifySignedFailure(input: {
+    rawBody: string; signatureHeader: string | null; signingSecret: string;
+    requestNonce: string; candidateId: string; now?: Date;
+  }): { stage: string; error: string; detail: string; providerStatus?: number } | null {
+    if (input.rawBody.length > 120_000) return null;
+    const supplied = input.signatureHeader?.match(/^sha256=([a-f0-9]{64})$/i)?.[1];
+    if (!supplied || !crypto.timingSafeEqual(Buffer.from(supplied, 'hex'), Buffer.from(secureSignature(input.rawBody, input.signingSecret), 'hex'))) return null;
+    try {
+      const data = JSON.parse(input.rawBody);
+      if (data.schemaVersion !== 'engineering-sandbox-failure-v1' || data.requestNonce !== input.requestNonce ||
+          data.candidateId !== input.candidateId || !isIsoTimestamp(data.issuedAt) ||
+          Math.abs((input.now || new Date()).getTime() - Date.parse(data.issuedAt)) > 10 * 60_000 ||
+          typeof data.stage !== 'string' || typeof data.error !== 'string') return null;
+      return { stage: data.stage.slice(0, 80), error: data.error.slice(0, 1800),
+        detail: typeof data.detail === 'string' ? data.detail.slice(-1800) : '',
+        ...(Number.isInteger(data.providerStatus) ? { providerStatus: data.providerStatus } : {}) };
+    } catch { return null; }
+  }
+
   static createRequestNonce(): string {
     return crypto.randomBytes(24).toString('hex');
   }
