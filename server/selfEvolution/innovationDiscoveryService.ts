@@ -131,9 +131,11 @@ export class InnovationDiscoveryService {
       await cycleRef.update({ status: 'no_proposal', reason: 'invalid_json' });
       return result('no_proposal');
     }
-    const proposal = validateInnovationProposal(parsed, agent, evidence);
+       const declined = (parsed as { noProposal?: unknown } | null)?.noProposal === true;
+    const modelReason = declined ? String((parsed as { reason?: unknown }).reason ?? '').slice(0, 300) : '';
+    const proposal = declined ? null : validateInnovationProposal(parsed, agent, evidence);
     if (!proposal || proposal.probableFiles.some((file) => context[file] === '(arquivo nao acessivel neste ambiente)')) {
-      await cycleRef.update({ status: 'no_proposal' });
+      await cycleRef.update({ status: 'no_proposal', reason: declined ? 'model_declined' : 'rejected_by_validator', modelReason });
       return result('no_proposal');
     }
 
