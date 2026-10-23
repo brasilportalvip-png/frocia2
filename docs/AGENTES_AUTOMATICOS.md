@@ -173,3 +173,33 @@ O aplicador antigo nao deve ser usado para esta atualizacao. Ele criava a branch
 - A API de gravacao desta conversa retornou HTTP 403 Resource not accessible by integration. Nenhuma destas atualizacoes foi enviada por esta conversa ao PR, mesclada na main ou publicada. Isso nao comprova ausencia de acesso da propria Froc.IA.
 
 Referencias de implementacao: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow e https://vercel.com/docs/rest-api/aliases/get-an-alias e https://vercel.com/docs/rest-api/deployments/get-a-deployment-by-id-or-url .
+
+## Interrupcao do executor em 23/10/2026
+
+A rodada 28 perdeu a comunicacao do runner; seus logs finais e a etapa
+`always()` nao chegaram a ser publicados. A rodada 29 conservou o mesmo
+codigo e terminou com `agent_running`, lock ativo e `requiresResume: true`;
+o verde dessa rodada nao comprova que o reparo foi aplicado.
+
+Nos logs da rodada 29, o Harden-Runner v2.21.0 bloqueou os dominios
+`hosted-compute-watchdog-prod-eus-01.githubapp.com` e
+`hosted-compute-request-orchestrator-prod-eus-01.githubapp.com`. A issue 679
+do fornecedor documenta o mesmo comportamento e sua correcao no v2.21.1:
+https://github.com/step-security/harden-runner/issues/679 . A ausencia dos
+logs da VM perdida impede medir CPU/memoria finais da rodada 28.
+
+O workflow passa a usar v2.22.2 fixado por SHA e explicita os dominios de
+controle `*.githubapp.com:443` e `*.actions.githubusercontent.com:443` nos
+dois jobs. A politica continua `block` e o teste de destino nao autorizado
+continua obrigatorio.
+
+Durante o ciclo, o monitor publica a cada 30 segundos o estado do container,
+OOMKilled, CPU, memoria, processos, memoria e disco disponiveis do executor,
+alem das etapas/comandos novos do worker. Le apenas `.State` no inspect e
+sanitiza os logs; nao imprime ambiente ou argumentos de processos. O monitor
+encerra ao sair o ciclo e a coleta final continua existindo. Essas amostras
+melhoram o diagnostico de uma interrupcao; nao garantem que todo log seja
+entregue se a VM perder a rede.
+
+Implementado e testado localmente; a conectividade corrigida e a aplicacao
+do reparo ainda exigem confirmacao numa nova rodada real do Actions.
