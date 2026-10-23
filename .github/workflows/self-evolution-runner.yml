@@ -35,8 +35,10 @@ jobs:
         with:
           egress-policy: block
           disable-telemetry: true
-          allowed-endpoints: >
+                    allowed-endpoints: >
+            github.com:443
             api.github.com:443
+            codeload.github.com:443
 
       - name: Verificar se o ciclo de hoje precisa executar
         id: schedule
