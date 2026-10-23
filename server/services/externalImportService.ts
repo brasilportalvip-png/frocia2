@@ -1069,11 +1069,14 @@ return {
     license: metadata.license?.spdx_id || null,
     archived: metadata.archived,
     treeTruncatedByGithub: Boolean(tree.truncated),
+    treeTruncatedByImport: false,
+    filesAvailable: files.length,
     filesReturned: files.length,
     files,
     contentFilesReturned: importedFiles.length,
     contentBytesReturned: importedBytes,
     contentLimits: {
+  summaryTruncated: false,
   maximumFiles:
     MAX_GITHUB_CONTENT_FILES,
   maximumFileBytes:
@@ -1105,7 +1108,32 @@ return {
     },
     readme: readmeText || null
   };
-  const content = JSON.stringify(document, null, 2);
+  let content = JSON.stringify(document, null, 2);
+  // O orcamento de arquivos brutos nao inclui a repeticao em segments nem o
+  // grafo. Ajustar objetos completos, nunca cortar o JSON serializado.
+  while (Buffer.byteLength(content, 'utf8') > MAX_EXTRACTED_CHARACTERS && importedFiles.length > 0) {
+    importedFiles.pop(); // A ordenacao anterior preserva manifestos e arquivos prioritarios.
+    document.contentLimits.summaryTruncated = true;
+    document.contentFilesReturned = importedFiles.length;
+    document.contentBytesReturned = importedFiles.reduce((sum, file) => sum + file.size, 0);
+    document.architecture = {
+      ...RepositoryArchitectureService.analyze(importedFiles.map(file => ({ path: file.path, content: file.content }))),
+      coverage: { listedFiles: document.filesAvailable, analyzedContentFiles: importedFiles.length, partial: true },
+    };
+    document.trustBoundary.promptInjectionDetected = importedFiles.some(file => detectRepositoryPromptInjection(file.content)) ||
+      detectRepositoryPromptInjection(readmeText);
+    document.trustBoundary.filesWithPromptInjectionSignals = importedFiles
+      .filter(file => detectRepositoryPromptInjection(file.content)).map(file => file.path).slice(0, 20);
+    content = JSON.stringify(document, null, 2);
+  }
+  while (Buffer.byteLength(content, 'utf8') > MAX_EXTRACTED_CHARACTERS && files.length > 0) {
+    files.splice(Math.floor(files.length * 0.9));
+    document.treeTruncatedByImport = true;
+    document.filesReturned = files.length;
+    document.contentLimits.summaryTruncated = true;
+    document.architecture.coverage.partial = true;
+    content = JSON.stringify(document, null, 2);
+  }
   if (Buffer.byteLength(content, 'utf8') > MAX_EXTRACTED_CHARACTERS) {
     throw new ExternalImportError(
       'github_repository_too_large',

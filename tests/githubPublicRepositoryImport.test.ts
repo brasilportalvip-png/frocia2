@@ -211,6 +211,38 @@ describe('public GitHub repository import', () => {
     expect(result.content).not.toContain('BEGIN PRIVATE KEY');
   });
 
+  it('devolve JSON valido e cobertura parcial quando conteudo e segmentos ultrapassam o resumo', async () => {
+    const packageSha = 'e'.repeat(40);
+    const sourceShas = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40)];
+    const source = `export const text = '${'a'.repeat(195_950)}';`;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/repos/openai/budget')) return jsonResponse({
+        full_name: 'openai/budget', description: null, default_branch: 'main', language: 'TypeScript',
+        stargazers_count: 0, forks_count: 0, html_url: 'https://github.com/openai/budget',
+        private: false, archived: false, topics: [],
+      });
+      if (url.includes('/git/trees/main')) return jsonResponse({ tree: [
+        { path: 'package.json', type: 'blob', size: 50, sha: packageSha },
+        ...sourceShas.map((sha, index) => ({ path: `src/file-${index}.ts`, type: 'blob', size: Buffer.byteLength(source), sha })),
+      ] });
+      if (url.endsWith('/readme')) return jsonResponse({}, 404);
+      if (url.endsWith(`/git/blobs/${packageSha}`)) return jsonResponse(encoded('{"name":"budget-regression"}'));
+      if (sourceShas.some(sha => url.endsWith(`/git/blobs/${sha}`))) return jsonResponse(encoded(source));
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    const result = await ExternalImportService.import({ type: 'github', url: 'https://github.com/openai/budget' });
+    const document = JSON.parse(result.content);
+    expect(Buffer.byteLength(result.content, 'utf8')).toBeLessThanOrEqual(700_000);
+    expect(document.importedFiles[0].path).toBe('package.json');
+    expect(document.importedFiles.length).toBeGreaterThan(1);
+    expect(document.importedFiles.length).toBeLessThan(4);
+    expect(document.contentFilesReturned).toBe(document.importedFiles.length);
+    expect(document.contentLimits.summaryTruncated).toBe(true);
+    expect(document.architecture.coverage.partial).toBe(true);
+    for (const file of document.importedFiles) expect(file.segments.join('')).toBe(file.content);
+  });
+
   it('lê integralmente arquivo GitHub acima de 100 KB em segmentos seguros', async () => {
     const largeSha = '9'.repeat(40);
 

@@ -55,6 +55,8 @@ interface GitHubPullRequestResponse {
   };
   state?: string;
   draft?: boolean;
+  merged?: boolean;
+  merge_commit_sha?: string;
 }
 
 export interface MergePullRequestResult {
@@ -64,6 +66,63 @@ export interface MergePullRequestResult {
 }
 
 export class GithubAutomationService {
+  static async dispatchOfficialCI(branchName: string): Promise<{ success: boolean; message: string }> {
+    if (!/^froc-evolution\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
+      return { success: false, message: 'Branch de manutencao invalida para solicitar o CI.' };
+    }
+    if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial para iniciar o CI.' };
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/ci.yml/dispatches`, {
+        method: 'POST', headers: this.getHeaders(token, true), body: JSON.stringify({ ref: branchName }),
+      });
+      return { success: response.ok, message: response.ok ? 'CI oficial solicitado para a branch da correcao.'
+        : `GitHub recusou solicitar CI: HTTP ${response.status}. Confira Actions com escrita e o workflow_dispatch do ci.yml.` };
+    } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Falha ao solicitar CI.' }; }
+  }
+
+  static async dispatchSelfMaintenance(): Promise<{ success: boolean; message: string }> {
+    if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial para iniciar a manutencao.' };
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml/dispatches`, {
+        method: 'POST', headers: this.getHeaders(token, true),
+        body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main' }),
+      });
+      return { success: response.ok, message: response.ok
+        ? 'Execucao de manutencao solicitada ao GitHub Actions; acompanhe o resultado na fila.'
+        : `A solicitacao permanece na fila; GitHub recusou iniciar o workflow: HTTP ${response.status}.` };
+    } catch (error) {
+      return { success: false, message: `A solicitacao permanece na fila: ${error instanceof Error ? error.message : 'falha de comunicacao com GitHub'}` };
+    }
+  }
+
+  /** Leitura autenticada, sem criar branch/PR e sem expor o token no resultado. */
+  static async verifyRepositoryAccess(): Promise<{ success: boolean; message: string }> {
+    if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial de automacao no executor externo.' };
+    const owner = (process.env.GITHUB_OWNER || 'brasilportalvip-png').trim();
+    const repo = (process.env.GITHUB_REPO || 'frocia2').trim();
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const response = await this.githubFetch(
+        `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { headers: this.getHeaders(token) }
+      );
+      if (!response.ok) return { success: false, message: `GitHub recusou o acesso do executor ao repositorio: HTTP ${response.status}.` };
+      const metadata = await response.json() as { permissions?: { push?: boolean } };
+      if (metadata.permissions?.push === false) {
+        return { success: false, message: 'A credencial do executor possui leitura, mas nao possui escrita no repositorio.' };
+      }
+      return { success: true, message: 'Leitura autenticada do repositorio confirmada. A escrita sera comprovada pela criacao do PR.' };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Falha ao verificar acesso ao GitHub.' };
+    }
+  }
+
   private static isConfigured(): boolean {
     const token =
       process.env.GITHUB_TOKEN ||
@@ -731,6 +790,9 @@ export class GithubAutomationService {
         return { success: false, message: `Falha ao conferir PR #${pullNumber}: HTTP ${inspectResponse.status}.` };
       }
       const pull = (await inspectResponse.json()) as GitHubPullRequestResponse;
+      if (pull.merged === true && pull.head?.sha === expectedHeadSha && /^[a-f0-9]{40}$/i.test(pull.merge_commit_sha || '')) {
+        return { success: true, mergeCommitSha: pull.merge_commit_sha, message: `PR #${pullNumber} ja mergeado; retomando a verificacao da publicacao.` };
+      }
       if (pull.state !== 'open' || pull.draft === true) {
         return { success: false, message: `PR #${pullNumber} não está aberto e pronto para merge.` };
       }

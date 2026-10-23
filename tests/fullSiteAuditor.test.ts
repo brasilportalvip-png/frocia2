@@ -70,6 +70,43 @@ function missing(url: string): never {
 }
 
 describe('Auditor completo e seguro de sites', () => {
+  it('retoma a fronteira e cobre mais de quarenta paginas sem recomecar pela primeira', async () => {
+    const visited: string[] = [];
+    const importer = async (url: string) => {
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml')) return missing(url);
+      visited.push(url);
+      return imported(url, { signals: { links: url === 'https://example.com/'
+        ? Array.from({ length: 94 }, (_, i) => `https://example.com/page-${i}`) : [] } });
+    };
+    let checkpoint;
+    let batches = 0;
+    do {
+      const report = await SiteAuditService.audit({ url: 'https://example.com/', maxPages: 40, fullCoverage: true, checkpoint }, { importer });
+      checkpoint = report.checkpoint;
+      batches += 1;
+      expect(batches).toBeLessThan(5);
+    } while (checkpoint?.pendingUrls.length || checkpoint?.pendingSitemaps.length);
+    expect(batches).toBe(3);
+    expect(visited).toHaveLength(95);
+    expect(new Set(visited).size).toBe(95);
+  });
+
+  it('nao descarta URLs alem de duas mil quando a varredura e retomavel', async () => {
+    const importer = async (url: string) => {
+      if (url.endsWith('/robots.txt') || url.endsWith('/sitemap.xml')) return missing(url);
+      return imported(url, { signals: { links: Array.from({ length: 2_050 }, (_, i) => `https://example.com/p-${i}`) } });
+    };
+    const report = await SiteAuditService.audit({ url: 'https://example.com/', maxPages: 1, fullCoverage: true }, { importer });
+    expect(report.checkpoint?.pendingUrls).toHaveLength(2050);
+    expect(report.status).toBe('partial');
+  });
+
+  it('nao aceita checkpoint de outro dominio', async () => {
+    await expect(SiteAuditService.audit({ url: 'https://example.com/', fullCoverage: true,
+      checkpoint: { origin: 'https://other.example', pendingUrls: [], visitedUrls: [], pendingSitemaps: [], processedSitemaps: [], loadedSitemaps: [] },
+    })).rejects.toThrow('outro site');
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

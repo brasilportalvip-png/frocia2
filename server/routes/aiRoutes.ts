@@ -2,6 +2,7 @@
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
+import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { ContextBuilder, ContextLimitExceededError } from '../ai/contextBuilder.js';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -681,6 +682,7 @@ try {
            const assembled =
         await ContextBuilder.assemble({
           userId: uid,
+          selfSiteContext: await SelfSiteOwnerService.context({ role: req.user!.role, userId: uid, prompt: sanitizedPrompt }),
           tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
           mode: executionMode,
@@ -1312,6 +1314,7 @@ aiRouter.post(
             tenantId: req.user!.tenantId,
             userDisplayName: req.user!.name,
             ...parsedRequest,
+            trustedUserRole: req.user!.role,
             abortSignal:
               requestAbortController.signal
           },
@@ -1500,6 +1503,7 @@ aiRouter.post(
           tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
           ...parsed,
+          trustedUserRole: req.user!.role,
           mode: 'research',
           idempotencyKey: `${idempotencyKey}-gemini`,
         },

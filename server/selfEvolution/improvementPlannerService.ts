@@ -128,6 +128,8 @@ export class ImprovementPlannerService {
       | 'headCommitSha'
       | 'pullRequestUrl'
       | 'previewUrl'
+      | 'productionMergeSha'
+      | 'productionDeploymentId'
     >
   ): Promise<boolean> {
     const cleaned = Object.fromEntries(

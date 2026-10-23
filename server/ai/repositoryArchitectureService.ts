@@ -124,6 +124,12 @@ function resolveInternalImport(from: string, specifier: string, paths: Set<strin
   if (!specifier.startsWith('.')) return null;
   const base = path.normalize(path.join(path.dirname(from), specifier));
   if (base.startsWith('../') || base === '..') return null;
+  // O TypeScript importa .js no ESM, embora o arquivo versionado seja .ts/.tsx.
+  if (/\.[cm]?js$/.test(base)) {
+    for (const candidate of [base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), base.replace(/\.mjs$/, '.mts'), base.replace(/\.cjs$/, '.cts')]) {
+      if (paths.has(candidate)) return candidate;
+    }
+  }
   for (const extension of RESOLUTION_EXTENSIONS) {
     const candidate = `${base}${extension}`;
     if (paths.has(candidate)) return candidate;

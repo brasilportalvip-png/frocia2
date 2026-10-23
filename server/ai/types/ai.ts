@@ -132,6 +132,8 @@ export interface ToolDeclaration {
 
 export interface ExecutionParams {
   userId: string;
+  /** Papel verificado pelo middleware; nunca aceitar do corpo enviado pelo cliente. */
+  trustedUserRole?: 'user' | 'admin';
   tenantId?: string;
   userDisplayName?: string;
   conversationId?: string | null;

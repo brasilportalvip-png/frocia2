@@ -159,6 +159,8 @@ export interface ImprovementCandidate {
   headCommitSha?: string;
   pullRequestUrl?: string;
   previewUrl?: string;
+  productionMergeSha?: string;
+  productionDeploymentId?: string;
   createdAt: string;
   updatedAt: string;
 }

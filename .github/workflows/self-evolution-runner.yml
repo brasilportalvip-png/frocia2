@@ -3,19 +3,83 @@ name: Froc.IA - Autoevolucao Externa
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 12 * * *'
+    # 09h17 de Brasilia; recuperacao e retomada de CI/preview a cada 30 min ate 20h47.
+    - cron: '17,47 12-23 * * *'
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: frocia-self-evolution-external
   cancel-in-progress: false
 
 jobs:
+  check-schedule:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      should_run: ${{ steps.schedule.outputs.should_run }}
+    steps:
+      - name: Baixar verificacao do agendamento
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Restringir rede da verificacao
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: Verificar se o ciclo de hoje precisa executar
+        id: schedule
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          SELF_EVOLUTION_RUNNER_ENABLED: ${{ vars.SELF_EVOLUTION_RUNNER_ENABLED }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const scriptUrl = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/self-evolution-schedule.mjs`);
+            const { planSelfEvolutionRun } = await import(scriptUrl.href);
+            const decision = await planSelfEvolutionRun({
+              github, context, enabled: process.env.SELF_EVOLUTION_RUNNER_ENABLED,
+            });
+            core.setOutput('should_run', String(decision.shouldRun));
+            core.info(`[self-evolution-schedule] ${decision.dateKey}: ${decision.reason}`);
+            if (decision.reason === 'runner_disabled') {
+              core.warning('Agendamento bloqueado: SELF_EVOLUTION_RUNNER_ENABLED=false nas variaveis do repositorio.');
+            }
+            const messages = {
+              manual: 'Execucao manual solicitada.',
+              runner_disabled: 'Bloqueado pela variavel SELF_EVOLUTION_RUNNER_ENABLED=false.',
+              before_daily_window: 'Aguardando 09h17 de Brasilia; um evento antigo chegou atrasado.',
+              already_completed: 'O ciclo de hoje ja executou com sucesso; worker e modelos nao serao chamados novamente.',
+              missing_daily_run: 'Nenhuma execucao concluida hoje; iniciando o ciclo automatico ou sua recuperacao.',
+            };
+            core.summary
+              .addHeading('Agendamento dos agentes')
+              .addTable([
+                [{ data: 'Campo', header: true }, { data: 'Valor', header: true }],
+                ['Dia (America/Sao_Paulo)', decision.dateKey],
+                ['Gatilho', context.eventName],
+                ['Decisao', messages[decision.reason]],
+                ['Horario', '09h17; recuperacao e retomada a cada 30 min ate 20h47, horario de Brasilia'],
+              ]);
+            if (decision.completedRunUrl) {
+              core.summary.addLink('Execucao ja concluida hoje', decision.completedRunUrl);
+            }
+            await core.summary.write();
+
   execute:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.SELF_EVOLUTION_RUNNER_ENABLED != 'false' }}
+    needs: check-schedule
+    if: ${{ needs.check-schedule.outputs.should_run == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
 
@@ -61,6 +125,13 @@ jobs:
             generativelanguage.googleapis.com:443
             firestore.googleapis.com:443
             oauth2.googleapis.com:443
+            identitytoolkit.googleapis.com:443
+            securetoken.googleapis.com:443
+            www.googleapis.com:443
+            www.gstatic.com:443
+            fonts.googleapis.com:443
+            fonts.gstatic.com:443
+            portalvipbrasil.com.br:443
             api.vercel.com:443
             *.vercel.app:443
 
@@ -93,6 +164,14 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+          BROWSER_TEST_LOGIN_URL: ${{ vars.BROWSER_TEST_LOGIN_URL || secrets.BROWSER_TEST_LOGIN_URL }}
+          BROWSER_TEST_USER: ${{ secrets.BROWSER_TEST_USER }}
+          BROWSER_TEST_PASSWORD: ${{ secrets.BROWSER_TEST_PASSWORD }}
+          BROWSER_USER_SELECTOR: ${{ vars.BROWSER_USER_SELECTOR }}
+          BROWSER_PASSWORD_SELECTOR: ${{ vars.BROWSER_PASSWORD_SELECTOR }}
+          BROWSER_SUBMIT_SELECTOR: ${{ vars.BROWSER_SUBMIT_SELECTOR }}
+          BROWSER_LOGIN_OPEN_SELECTOR: ${{ vars.BROWSER_LOGIN_OPEN_SELECTOR }}
+          BROWSER_AUTHENTICATED_SELECTOR: ${{ vars.BROWSER_AUTHENTICATED_SELECTOR }}
         run: |
           docker run -d \
             --name frocia-worker \
@@ -110,8 +189,17 @@ jobs:
             -e GEMINI_API_KEY \
             -e SELF_EVOLUTION_WORKER_TOKEN \
             -e SELF_EVOLUTION_WORKER_SIGNING_SECRET \
+            -e BROWSER_TEST_LOGIN_URL \
+            -e BROWSER_TEST_USER \
+            -e BROWSER_TEST_PASSWORD \
+            -e BROWSER_USER_SELECTOR \
+            -e BROWSER_PASSWORD_SELECTOR \
+            -e BROWSER_SUBMIT_SELECTOR \
+            -e BROWSER_LOGIN_OPEN_SELECTOR \
+            -e BROWSER_AUTHENTICATED_SELECTOR \
             -e SANDBOX_REPOSITORY_URL=https://github.com/brasilportalvip-png/frocia2.git \
             -e GITHUB_BASE_BRANCH=main \
+            -e SELF_EVOLUTION_FULL_REPOSITORY_ACCESS=true \
             -e SANDBOX_NETWORK_POLICY=restricted \
             frocia-worker
 
@@ -141,11 +229,14 @@ jobs:
           echo "Teste de bloqueio concluido."
 
       - name: Executar ciclo de autoevolucao
+        id: cycle
         env:
           NODE_ENV: test
           SELF_EVOLUTION_RUNNER_ENABLED: 'true'
           SELF_EVOLUTION_ENABLED: 'true'
-          AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED }}
+          SELF_EVOLUTION_FULL_REPOSITORY_ACCESS: 'true'
+          # Autonomia solicitada pelo proprietario; a variavel false continua como parada explicita.
+          AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED: ${{ vars.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED || 'true' }}
 
           FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -154,12 +245,25 @@ jobs:
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
 
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # App/token proprio tem prioridade. O token do Actions usa dispatch explicito do CI.
+          GITHUB_TOKEN: ${{ secrets.SELF_EVOLUTION_GITHUB_TOKEN || (secrets.FROC_GITHUB_APP_PRIVATE_KEY == '' && secrets.FROC_GITHUB_APP_TOKEN == '' && github.token) || '' }}
+          SELF_EVOLUTION_CI_DISPATCH_REQUIRED: ${{ secrets.SELF_EVOLUTION_GITHUB_TOKEN == '' && secrets.FROC_GITHUB_APP_PRIVATE_KEY == '' && secrets.FROC_GITHUB_APP_TOKEN == '' && 'true' || 'false' }}
+          GITHUB_APP_TOKEN: ${{ secrets.FROC_GITHUB_APP_TOKEN }}
+          GITHUB_READ_TOKEN: ${{ github.token }}
+          GITHUB_APP_ID: ${{ secrets.FROC_GITHUB_APP_ID || vars.FROC_GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.FROC_GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_APP_SLUG: ${{ vars.FROC_GITHUB_APP_SLUG || secrets.FROC_GITHUB_APP_SLUG }}
           GITHUB_OWNER: brasilportalvip-png
           GITHUB_REPO: frocia2
           GITHUB_BASE_BRANCH: main
 
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID || vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID || vars.VERCEL_TEAM_ID }}
+          SELF_EVOLUTION_TARGET_URL: ${{ vars.SELF_EVOLUTION_TARGET_URL || 'https://frocia2.vercel.app/' }}
 
         run: node --import tsx scripts/self-evolution-runner.ts --run
+
+      - name: Rodada diaria finalizada
+        if: ${{ steps.cycle.outputs.requires_resume == 'false' }}
+        run: echo "Rodada encerrada sem retomada pendente. Consulte o resumo para cobertura e bloqueios."

@@ -1,3 +1,5 @@
+import { GithubAppService } from '../services/githubAppService.js';
+
 export interface RollbackResult {
   status: 'configured' | 'not_configured' | 'revert_pr_created' | 'success' | 'failed';
   success: boolean;
@@ -26,7 +28,7 @@ export class RollbackService {
     const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
     const repo = process.env.GITHUB_REPO || 'frocia2';
-    return Boolean(token?.trim() && owner.trim() && repo.trim());
+    return Boolean((token?.trim() || GithubAppService.isConfigured()) && owner.trim() && repo.trim());
   }
 
   private static headers(token: string): Record<string, string> {
@@ -44,11 +46,11 @@ export class RollbackService {
     reason: string,
     prNumber?: number
   ): Promise<RollbackResult> {
-    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
+    let token = process.env.GITHUB_TOKEN || process.env.GITHUB_APP_TOKEN;
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
     const repo = process.env.GITHUB_REPO || 'frocia2';
 
-    if (!this.isConfigured() || !token) {
+    if (!this.isConfigured()) {
       return {
         status: 'not_configured',
         success: false,
@@ -65,6 +67,10 @@ export class RollbackService {
 
     const repositoryUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     try {
+      if (!token?.trim()) {
+        const installation = await GithubAppService.findRepositoryInstallation(owner, repo);
+        token = (await GithubAppService.installationToken(installation)).token;
+      }
       const prResponse = await fetch(`${repositoryUrl}/pulls/${prNumber}`, {
         headers: this.headers(token),
         signal: AbortSignal.timeout(30_000),

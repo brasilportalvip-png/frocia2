@@ -1,4 +1,24 @@
 import { randomUUID } from 'node:crypto';
+import { appendFile } from 'node:fs/promises';
+
+async function recordOutcome(outcome: Record<string, unknown>, requiresResume: boolean): Promise<void> {
+  const json = JSON.stringify({ ...outcome, requiresResume }, null, 2);
+  if (process.env.GITHUB_OUTPUT) {
+    await appendFile(process.env.GITHUB_OUTPUT, `requires_resume=${requiresResume}\n`);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n## Resultado dos agentes\n\n\`\`\`json\n${json}\n\`\`\`\n`);
+  }
+  console.log('[self-evolution-runner] Resumo:', json);
+  const { adminDb, isFirebaseAdminConfigured } = await import('../server/lib/firebaseAdmin.js');
+  if (isFirebaseAdminConfigured()) {
+    const record = { ...outcome, requiresResume, recordedAt: new Date().toISOString(),
+      autonomousProductionDeployEnabled: process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED === 'true',
+      fullRepositoryAccessEnabled: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true' };
+    await adminDb.collection('self_evolution_config').doc('last_runner_outcome').set(record);
+    if (typeof outcome.candidateId === 'string') await adminDb.collection('self_evolution_candidate_outcomes').doc(outcome.candidateId).set(record);
+  }
+}
 
 const RESUMABLE_STATES = new Set([
   'detected',
@@ -10,6 +30,8 @@ const RESUMABLE_STATES = new Set([
   'ci_passed',
   'preview_deployed',
   'awaiting_release_approval',
+  'approved_for_release',
+  'monitoring',
 ]);
 
 async function main(): Promise<void> {
@@ -41,6 +63,14 @@ async function main(): Promise<void> {
     await import('../server/selfEvolution/innovationDiscoveryService.js');
   const { SelfEvolutionOrchestrator } =
     await import('../server/selfEvolution/selfEvolutionOrchestrator.js');
+  const { ProductionSiteAuditDiscoveryService } =
+    await import('../server/selfEvolution/productionSiteAuditDiscoveryService.js');
+  const { GithubAutomationService } =
+    await import('../server/selfEvolution/githubAutomationService.js');
+  const { PreviewDeploymentService } =
+    await import('../server/selfEvolution/previewDeploymentService.js');
+  const { SelfSiteKnowledgeService } =
+    await import('../server/selfEvolution/selfSiteKnowledgeService.js');
 
   if (!isFirebaseAdminConfigured()) {
     throw new Error('Firebase Admin nao configurado.');
@@ -48,13 +78,33 @@ async function main(): Promise<void> {
 
   if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) {
     console.log('[self-evolution-runner] Autoevolucao desativada.');
+    console.warn('::warning::Autoevolucao desativada na configuracao persistente.');
+    await recordOutcome({ status: 'disabled' }, false);
     return;
+  }
+
+  const knowledge = await SelfSiteKnowledgeService.refresh();
+  console.log('[self-evolution-runner] Conhecimento do projeto:', {
+    commitSha: knowledge.commitSha, files: knowledge.filesCount, sources: knowledge.sourceFilesCount,
+    routes: knowledge.routes.length, views: knowledge.navigation.length, agents: knowledge.agents.length,
+    incompleteFiles: knowledge.incompleteFiles,
+  });
+  // A auditoria real precede a fila e as novidades externas, mesmo com tarefas pendentes.
+  const siteAudit = await ProductionSiteAuditDiscoveryService.discoverOne(new Date(), {
+    force: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
+    knowledge,
+  });
+  console.log('[self-evolution-runner] Auditoria do site:', siteAudit);
+  if (siteAudit.status === 'not_configured') {
+    throw new Error(`Auditoria do site nao configurada: ${siteAudit.limitations?.join(' ')}`);
+  }
+  if (siteAudit.coverageComplete === false || siteAudit.status === 'partial') {
+    console.warn('::warning::A auditoria do site foi parcial. Consulte as limitacoes; isto nao comprova ausencia de erros.');
   }
 
   const snapshot = await adminDb
     .collection('self_evolution_candidates')
-    .orderBy('createdAt', 'desc')
-    .limit(100)
+    .where('state', 'in', [...RESUMABLE_STATES])
     .get();
 
   const candidate = snapshot.docs
@@ -67,19 +117,40 @@ async function main(): Promise<void> {
    let candidateId = candidate?.id;
 
   if (!candidateId) {
+    if ((siteAudit.findings || 0) > 0) {
+      console.warn('::warning::Ha falhas reais no site, mas nenhuma tarefa retomavel. Confira candidatos que falharam, rejeicoes e bloqueios.');
+      await recordOutcome({ status: 'audit_requires_attention', siteAudit }, Boolean(siteAudit.requiresResume));
+      return;
+    }
     const discovery = await OperationalAutoDiscoveryService.discoverOne();
 
-    console.log('[self-evolution-runner] Descoberta:', discovery.status);
+    console.log('[self-evolution-runner] Descoberta:', discovery);
 
     if (discovery.status === 'created' && discovery.candidateId) {
       candidateId = discovery.candidateId;
     } else {
       const innovation = await InnovationDiscoveryService.discoverOne();
       console.log('[self-evolution-runner] Inovacao:', innovation.agentId, innovation.status);
-      if (innovation.status !== 'created' || !innovation.candidateId) return;
+      if (innovation.status !== 'created' || !innovation.candidateId) {
+        await recordOutcome({ status: 'idle', siteAudit, discovery, innovation }, Boolean(siteAudit.requiresResume));
+        return;
+      }
       candidateId = innovation.candidateId;
     }
   }
+
+  // Confirmar as integracoes antes de cobrar a geracao de um patch.
+  const githubAccess = await GithubAutomationService.verifyRepositoryAccess();
+  if (!githubAccess.success) throw new Error(githubAccess.message);
+  // Um site doente precisa continuar elegivel para reparo; aqui so se verifica acesso a API.
+  const vercelAccess = await PreviewDeploymentService.verifyProjectAccess();
+  if (vercelAccess.status === 'not_configured' || vercelAccess.status === 'failed') {
+    throw new Error(`Vercel indisponivel no executor externo: ${vercelAccess.errorMessage}`);
+  }
+  console.log('[self-evolution-runner] Integracoes:', {
+    github: githubAccess.message, vercel: vercelAccess.status,
+    autonomousProductionDeploy: SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed(),
+  });
 
   const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
     candidateId,
@@ -92,15 +163,22 @@ async function main(): Promise<void> {
     message: result.message,
   });
 
+  const moreCandidates = snapshot.docs.some(doc => doc.id !== candidateId && RESUMABLE_STATES.has(String(doc.data().state)));
+  await recordOutcome({ candidateId, siteAudit, state: result.state, message: result.message },
+    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state));
+
   if (['failed', 'tests_failed', 'ci_failed'].includes(result.state)) {
     process.exitCode = 1;
   }
 }
 
-void main().catch((error: unknown) => {
+void main().catch(async (error: unknown) => {
   console.error(
     '[self-evolution-runner] Erro:',
     error instanceof Error ? error.message : String(error)
   );
   process.exitCode = 1;
+  const { RedactionService } = await import('../server/selfEvolution/redactionService.js');
+  try { await recordOutcome({ status: 'failed', message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : String(error)) }, true); }
+  catch { console.warn('::warning::Nao foi possivel persistir o diagnostico da falha do executor.'); }
 });

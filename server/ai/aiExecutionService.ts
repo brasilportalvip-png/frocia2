@@ -44,6 +44,7 @@ import {
   shouldResearchGithub,
 } from './githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
 
 export class AIExecutionService {
   /**
@@ -327,6 +328,7 @@ if (params.abortSignal?.aborted) {
       });
        const assembled = await ContextBuilder.assemble({
         userId,
+        selfSiteContext: await SelfSiteOwnerService.context({ role: params.trustedUserRole, userId, prompt: sanitizedPrompt }),
         tenantId,
         userDisplayName,
         mode: executionMode,

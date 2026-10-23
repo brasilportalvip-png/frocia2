@@ -15,6 +15,7 @@ import { CandidateState } from './selfEvolutionTypes.js';
 import { CommitteeGateService } from './committeeGateService.js';
 import { AutonomousBrowserValidationService } from './autonomousBrowserValidationService.js';
 import { SpecialistCommitteeExecutionService } from './specialistCommitteeExecutionService.js';
+import { ProductionReleaseVerificationService } from './productionReleaseVerificationService.js';
 export class SelfEvolutionOrchestrator {
   /**
    * Executa ou retoma cada etapa persistida, sem recriar um patch ja publicado.
@@ -52,6 +53,26 @@ export class SelfEvolutionOrchestrator {
     };
 
     try {
+      if (candidate.state === 'approved_for_release' || candidate.state === 'monitoring') {
+        const verification = await ProductionReleaseVerificationService.verify(candidateId, candidate.productionMergeSha || '');
+        await AuditService.logEvent({ actor: 'production-release-verifier', action: 'verify_production_release',
+          resource: candidateId, riskLevel: candidate.riskLevel, commitHash: candidate.productionMergeSha,
+          result: verification.status === 'accepted' ? 'success' : 'failure', reason: verification.message,
+          deployUrl: verification.url, prUrl: candidate.pullRequestUrl });
+        if (verification.status === 'accepted') {
+          await ImprovementPlannerService.updateCandidateMetadata(candidateId, { productionDeploymentId: verification.deploymentId });
+          await transition('accepted');
+          return { state: 'accepted', message: verification.message };
+        }
+        if (verification.status === 'failed') {
+          const rollback = await this.executeEmergencyRollback(candidateId, 'production-release-verifier', verification.message);
+          if (rollback.success) return { state: 'rolled_back', message: `${verification.message} ${rollback.message} Confirme a publicacao da reversao na Vercel.` };
+          await transition('failed');
+          return { state: 'failed', message: `${verification.message} A reversao automatica nao foi concluida: ${rollback.message}` };
+        }
+        await transition('monitoring');
+        return { state: 'monitoring', message: verification.message };
+      }
       if (candidate.state === 'detected') {
         await transition('triaged');
         await AuditService.logEvent({
@@ -88,7 +109,9 @@ export class SelfEvolutionOrchestrator {
           };
         }
 
-        await BudgetService.consumeBudget(candidate.estimatedCostCredits);
+        if (!(await BudgetService.consumeBudget(candidate.estimatedCostCredits))) {
+          return { state: candidate.state, message: 'Orcamento ocupado por outra execucao. Nenhum codigo foi gerado.' };
+        }
         await transition('agent_running');
 
         const patch = await CodeAgentService.generatePatchAndTest(candidate);
@@ -143,6 +166,13 @@ export class SelfEvolutionOrchestrator {
             state: candidate.state,
             message: 'SHA do Pull Request ausente. Não é seguro retomar o CI.',
           };
+        }
+
+        if (candidate.state === 'pull_request_opened' && process.env.SELF_EVOLUTION_CI_DISPATCH_REQUIRED === 'true') {
+          const dispatch = await GithubAutomationService.dispatchOfficialCI(candidate.branchName || '');
+          if (!dispatch.success) return { state: 'pull_request_opened', message: dispatch.message };
+          await transition('ci_pending');
+          return { state: 'ci_pending', message: dispatch.message };
         }
 
         const ci = await CIGateService.runCIGate(candidate.headCommitSha);
@@ -350,6 +380,10 @@ export class SelfEvolutionOrchestrator {
       };
     }
 
+    if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) {
+      return { state: 'awaiting_release_approval', message: 'A manutencao foi pausada pelo proprietario. Nenhum merge foi realizado.' };
+    }
+
     const merge = await GithubAutomationService.mergeApprovedPullRequest(
       candidate.pullRequestUrl,
       candidate.headCommitSha
@@ -368,6 +402,9 @@ export class SelfEvolutionOrchestrator {
       return { state: 'awaiting_release_approval', message: merge.message };
     }
 
+    if (!merge.mergeCommitSha || !(await ImprovementPlannerService.updateCandidateMetadata(candidateId, {
+      productionMergeSha: merge.mergeCommitSha,
+    }))) throw new Error('Merge realizado, mas SHA de producao nao foi persistido. A publicacao permanece sem comprovacao.');
     if (!(await ImprovementPlannerService.updateCandidateState(candidateId, 'approved_for_release'))) {
       throw new Error('Merge confirmado, mas não foi possível persistir o estado do release.');
     }
@@ -434,6 +471,7 @@ export class SelfEvolutionOrchestrator {
         prUrl: candidate.pullRequestUrl,
       });
       if (!merge.success) return merge;
+      if (merge.mergeCommitSha) await ImprovementPlannerService.updateCandidateMetadata(candidateId, { productionMergeSha: merge.mergeCommitSha });
       return { success: true, message: merge.message };
     }
 

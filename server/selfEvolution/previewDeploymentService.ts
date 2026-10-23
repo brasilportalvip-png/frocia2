@@ -7,6 +7,18 @@ export interface PreviewDeployResult {
 }
 
 export class PreviewDeploymentService {
+  static async verifyProjectAccess(): Promise<{ status: 'ready' | 'failed' | 'not_configured'; errorMessage?: string }> {
+    if (!this.isConfigured()) return { status: 'not_configured', errorMessage: 'VERCEL_TOKEN/VERCEL_PROJECT_ID ausente no executor.' };
+    try {
+      const params = new URLSearchParams({ projectId: process.env.VERCEL_PROJECT_ID!, limit: '1' });
+      if (process.env.VERCEL_TEAM_ID) params.set('teamId', process.env.VERCEL_TEAM_ID);
+      const response = await fetch(`https://api.vercel.com/v6/deployments?${params}`, {
+        headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` }, signal: AbortSignal.timeout(30_000),
+      });
+      return response.ok ? { status: 'ready' } : { status: 'failed', errorMessage: `Vercel recusou a leitura dos deployments: HTTP ${response.status}.` };
+    } catch (error) { return { status: 'failed', errorMessage: error instanceof Error ? error.message : 'Falha de acesso a Vercel.' }; }
+  }
+
   private static isConfigured(): boolean {
     const vercelToken = process.env.VERCEL_TOKEN;
     const projectId = process.env.VERCEL_PROJECT_ID;
@@ -32,7 +44,9 @@ export class PreviewDeploymentService {
     }
 
     try {
-      const response = await fetch(`https://api.vercel.com/v6/deployments?projectId=${projectId}&meta-githubCommitRef=${encodeURIComponent(branchName)}`, {
+      const params = new URLSearchParams({ projectId: projectId!, 'meta-githubCommitRef': branchName });
+      if (process.env.VERCEL_TEAM_ID) params.set('teamId', process.env.VERCEL_TEAM_ID);
+      const response = await fetch(`https://api.vercel.com/v6/deployments?${params}`, {
         headers: {
           'Authorization': `Bearer ${vercelToken}`,
         },
