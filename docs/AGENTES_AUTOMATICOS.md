@@ -203,3 +203,32 @@ entregue se a VM perder a rede.
 
 Implementado e testado localmente; a conectividade corrigida e a aplicacao
 do reparo ainda exigem confirmacao numa nova rodada real do Actions.
+
+## Instalacao nativa na rodada 31
+
+A rodada 31 chamou o modelo e gerou tres tentativas, todas interrompidas em
+`npm ci`: o instalador do esbuild recebeu `spawnSync .../bin/esbuild EACCES`.
+O container continuou vivo e a coleta final registrou OOMKilled=false.
+
+O workflow usava `/tmp:rw,nosuid,nodev,size=2g`. O Docker inclui `noexec` nas
+opcoes iniciais de tmpfs; as opcoes fornecidas sao mescladas depois delas.
+Referencia de implementacao: https://github.com/moby/moby/blob/v28.5.1/daemon/oci_linux.go .
+O workflow e o exemplo Compose passam a usar
+`/tmp:rw,exec,nosuid,nodev,size=2g`. O Compose tambem passa a espelhar as
+capacidades DAC_OVERRIDE e KILL ja exigidas pelo controlador no Actions.
+
+O preflight anterior executava Node instalado fora do workspace e um teste
+JavaScript, o que nao verificava a execucao de binarios no diretorio montado.
+Agora ele copia um ELF real para esse diretorio, executa-o como UID 10001 e
+roda um npm ci offline cujo instalador executa o ELF via execFileSync.
+Falha nessa verificacao encerra o job antes do ciclo que chama o modelo.
+
+Os testes locais conferem instalacao nativa, teste e rollback reais em uma
+pasta temporaria. Um segundo teste remove a permissao executavel do ELF,
+comprova que o teste JS ainda passa e que npm ci falha com EACCES; apos
+restaurar a permissao, npm ci passa. Isso testa a negacao de execucao pelo
+sistema, sem simular uma montagem Docker neste ambiente.
+
+Nao ha Docker disponivel neste ambiente. O teste local nao comprova o
+conjunto de restricoes do container; o preflight reforcado devera comprovar
+essa parte numa nova rodada real, antes de iniciar a geracao do reparo.

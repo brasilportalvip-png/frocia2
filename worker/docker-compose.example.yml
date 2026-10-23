@@ -4,11 +4,13 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=2g
+      - /tmp:rw,exec,nosuid,nodev,size=2g
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_OVERRIDE
+      - KILL
       - SETUID
       - SETGID
     security_opt:

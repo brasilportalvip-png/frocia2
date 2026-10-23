@@ -2,7 +2,34 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { run } from './sandbox-process.mjs';
+
+// O npm executa binarios nativos do workspace durante a instalacao (esbuild,
+// por exemplo). Rodar apenas JavaScript com um Node externo nao testa isso.
+export async function prepareNativeSmokeProject(cwd) {
+  await fs.mkdir(cwd, { recursive: true });
+  const native = path.join(cwd, 'native-smoke');
+  await fs.copyFile('/bin/true', native);
+  await fs.chmod(native, 0o755);
+  const binary = await fs.readFile(native);
+  assert.equal(binary.subarray(0, 4).toString('hex'), '7f454c46', 'sandbox_preflight_requires_native_elf');
+  const name = 'frocia-sandbox-preflight';
+  const version = '1.0.0';
+  await fs.writeFile(path.join(cwd, 'package.json'), JSON.stringify({ name, version, private: true,
+    scripts: { install: 'node install-smoke.mjs', test: 'node --test smoke.test.mjs' } }));
+  await fs.writeFile(path.join(cwd, 'package-lock.json'), JSON.stringify({ name, version,
+    lockfileVersion: 3, requires: true, packages: { '': { name, version, hasInstallScript: true } } }));
+  await fs.writeFile(path.join(cwd, 'install-smoke.mjs'), `
+    import { execFileSync } from 'node:child_process';
+    import path from 'node:path';
+    execFileSync(path.join(process.cwd(), 'native-smoke'), [], { stdio: 'pipe' });
+    console.log('native-install-ok');
+  `);
+  await fs.writeFile(path.join(cwd, 'value.txt'), 'baseline\n');
+  await fs.writeFile(path.join(cwd, 'smoke.test.mjs'), "import { test } from 'node:test'; import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; test('patch aplicado', () => assert.equal(readFileSync('value.txt', 'utf8'), 'patch\\n'));\n");
+  return native;
+}
 
 // Usa o mesmo executor e as mesmas credenciais Unix do ciclo real, sem
 // consultar Gemini, Firebase, GitHub ou Vercel e sem tocar no repositorio real.
@@ -17,11 +44,8 @@ async function main() {
     return result.stdout.toString();
   };
   try {
-    await fs.mkdir(cwd);
+    const native = await prepareNativeSmokeProject(cwd);
     const source = path.join(cwd, 'value.txt');
-    await fs.writeFile(source, 'baseline\n');
-    await fs.writeFile(path.join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test smoke.test.mjs' } }));
-    await fs.writeFile(path.join(cwd, 'smoke.test.mjs'), "import { test } from 'node:test'; import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; test('patch aplicado', () => assert.equal(readFileSync('value.txt', 'utf8'), 'patch\\n'));\n");
     await checked('git', ['init', '-q']);
     await checked('git', ['add', '.']);
     await checked('git', ['-c', 'user.name=Sandbox preflight', '-c', 'user.email=sandbox@localhost', 'commit', '-qm', 'baseline']);
@@ -53,6 +77,8 @@ async function main() {
     assert.equal(identity.hasSecrets, false);
     const terminated = await run('node', ['-e', 'setInterval(() => {}, 1000)'], cwd, 100, {}, true);
     assert.equal(terminated.exitCode, 124, 'sandbox_controller_cannot_terminate_test_process');
+    await checked(native, [], true);
+    assert.match(await checked('npm', ['ci', '--offline'], true), /native-install-ok/);
     await checked('npm', ['test'], true);
     assert.match(await checked('git', ['diff', '--', 'value.txt'], true), /\+patch/);
     await checked('git', ['diff', '--check'], true);
@@ -61,10 +87,12 @@ async function main() {
     await checked('git', ['clean', '-fd'], true);
     assert.equal((await checked('git', ['status', '--porcelain'], true)).trim(), '');
     assert.equal(await fs.readFile(source, 'utf8'), 'baseline\n');
-    console.log('[sandbox-preflight] OK: Git, edicao, teste e rollback; uid=10001, capacidades=0, sem segredos.');
+    console.log('[sandbox-preflight] OK: Git, binario ELF, npm ci com instalador nativo, edicao, teste e rollback; uid=10001, capacidades=0, sem segredos.');
   } finally {
     await fs.rm(temp, { recursive: true, force: true }).catch(error => console.error('[sandbox-preflight] Falha na limpeza:', error.code));
   }
 }
 
-void main().catch(error => { console.error('[sandbox-preflight]', error.message); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch(error => { console.error('[sandbox-preflight]', error.message); process.exitCode = 1; });
+}

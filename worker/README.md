@@ -34,6 +34,21 @@ homologar previews. Ele não deve ser implantado dentro do processo da Vercel.
 6. Configure uma conta E2E exclusiva e sem privilégios para validar login/sessão.
 7. Publique o HTTPS privado e configure URL, token e segredo HMAC na aplicação.
 
+O workspace em `/tmp` precisa de montagem executável:
+`--tmpfs /tmp:rw,exec,nosuid,nodev,size=2g`. O Docker acrescenta `noexec` por
+padrão em tmpfs; apenas omitir essa palavra não libera os binários instalados
+por npm, como esbuild. O `exec` explícito libera sua execução dentro do
+contêiner. As demais restrições de UID, capacidades, rede e raiz somente
+leitura continuam aplicadas.
+
+Antes de chamar os agentes, execute o preflight no contêiner com as mesmas
+restrições da operação: `node /worker/sandbox-preflight.mjs`. Ele cria um
+projeto descartável, copia um ELF real para o workspace, executa esse arquivo
+como UID 10001 e roda `npm ci --offline` com um instalador que usa
+`execFileSync` sobre esse ELF. Assim, a verificação testa a mesma classe de
+permissão exigida pelo instalador do esbuild, além de Git, teste e rollback.
+Esse fixture não instala todas as dependências da aplicação.
+
 Sem firewall de saída e isolamento do provedor, a capacidade deve permanecer
 desativada. O sistema falha fechado e não apresenta execução simulada como real.
 

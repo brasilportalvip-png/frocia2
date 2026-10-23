@@ -192,7 +192,7 @@ jobs:
           docker run -d \
             --name frocia-worker \
             --read-only \
-            --tmpfs /tmp:rw,nosuid,nodev,size=2g \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g \
             --cap-drop ALL \
             --cap-add CHOWN \
             --cap-add DAC_OVERRIDE \
