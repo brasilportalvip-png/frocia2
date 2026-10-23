@@ -106,7 +106,17 @@ A conexao GitHub-Vercel publica os pushes da main. O executor dos agentes precis
 
 Cadastre os valores nas secrets do repositorio em https://github.com/brasilportalvip-png/frocia2/settings/secrets/actions . O Project ID fica nas configuracoes do projeto frocia2 da Vercel. Use um token com acesso a esse projeto/equipe. Nenhuma credencial deve ser adicionada ao Git ou enviada em mensagens.
 
-## Diagnostico e retomada depois da rodada 25
+## Permissoes da sandbox depois da rodada 26
+
+A rodada 26 identificou restore_baseline: spawn git EACCES. O diretorio criado por mkdtemp tem modo 0700 e passa a pertencer ao UID 10001. O controlador root, limitado a CHOWN/SETUID/SETGID, perde acesso ao diretorio; o libuv entra no cwd antes de trocar o UID do filho. A configuracao passa a conceder DAC_OVERRIDE ao controlador do container para permitir essa operacao e a leitura/aplicacao do patch.
+
+Os comandos de codigo continuam no UID/GID 10001. O diff, o inventario posterior aos testes e a verificacao final do Git tambem usam esse usuario, que e o proprietario do checkout. Assim nao dependem de desabilitar a verificacao de propriedade do Git.
+
+Antes do ciclo, sandbox-preflight.mjs cria um repositorio temporario independente e usa o mesmo executor para conferir chown, Git reset/clean, edicao pelo controlador, teste npm e rollback. Ele exige UID/GID 10001, capacidades efetivas/permitidas/ambientes zeradas, NoNewPrivs=1 e ausencia dos segredos nos processos de teste. Se essa verificacao falhar, o Gemini nao e chamado. O checkout real nao e alterado por esse teste.
+
+O teste completo com capabilities depende do Docker do Actions. O ambiente local desta conversa nao possui Docker nem permissao para mudar o UID; seus testes de processo cobrem Git real, ambiente minimo, timeout e a reproducao de EACCES por falta de acesso ao cwd. A nova rodada deve confirmar o teste completo no container antes de tentar o reparo do site.
+
+## Historico: diagnostico e retomada depois da rodada 25
 
 A rodada 25, na main 0526afebed02d32f37e3cd3a7d862ec718f269ff, confirmou a prova de escrita no GitHub e Vercel ready. O worker respondeu HTTP 422, mas o adaptador descartou o corpo da resposta. Esse log nao comprova qual etapa falhou nem que algum teste chegou a ser executado.
 

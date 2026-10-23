@@ -191,6 +191,7 @@ jobs:
             --tmpfs /tmp:rw,nosuid,nodev,size=2g \
             --cap-drop ALL \
             --cap-add CHOWN \
+            --cap-add DAC_OVERRIDE \
             --cap-add SETUID \
             --cap-add SETGID \
             --security-opt no-new-privileges \
@@ -227,6 +228,9 @@ jobs:
           echo "Worker nao respondeu"
           docker logs frocia-worker
           exit 1
+
+      - name: Verificar permissoes e rollback da sandbox
+        run: docker exec frocia-worker node /worker/sandbox-preflight.mjs
 
       - name: Verificar isolamento de rede do worker
         run: |

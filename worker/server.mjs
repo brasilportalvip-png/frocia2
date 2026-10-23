@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { chromium } from 'playwright';
@@ -13,12 +12,12 @@ import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
 import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 import { authenticateSelfSite } from './site-session-audit.mjs';
 import { safeDiagnosticText, workerFailurePayload } from './worker-failure.mjs';
+import { run } from './sandbox-process.mjs';
 
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 const PORT = Number(process.env.PORT || 8080);
-const MAX_OUTPUT = 2_000_000;
 const REQUIRED_COMMANDS = ['install', 'typecheck', 'lint', 'test', 'e2e', 'security-audit', 'production-integrity', 'build', 'diff-check'];
 
 function required(name) {
@@ -50,44 +49,6 @@ function safeRepoPath(value) {
   if (/(?:^|\/)(?:\.env(?:\.[^/]*)?|id_rsa|id_ed25519)(?:\/|$)|(?:credentials|service[-_]?account)|\.(?:pem|key|p12|keystore)$/i.test(normalized)) return null;
   return normalized.length <= 240 ? normalized : null;
 }
-async function run(command, args, cwd, timeoutMs, extraEnv = {}, isolated = false) {
-  const started = Date.now();
-  const startedAt = new Date(started).toISOString();
-   const minimalEnv = {
-    PATH: process.env.PATH,
-    HOME: cwd,
-    CI: 'true',
-    NODE_ENV: 'test',
-    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/ms-playwright',
-    npm_config_audit: 'false',
-    npm_config_fund: 'false',
-    npm_config_registry: 'https://registry.npmjs.org',
-    ...extraEnv,
-  };
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd, env: minimalEnv, shell: false, windowsHide: true,
-      ...(isolated && process.platform !== 'win32' ? { uid: 10001, gid: 10001 } : {}),
-    });
-    const stdout = []; const stderr = []; let bytes = 0; let killed = false;
-    const collect = (target) => (chunk) => {
-      bytes += chunk.length;
-      if (bytes <= MAX_OUTPUT) target.push(Buffer.from(chunk));
-      if (bytes > MAX_OUTPUT && !killed) { killed = true; child.kill('SIGKILL'); }
-    };
-    child.stdout.on('data', collect(stdout)); child.stderr.on('data', collect(stderr));
-    const timer = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeoutMs);
-    child.once('error', reject);
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      const completed = Date.now();
-      resolve({
-        exitCode: killed ? 124 : code ?? 1, startedAt, completedAt: new Date(completed).toISOString(),
-        durationMs: completed - started, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr),
-      });
-    });
-  });
-}
 async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
   const result = await run(command, args, cwd, timeout, {}, true);
   const evidence = {
@@ -103,8 +64,8 @@ async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
   }
   return evidence;
 }
-async function workspaceDigest(cwd) {
-  const files = await run('git', ['ls-files', '-z'], cwd, 30_000);
+async function workspaceDigest(cwd, isolated = false) {
+  const files = await run('git', ['ls-files', '-z'], cwd, 30_000, {}, isolated);
   if (files.exitCode !== 0) throw new Error('git_ls_files_failed');
   const hash = crypto.createHash('sha256');
   for (const relative of files.stdout.toString().split('\0').filter(Boolean).sort()) {
@@ -236,9 +197,10 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const generated = repairCycle.patch;
     if (!REQUIRED_COMMANDS.every((id) => commands.some((command) => command.id === id))) throw new Error('required_commands_missing');
     stage = 'diff';
-    const diff = await run('git', ['diff', '--binary', '--no-ext-diff'], cwd, 30_000);
-    const after = await workspaceDigest(cwd);
-    const stats = await run('git', ['diff', '--numstat'], cwd, 30_000);
+    const diff = await run('git', ['diff', '--binary', '--no-ext-diff'], cwd, 30_000, {}, true);
+    const after = await workspaceDigest(cwd, true);
+    const stats = await run('git', ['diff', '--numstat'], cwd, 30_000, {}, true);
+    if (diff.exitCode !== 0 || stats.exitCode !== 0) throw new Error('git_diff_failed');
     let linesAdded = 0; let linesRemoved = 0;
     for (const line of stats.stdout.toString().split('\n')) {
       const [added, removed] = line.split('\t');
@@ -247,8 +209,8 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     stage = 'rollback';
     await mustRun('rollback-reset', 'git', ['reset', '--hard', baseSha], 'git reset --hard', cwd);
     await mustRun('rollback-clean', 'git', ['clean', '-fd'], 'git clean -fd', cwd);
-    const status = await run('git', ['status', '--porcelain'], cwd, 10_000);
-    const rollbackVerified = status.exitCode === 0 && status.stdout.length === 0 && (await workspaceDigest(cwd)) === before;
+    const status = await run('git', ['status', '--porcelain'], cwd, 10_000, {}, true);
+    const rollbackVerified = status.exitCode === 0 && status.stdout.length === 0 && (await workspaceDigest(cwd, true)) === before;
     if (!rollbackVerified) throw new Error('rollback_verification_failed');
     return sendSigned(res, {
       files: outputFiles, linesAdded, linesRemoved,
