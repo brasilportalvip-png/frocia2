@@ -166,6 +166,14 @@ async function main(): Promise<void> {
     github: githubAccess.message, vercel: vercelAccess.status,
     autonomousProductionDeploy: SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed(),
   });
+  await adminDb.collection('self_evolution_config').doc('runner_integrations').set({
+    scope: 'external_runner', checkedAt: new Date().toISOString(), commitSha: knowledge.commitSha,
+    runId: process.env.GITHUB_RUN_ID || null,
+    github: { contentsWriteVerified: true, message: githubAccess.message },
+    vercel: { projectAccessVerified: true, status: vercelAccess.status },
+    autonomousProductionDeployAllowed: SelfEvolutionPolicyEngine.isAutonomousProductionDeployAllowed(),
+    note: 'Prova dos acessos desta rodada. Nao comprova correcao nem publicacao; a credencial do chat e verificada separadamente.',
+  });
 
   const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
     candidateId,

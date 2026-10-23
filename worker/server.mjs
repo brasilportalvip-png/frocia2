@@ -11,7 +11,7 @@ import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
 import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
 import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 import { authenticateSelfSite } from './site-session-audit.mjs';
-import { safeDiagnosticText, workerFailurePayload } from './worker-failure.mjs';
+import { safeDiagnosticText, commandDiagnosticExcerpt, workerFailurePayload } from './worker-failure.mjs';
 import { run } from './sandbox-process.mjs';
 
 const app = express();
@@ -60,8 +60,10 @@ async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
   };
   if (result.exitCode !== 0) {
     const error = new Error(`command_failed:${id}`); error.evidence = evidence;
-    error.stderrTail = safeDiagnosticText(result.stderr.toString());
-    error.stdoutTail = safeDiagnosticText(result.stdout.toString());
+    error.stderrTail = commandDiagnosticExcerpt(result.stderr.toString());
+    error.stdoutTail = commandDiagnosticExcerpt(result.stdout.toString());
+    console.error('[worker:command-failure]', JSON.stringify({ id, exitCode: result.exitCode,
+      stdout: error.stdoutTail, stderr: error.stderrTail }));
     throw error;
   }
   return evidence;

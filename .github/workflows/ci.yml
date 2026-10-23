@@ -25,6 +25,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      - name: Validate Worker Browser Version
+        run: node scripts/validate-worker-browser-version.mjs
+
       - name: Clean Install Dependencies
         run: npm ci
 

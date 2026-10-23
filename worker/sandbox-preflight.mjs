@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { run } from './sandbox-process.mjs';
 
 // O npm executa binarios nativos do workspace durante a instalacao (esbuild,
@@ -29,6 +30,25 @@ export async function prepareNativeSmokeProject(cwd) {
   await fs.writeFile(path.join(cwd, 'value.txt'), 'baseline\n');
   await fs.writeFile(path.join(cwd, 'smoke.test.mjs'), "import { test } from 'node:test'; import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; test('patch aplicado', () => assert.equal(readFileSync('value.txt', 'utf8'), 'patch\\n'));\n");
   return native;
+}
+
+export async function prepareBrowserSmokeScript(cwd) {
+  const entry = pathToFileURL(createRequire(import.meta.url).resolve('playwright')).href;
+  const script = path.join(cwd, 'browser-smoke.mjs');
+  await fs.writeFile(script, `
+    const api = await import(${JSON.stringify(entry)});
+    const { chromium } = api.default || api;
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent('<button>testar</button>');
+      await page.locator('button').evaluate(button => button.addEventListener('click', () => { button.textContent = 'ok'; }));
+      await page.locator('button').click();
+      if (await page.locator('button').textContent() !== 'ok') throw new Error('browser_preflight_dom_failed');
+      console.log(JSON.stringify({ status: 'browser-preflight-ok', browserVersion: browser.version() }));
+    } finally { await browser.close(); }
+  `);
+  return script;
 }
 
 // Usa o mesmo executor e as mesmas credenciais Unix do ciclo real, sem
@@ -79,6 +99,8 @@ async function main() {
     assert.equal(terminated.exitCode, 124, 'sandbox_controller_cannot_terminate_test_process');
     await checked(native, [], true);
     assert.match(await checked('npm', ['ci', '--offline'], true), /native-install-ok/);
+    const browserScript = await prepareBrowserSmokeScript(cwd);
+    assert.match(await checked('node', [browserScript], true), /browser-preflight-ok/);
     await checked('npm', ['test'], true);
     assert.match(await checked('git', ['diff', '--', 'value.txt'], true), /\+patch/);
     await checked('git', ['diff', '--check'], true);
@@ -87,7 +109,7 @@ async function main() {
     await checked('git', ['clean', '-fd'], true);
     assert.equal((await checked('git', ['status', '--porcelain'], true)).trim(), '');
     assert.equal(await fs.readFile(source, 'utf8'), 'baseline\n');
-    console.log('[sandbox-preflight] OK: Git, binario ELF, npm ci com instalador nativo, edicao, teste e rollback; uid=10001, capacidades=0, sem segredos.');
+    console.log('[sandbox-preflight] OK: Git, binario ELF, npm ci, Chromium, edicao, teste e rollback; uid=10001, capacidades=0, sem segredos.');
   } finally {
     await fs.rm(temp, { recursive: true, force: true }).catch(error => console.error('[sandbox-preflight] Falha na limpeza:', error.code));
   }

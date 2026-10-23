@@ -682,7 +682,8 @@ try {
            const assembled =
         await ContextBuilder.assemble({
           userId: uid,
-          selfSiteContext: await SelfSiteOwnerService.context({ role: req.user!.role, userId: uid, prompt: sanitizedPrompt }),
+          selfSiteContext: await SelfSiteOwnerService.context({ role: req.user!.role, userId: uid, prompt: sanitizedPrompt,
+            recentMessages: conversationContext.recentMessages }),
           tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
           mode: executionMode,

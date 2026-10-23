@@ -11,6 +11,7 @@ vi.mock('../server/lib/firebaseAdmin.js', () => ({
 import { selfEvolutionRouter } from '../server/routes/selfEvolutionRoutes.js';
 import { SelfSiteKnowledgeService } from '../server/selfEvolution/selfSiteKnowledgeService.js';
 import { SelfSiteOwnerService } from '../server/selfEvolution/selfSiteOwnerService.js';
+import { GithubAutomationService } from '../server/selfEvolution/githubAutomationService.js';
 
 const app = express(); app.use(express.json()); app.use('/api/admin/self-evolution', selfEvolutionRouter);
 describe('Controle do proprio site reservado ao dono autenticado', () => {
@@ -19,6 +20,7 @@ describe('Controle do proprio site reservado ao dono autenticado', () => {
     vi.spyOn(SelfSiteOwnerService, 'operationalSnapshot').mockResolvedValue({ lastRunner: { status: 'pending' } });
     vi.spyOn(SelfSiteOwnerService, 'requestRun').mockResolvedValue({ status: 'requested', candidateId: 'test' });
     vi.spyOn(SelfSiteOwnerService, 'setEnabled').mockResolvedValue({ status: 'enabled' });
+    vi.spyOn(GithubAutomationService, 'inspectMaintenanceConnection').mockResolvedValue({ scope: 'chat_backend', status: 'not_configured' });
   });
   afterEach(() => vi.restoreAllMocks());
   it('exige autenticacao para consultar o mapa', async () => {
@@ -27,6 +29,13 @@ describe('Controle do proprio site reservado ao dono autenticado', () => {
   it('impede um usuario comum de consultar o mapa interno', async () => {
     expect((await request(app).get('/api/admin/self-evolution/site-map').set('Authorization', 'Bearer user-token')).status).toBe(403);
     expect(SelfSiteKnowledgeService.latest).not.toHaveBeenCalled();
+  });
+  it('consulta a ponte de manutencao somente depois de verificar o administrador', async () => {
+    expect((await request(app).get('/api/admin/self-evolution/control/status').set('Authorization', 'Bearer user-token')).status).toBe(403);
+    expect(GithubAutomationService.inspectMaintenanceConnection).not.toHaveBeenCalled();
+    const result = await request(app).get('/api/admin/self-evolution/control/status').set('Authorization', 'Bearer admin-token');
+    expect(result.status).toBe(200);
+    expect(result.body.connection).toMatchObject({ scope: 'chat_backend', status: 'not_configured' });
   });
   it('retorna mapa e estado operacional ao administrador autenticado', async () => {
     const result = await request(app).get('/api/admin/self-evolution/site-map').set('Authorization', 'Bearer admin-token');

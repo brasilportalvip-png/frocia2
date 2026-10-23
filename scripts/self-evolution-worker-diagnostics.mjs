@@ -66,11 +66,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     try { recordWorkerDiagnostics({ resources: watch, seen }); }
     catch { console.log('[worker-diagnostics] Nao foi possivel coletar esta amostra.'); }
   };
-  snapshot();
   if (watch) {
     const timer = setInterval(snapshot, 30_000);
     const stop = () => clearInterval(timer);
     process.once('SIGTERM', stop);
     process.once('SIGINT', stop);
   }
+  snapshot();
 }

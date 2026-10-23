@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { workerFailurePayload } from '../worker/worker-failure.mjs';
+import { commandDiagnosticExcerpt, workerFailurePayload } from '../worker/worker-failure.mjs';
 import { EngineeringSandboxEvidenceService } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
 import type { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
@@ -32,6 +32,28 @@ describe('Diagnostico autenticado do HTTP 422', () => {
       repairCycle: { attempts: [{ attempt: 3, passed: false, failure: { stage: 'typecheck', exitCode: 2,
         summary: 'command_failed:typecheck', stdoutTail: 'src/App.tsx(10): error TS2322' } }] } });
     expect(verify(payload)).toMatchObject({ stage: 'typecheck', detail: 'src/App.tsx(10): error TS2322' });
+  });
+
+  it('mostra a falha de navegador em stdout mesmo quando stderr contem aviso do Firebase', () => {
+    const stdout = commandDiagnosticExcerpt('Running tests\nError: browserType.launch: Executable doesn\'t exist at /ms-playwright/chromium_headless_shell-1234/chrome\nInstale o navegador exigido.\n' + 'caso listado no resumo\n'.repeat(200));
+    const payload = workerFailurePayload({ body, stage: 'certification', error: new Error('autonomous_repair_exhausted'),
+      repairCycle: { attempts: [{ failure: { stage: 'e2e', stdoutTail: stdout,
+        stderrTail: 'Credenciais completas do Firebase Admin nao foram fornecidas.' } }] } });
+    expect(verify(payload)?.detail).toContain("Executable doesn't exist");
+    expect(verify(payload)?.detail).toContain('chromium_headless_shell-1234');
+    expect(verify(payload)?.detail).toContain('Firebase');
+  });
+
+  it('mantem os dois canais limitados e remove segredos antes de selecionar a mensagem', () => {
+    vi.stubEnv('BROWSER_TEST_PASSWORD', 'senha-nao-publicar');
+    const stdout = commandDiagnosticExcerpt('\u001b[31mError: senha-nao-publicar\u001b[0m\n' + 'detalhe\n'.repeat(400));
+    const payload = workerFailurePayload({ body, stage: 'e2e', error: Object.assign(new Error('e2e_failed'),
+      { stdoutTail: stdout, stderrTail: 'senha-nao-publicar ' + 'aviso '.repeat(1000) }) });
+    expect(payload.detail.length).toBeLessThanOrEqual(1800);
+    expect(payload.detail).not.toContain('senha-nao-publicar');
+    expect(payload.detail).not.toContain('\u001b');
+    expect(payload.detail).toContain('stdout:');
+    expect(payload.detail).toContain('stderr:');
   });
 
   it('remove segredos do ambiente, bearer e chaves conhecidas antes de assinar', () => {

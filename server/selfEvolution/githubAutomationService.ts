@@ -7,6 +7,7 @@ import {
 
 import { EngineeringSandboxEvidenceService } from './engineeringSandboxEvidenceService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import { RedactionService } from './redactionService.js';
 
 const GITHUB_API_URL =
   'https://api.github.com';
@@ -69,6 +70,36 @@ export interface MergePullRequestResult {
 }
 
 export class GithubAutomationService {
+  /** Consulta sem criar commit nem disparar um ciclo pago. Os segredos do
+   * Actions nao sao automaticamente credenciais do backend que atende o chat. */
+  static async inspectMaintenanceConnection(): Promise<Record<string, unknown>> {
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const checkedAt = new Date().toISOString();
+    const workflowUrl = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml`;
+    const base = { scope: 'chat_backend', repository: `${owner}/${repo}`, checkedAt, workflowUrl };
+    if (!this.isConfigured()) return { ...base, status: 'not_configured', code: 'chat_github_credential_missing',
+      message: 'O backend que atende este chat nao possui GITHUB_TOKEN/GITHUB_APP_TOKEN nem GitHub App configurado. Configure a integracao no ambiente do servidor da Vercel. As secrets do Actions sao de outro ambiente; isto nao significa que os agentes do executor tenham apenas leitura.' };
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml`, {
+        headers: this.getHeaders(access.token),
+      });
+      if (!response.ok) return { ...base, credential: access.source, status: 'blocked', code: 'chat_workflow_access_denied', httpStatus: response.status,
+        message: `A credencial do backend nao conseguiu consultar o workflow de manutencao: HTTP ${response.status}.` };
+      const workflow = await response.json() as { state?: string };
+      const actionsPermission = access.permissions?.actions;
+      const blocked = (actionsPermission !== undefined && actionsPermission !== 'write') || workflow.state !== 'active';
+      return { ...base, credential: access.source, status: blocked ? 'blocked' : 'available', workflowState: workflow.state,
+        workflowRead: 'confirmed', actionsWrite: actionsPermission === 'write' ? 'granted' : actionsPermission ? 'denied' : 'not_verified',
+        message: blocked ? 'Confira se o workflow esta ativo e se o GitHub App possui Actions:write.'
+          : 'O chat possui credencial e consultou o workflow. Uma ordem autenticada pode solicitar manutencao; somente o recibo do dispatch confirma o inicio solicitado. A escrita de arquivos, testes, PR e publicacao sao executados pela esteira externa.' };
+    } catch (error) {
+      return { ...base, status: 'blocked', code: 'chat_workflow_check_failed',
+        message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'Falha na consulta da integracao do chat.') };
+    }
+  }
+
   static async dispatchOfficialCI(branchName: string): Promise<{ success: boolean; message: string }> {
     if (!/^froc-evolution\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
       return { success: false, message: 'Branch de manutencao invalida para solicitar o CI.' };
@@ -90,7 +121,7 @@ export class GithubAutomationService {
   }
 
   static async dispatchSelfMaintenance(): Promise<{ success: boolean; message: string }> {
-    if (!this.isConfigured()) return { success: false, message: 'GitHub sem credencial para iniciar a manutencao.' };
+    if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
     const repo = process.env.GITHUB_REPO || 'frocia2';
     try {
@@ -169,12 +200,18 @@ export class GithubAutomationService {
     owner: string,
     repo: string
   ): Promise<string> {
+    return (await this.resolveCredential(owner, repo)).token;
+  }
+
+  private static async resolveCredential(owner: string, repo: string): Promise<{
+    token: string; source: 'token' | 'github_app'; permissions?: Record<string, string>;
+  }> {
     const staticToken =
       process.env.GITHUB_TOKEN ||
       process.env.GITHUB_APP_TOKEN;
 
     if (staticToken?.trim()) {
-      return staticToken.trim();
+      return { token: staticToken.trim(), source: 'token' };
     }
 
     const installationId =
@@ -188,7 +225,7 @@ export class GithubAutomationService {
         installationId
       );
 
-    return access.token;
+    return { token: access.token, source: 'github_app', permissions: access.permissions };
   }
 
   private static getHeaders(

@@ -28,6 +28,10 @@ O papel de administrador vem da autenticacao do servidor; o cliente nao pode se 
 
 Na conversa autenticada do administrador, pedidos sobre o proprio site recebem o mapa do projeto e os ultimos resultados reais do executor. Ordens explicitas como "Corrija os erros do meu site Froc IA" registram uma tarefa e solicitam o workflow. O recibo distingue pedido registrado, execucao solicitada e publicacao comprovada. Perguntas explicativas e ordens negadas nao iniciam uma correcao.
 
+Perguntas como "E no GitHub?" ou "Voce tem acesso ao GitHub?" tambem consultam a conexao real. Continuacoes como "Corrija tudo" podem usar as ultimas mensagens do proprio usuario na conversa autenticada. Comandos antigos, texto citado e a fala do assistente nao concedem autorizacao. Uma conta comum pode continuar pedindo ajuda com seu proprio projeto; somente o controle interno da Froc.IA exige administrador.
+
+O contexto distingue a credencial do backend do chat, as integracoes verificadas no executor e uma publicacao comprovada. Se faltar papel administrativo ou credencial no servidor, informa esse bloqueio especifico. Nao existe uma proibicao geral de escrita "por seguranca"; as operacoes dependem da identidade e da integracao efetivas. Uma falha na leitura do indice nao apaga o recibo de uma solicitacao que ja foi enviada.
+
 Comandos explicitos para pausar ou retomar os proprios agentes atualizam o controle persistente. O merge automatico consulta novamente a parada antes da publicacao. Falta de acesso ao GitHub permanece no recibo e a tarefa fica registrada, sem inventar sucesso.
 
 Endpoints adicionais, todos com requireAuth e requireAdmin:
@@ -35,6 +39,7 @@ Endpoints adicionais, todos com requireAuth e requireAdmin:
 | Endpoint | Funcao |
 | --- | --- |
 | GET /api/admin/self-evolution/site-map | Mapa do projeto, agentes e estado operacional |
+| GET /api/admin/self-evolution/control/status | Conexao atual do chat, ultimo resultado e provas dos acessos do executor |
 | GET /api/admin/self-evolution/repository/source?path=src/App.tsx&part=0 | Ler uma parte do arquivo indexado, com SHA e numero total de partes |
 | POST /api/admin/self-evolution/control/run | Registrar e solicitar manutencao; corpo com reason |
 | POST /api/admin/self-evolution/control/enabled | Pausar ou retomar; corpo com enabled true ou false |
@@ -86,6 +91,10 @@ Para modificar arquivos de workflow, o App precisa tambem de Workflows com escri
 
 Para comandos administrativos na conversa do site, o backend da Vercel precisa do Firebase Admin e da integracao GitHub/App que possa solicitar Actions. O papel administrativo e verificado pelo servidor. O executor externo confirma sua propria habilitacao e acessos quando recebe o pedido.
 
+No backend da Vercel, a opcao duravel e GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY e GITHUB_APP_SLUG de um App instalado no repositorio, com Actions:write para solicitar manutencao. Tambem sao aceitos GITHUB_TOKEN ou GITHUB_APP_TOKEN validos no servidor. O GITHUB_TOKEN temporario de uma rodada do Actions nao deve ser copiado para a Vercel. Configurar as secrets do Actions nao preenche automaticamente as variaveis do backend. A leitura do workflow nao e prova de escrita; o recibo do dispatch confirma se a solicitacao foi aceita.
+
+O executor persiste em self_evolution_config/runner_integrations a prova real de escrita de objetos Git, acesso ao projeto Vercel, SHA e data. O chat mostra esse registro como evidencia da rodada, separadamente da sua conexao atual. Esse registro nao comprova merge nem deploy.
+
 Sem conta de teste ou com recurso externo indisponivel, a homologacao correspondente continua pendente. O sistema nao deve declarar essas areas saudaveis.
 
 ### Conta automatica das areas com login
@@ -105,6 +114,20 @@ Essa conta verifica a experiencia de usuario comum. Operacoes administrativas, p
 A conexao GitHub-Vercel publica os pushes da main. O executor dos agentes precisa tambem de VERCEL_TOKEN e VERCEL_PROJECT_ID para consultar previews e comprovar a publicacao. Na rodada 23, ambos chegaram vazios; uma conexao feita em outro ambiente nao os preenche automaticamente.
 
 Cadastre os valores nas secrets do repositorio em https://github.com/brasilportalvip-png/frocia2/settings/secrets/actions . O Project ID fica nas configuracoes do projeto frocia2 da Vercel. Use um token com acesso a esse projeto/equipe. Nenhuma credencial deve ser adicionada ao Git ou enviada em mensagens.
+
+## Revisao da rodada 32 e da ligacao com o chat
+
+A rodada 32, na main f5e708ff80b7d7de4b4c6707facc82c240e68548, passou na instalacao, TypeScript, lint e testes unitarios nas tres tentativas. O E2E falhou e seu stdout foi ocultado por um aviso do Firebase em stderr. O container permaneceu vivo, sem registro de OOM. O log da imagem instalou Playwright 1.63.0 / Chromium 1243, enquanto o lock do projeto exige Playwright 1.62.1 / Chromium 1234. Essa divergencia e comprovada; o stack original dos testes nao foi conservado.
+
+O worker agora fixa Playwright e playwright-core em 1.62.1. A conferencia dos dois locks e executada antes da construcao da imagem. O preflight abre o Chromium e testa um clique no DOM usando o executor isolado. Falhas preservam trechos sanitizados dos dois canais e o monitor registra seus handlers de encerramento antes da primeira amostra. Nenhum gate foi removido.
+
+A auditoria npm desta revisao identificou body-parser 1.20.8 e zod 4.4.3 nas dependencias bloqueadas pelos avisos GHSA-27r3-jxmh-p828 e GHSA-mrhx-c7xc-m3w5. Os locks usam body-parser 1.20.9 no projeto e no worker, e zod 4.6.7 no projeto. A auditoria de producao dos dois projetos passou com zero vulnerabilidades reportadas.
+
+Validacao local: 682 testes em 105 arquivos; 24 testes de navegador com CI=true e ambiente minimo; build, TypeScript, actionlint dos dois workflows, integridade, tracker e validacao estatica de migrations. Quatro testes do ambiente publicado continuam pendentes. O npm ci do worker e seu preflight de navegador tambem foram executados com suas dependencias reais. As chamadas GitHub/Firestore dos testes de chat usam fixtures; nao comprovam o acesso da conta publicada.
+
+Nao ha Docker neste ambiente: a combinacao real de container, UID 10001 e capacidades ainda precisa passar no preflight do Actions. O patch e aplicado e comparado byte a byte numa copia da base exata antes de ser empacotado. A conversa do dono no site publicado, o disparo real e o deploy desta revisao permanecem pendentes de instalacao e verificacao no ambiente.
+
+Referencias: [browsers do Playwright](https://playwright.dev/docs/browsers), [advisory do body-parser](https://github.com/expressjs/body-parser/security/advisories/GHSA-27r3-jxmh-p828) e [correcao do Zod](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd).
 
 ## Revisao integrada depois da rodada 27
 

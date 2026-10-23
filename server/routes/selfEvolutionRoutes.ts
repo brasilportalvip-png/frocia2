@@ -10,6 +10,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { SelfEvolutionPolicyEngine } from '../selfEvolution/selfEvolutionPolicyEngine.js';
 import { SelfSiteKnowledgeService } from '../selfEvolution/selfSiteKnowledgeService.js';
 import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
+import { GithubAutomationService } from '../selfEvolution/githubAutomationService.js';
 import { ImprovementPlannerService } from '../selfEvolution/improvementPlannerService.js';
 import { SelfEvolutionOrchestrator } from '../selfEvolution/selfEvolutionOrchestrator.js';
 import { EvaluationEngine } from '../selfEvolution/evaluationEngine.js';
@@ -30,6 +31,15 @@ import {
 } from '../ai/continuousCapabilityEvaluationService.js';
 
 export const selfEvolutionRouter = Router();
+
+selfEvolutionRouter.get('/control/status', requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const [connection, operations] = await Promise.all([
+      GithubAutomationService.inspectMaintenanceConnection(), SelfSiteOwnerService.operationalSnapshot(),
+    ]);
+    return res.json({ connection, operations });
+  } catch { return res.status(503).json({ error: 'Nao foi possivel confirmar o estado atual da manutencao.' }); }
+});
 
 selfEvolutionRouter.get('/site-map', requireAuth, requireAdmin, async (_req, res) => {
   try {

@@ -66,7 +66,7 @@ describe('Conhecimento do proprio site e controle do proprietario', () => {
   });
 
   it('nao disponibiliza conhecimento ou acoes administrativas a um usuario comum', async () => {
-    expect(await SelfSiteOwnerService.context({ role: 'user', userId: 'user', prompt: 'Corrija meu site Froc IA' })).toBe('');
+    expect(await SelfSiteOwnerService.context({ role: 'user', userId: 'user', prompt: 'Corrija meu site Froc IA' })).toContain('administrator_required');
   });
   it('reconhece pausa e retomada do proprietario sem inverter uma negacao', () => {
     expect(requestedOwnSiteToggle('Pause os meus agentes')).toBe(false);

@@ -49,6 +49,18 @@ como UID 10001 e roda `npm ci --offline` com um instalador que usa
 permissão exigida pelo instalador do esbuild, além de Git, teste e rollback.
 Esse fixture não instala todas as dependências da aplicação.
 
+O preflight também abre o Chromium instalado na imagem, cria uma página e
+confere um clique real no DOM como UID 10001. O SDK Playwright do worker deve
+ter a mesma versão exata do `@playwright/test` no lock do projeto. Antes de
+construir a imagem, execute `node scripts/validate-worker-browser-version.mjs`
+na raiz do repositório. O CI e o workflow externo fazem essa conferência.
+Ao atualizar Playwright, sincronize a dependência exata, os overrides do
+worker e os dois locks; cada versão exige sua própria revisão de navegador.
+
+Falhas dos comandos conservam um trecho sanitizado de stdout e stderr nos
+logs e na resposta assinada. Um aviso em stderr não substitui o erro dos
+testes que foi escrito em stdout.
+
 Sem firewall de saída e isolamento do provedor, a capacidade deve permanecer
 desativada. O sistema falha fechado e não apresenta execução simulada como real.
 

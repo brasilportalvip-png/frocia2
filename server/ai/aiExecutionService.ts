@@ -328,7 +328,8 @@ if (params.abortSignal?.aborted) {
       });
        const assembled = await ContextBuilder.assemble({
         userId,
-        selfSiteContext: await SelfSiteOwnerService.context({ role: params.trustedUserRole, userId, prompt: sanitizedPrompt }),
+        selfSiteContext: await SelfSiteOwnerService.context({ role: params.trustedUserRole, userId, prompt: sanitizedPrompt,
+          recentMessages: conversationContext.recentMessages }),
         tenantId,
         userDisplayName,
         mode: executionMode,
