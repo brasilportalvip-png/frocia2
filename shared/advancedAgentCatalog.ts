@@ -1,3 +1,4 @@
+import { AGENT_QUALITY_CONTRACTS } from './agentQualityContracts.js';
 /** Perfis cooperantes no modelo configurado; não são modelos independentes. */
 export interface AdvancedAgentProfile {
   id: string;
@@ -9,7 +10,7 @@ export interface AdvancedAgentProfile {
   deliverables: string[];
   acceptance: string[];
 }
-export const ADVANCED_AGENTS: AdvancedAgentProfile[] = [
+const BASE_ADVANCED_AGENTS: AdvancedAgentProfile[] = [
   {
     id: "intelligence-understanding",
     name: "Compreensão e contexto",
@@ -1358,6 +1359,15 @@ export const ADVANCED_AGENTS: AdvancedAgentProfile[] = [
     ],
   },
 ];
+export const ADVANCED_AGENTS: AdvancedAgentProfile[] = BASE_ADVANCED_AGENTS.map(profile => {
+  const contract = AGENT_QUALITY_CONTRACTS[profile.id];
+  if (!contract) return profile;
+  return { ...profile,
+    method: [profile.method[0], contract.investigate, contract.handoff, contract.verify],
+    deliverables: [contract.deliver, ...profile.deliverables],
+    acceptance: [contract.verify, ...profile.acceptance],
+  };
+});
 export const INTELLIGENCE_AGENTS = ADVANCED_AGENTS.filter(
   (a) => a.kind === "intelligence",
 );

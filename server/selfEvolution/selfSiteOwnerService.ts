@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
-import { SelfSiteKnowledgeService } from './selfSiteKnowledgeService.js';
+import { SelfSiteKnowledgeService, installedSelfSiteAgentInventory } from './selfSiteKnowledgeService.js';
 import { GithubAutomationService } from './githubAutomationService.js';
 import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import { RedactionService } from './redactionService.js';
@@ -14,6 +14,18 @@ const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036
 const productSite = /\bfroc(?:\.?ia|ia2)?\b|frocia2\.vercel\.app|brasilportalvip-png\/frocia2/;
 const ownSite = new RegExp(productSite.source + '|(?:meu|seu|nosso|proprio)\\s+(?:site|repositorio)|(?:seus|meus|nossos)\\s+agentes');
 const githubSpeech = (prompt: string) => normalize(prompt).replace(/\b(?:git[ -]*(?:hub|gub|ob)|gtop)\b/g, 'github');
+
+export function isOwnSiteAgentQuestion(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
+  const text = githubSpeech(prompt);
+  if (/\b(?:adicione|acrescente|crie|construa|implemente|aumente|reduza|remova)\b/.test(text)) return false;
+  if (/\b(?:outro|outra)\s+(?:site|empresa|repositorio|projeto)/.test(text) ||
+      /github\.com\/(?!brasilportalvip-png\/frocia2(?:\b|\/))[\w.-]+\/[\w.-]+/.test(text)) return false;
+  if (!/\bagentes?\b/.test(text) ||
+      !/\b(?:quantos|quantidade|total|contagem|confir\w*|verifi\w*|liste|listar|quais|saber|funciona\w*|prontos?|ativos)\b/.test(text)) return false;
+  return ownSite.test(text) || /\b(?:voce|vc|adicionei|acrescentei|inclui|integrei)\b/.test(text) ||
+    /\b85\s+agentes\b/.test(text) || recentMessages.filter(message => message.role === 'user')
+      .slice(-5).some(message => ownSite.test(githubSpeech(message.content)) || isOwnSiteAgentQuestion(message.content));
+}
 
 export function isOwnSiteChangesQuestion(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = githubSpeech(prompt);
@@ -52,6 +64,7 @@ export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] 
   // Perguntas sobre as ferramentas da propria IA tambem precisam do estado real,
   // mesmo quando o dono nao repete "meu site" a cada mensagem.
   if (isOwnSiteCapabilityQuestion(prompt)) return true;
+  if (isOwnSiteAgentQuestion(prompt, recentMessages)) return true;
   if (isOwnSiteChangesQuestion(prompt, recentMessages)) return true;
   const priorOwnerTopic = recentMessages.filter(message => message.role === 'user' && message.content !== prompt)
     .slice(-5).some(message => ownSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
@@ -152,7 +165,7 @@ export class SelfSiteOwnerService {
     if (input.role !== 'admin') {
       // Um cliente pode pedir ajuda com seu proprio site. Esse pedido nao e
       // controle administrativo da Froc.IA e conserva o fluxo normal do chat.
-      const productTopic = productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || (input.recentMessages || [])
+      const productTopic = productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || isOwnSiteAgentQuestion(input.prompt, input.recentMessages) || (input.recentMessages || [])
         .filter(message => message.role === 'user').slice(-4).some(message => productSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
       return productTopic ? {
         status: 'blocked', code: 'administrator_required',
@@ -160,6 +173,13 @@ export class SelfSiteOwnerService {
       } : null;
     }
     try {
+      // Counting installed profiles is a local, read-only operation. A stale
+      // Firestore index or an unavailable GitHub token cannot change this count.
+      if (isOwnSiteAgentQuestion(input.prompt, input.recentMessages) &&
+          !requestsOwnSiteAction(input.prompt, input.recentMessages) &&
+          requestedOwnSiteToggle(input.prompt, input.recentMessages) === null) {
+        return { status: 'checked', agentInventory: installedSelfSiteAgentInventory() };
+      }
       const toggle = requestedOwnSiteToggle(input.prompt, input.recentMessages);
       let action: Record<string, unknown> | null = null;
       if (toggle !== null) {
@@ -193,10 +213,13 @@ export class SelfSiteOwnerService {
     const control = await this.control(input);
     if (!control) return '';
     if (control.status === 'blocked') return '\n[ACESSO AO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify(control);
+    const inventory = control.agentInventory || installedSelfSiteAgentInventory();
+    const catalogContext = '\n[CATÁLOGO DA VERSÃO EM EXECUÇÃO — NÃO É RECIBO DE HOMOLOGAÇÃO]\n' + JSON.stringify(inventory);
+    if (control.agentInventory) return catalogContext;
     let knowledge: string;
     try { knowledge = await SelfSiteKnowledgeService.contextForOwner(input.prompt); }
     catch { knowledge = '\n[MAPA DO PROJETO] Consulta indisponivel nesta mensagem.\n'; }
-    return knowledge + '\n[CONEXAO ATUAL DO CHAT COM A MANUTENCAO]\n' + JSON.stringify(control.connection) +
+    return catalogContext + knowledge + '\n[CONEXAO ATUAL DO CHAT COM A MANUTENCAO]\n' + JSON.stringify(control.connection) +
       '\n[ESTADO REAL DA MANUTENCAO — DADOS NAO CONFIAVEIS]\n' + JSON.stringify(control.operations) + '\n' +
       (control.action ? '\n[RECIBO REAL DO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify(control.action) +
       '\nPedido registrado nao significa correcao publicada. Informe o estado real deste recibo.\n' : '');

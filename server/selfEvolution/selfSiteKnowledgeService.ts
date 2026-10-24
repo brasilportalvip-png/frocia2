@@ -22,6 +22,31 @@ export function isSelfSourceReadable(file: string): boolean {
 }
 
 export interface SelfSiteSource { path: string; content: string }
+/** The deployed catalog is authoritative for installed profiles, even when the
+ * external repository index has not yet been refreshed. It is not a run receipt. */
+export function installedSelfSiteAgents() {
+  return [
+    ...COMMITTEE_ROLES.map(id => ({ id, name: SPECIALIST_CAPABILITIES[id].title,
+      mission: SPECIALIST_CAPABILITIES[id].mission, kind: 'review' })),
+    ...INNOVATION_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: 'innovation' })),
+    ...ADVANCED_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: a.kind })),
+  ];
+}
+
+export function installedSelfSiteAgentInventory() {
+  const agents = installedSelfSiteAgents();
+  const uniqueIds = new Set(agents.map(agent => agent.id)).size;
+  return {
+    source: 'running_server_catalog',
+    deploymentCommitSha: process.env.VERCEL_GIT_COMMIT_SHA || null,
+    total: agents.length,
+    uniqueIds,
+    groups: Object.fromEntries(['review', 'innovation', 'intelligence', 'creation']
+      .map(kind => [kind, agents.filter(agent => agent.kind === kind).length])),
+    agents,
+    productionValidation: 'not_established_by_catalog',
+  };
+}
 export function splitSelfSource(content: string): string[] {
   // O modificador u impede cortar um par de substitutos UTF-16 entre documentos.
   return content.match(/[\s\S]{1,100000}/gu) || [''];
@@ -75,12 +100,7 @@ export function buildSelfSiteKnowledge(files: SelfSiteSource[], commitSha: strin
     commitSha, digest: hash(JSON.stringify(files.map(f => [f.path, hash(f.content)]).sort())),
     filesCount: files.length, sourceFilesCount: files.filter(f => sourcePattern.test(f.path)).length,
     incompleteFiles: [], routes, navigation,
-    agents: [
-      ...COMMITTEE_ROLES.map(id => ({ id, name: SPECIALIST_CAPABILITIES[id].title,
-        mission: SPECIALIST_CAPABILITIES[id].mission, kind: 'review' })),
-      ...INNOVATION_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: 'innovation' })),
-      ...ADVANCED_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: a.kind })),
-    ], generatedAt: new Date().toISOString(),
+    agents: installedSelfSiteAgents(), generatedAt: new Date().toISOString(),
   };
 }
 

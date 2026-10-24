@@ -27,12 +27,15 @@ export function intelligenceTeam(
     "social-media": ["business", "creativity"],
   };
   for (const id of domain[classification.domain] || []) ids.add(id);
-  if (classification.complexity === "complex") ids.add("reasoning");
+  if (classification.complexity === "complex" || classification.sensitivity === "high-stakes") ids.add("reasoning");
   if (classification.requiresSearch) ids.add("research");
   if (/\b(f[ií]sica|qu[ií]mica|ci[eê]ncia|biologia|engenharia)\b/i.test(prompt))
     ids.add("science");
   if (/\b(criativ|ideias|invente|imagine|roteiro)/i.test(prompt))
     ids.add("creativity");
+  const normalized = prompt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (/\b(?:calcul\w*|matematic\w*|algebra|equac\w*|derivadas?|integrais|geometria|probabilidade|estatistica|porcentagem|matrizes)\b/.test(normalized))
+    ids.add("mathematics");
   const agents = INTELLIGENCE_AGENTS.filter((a) =>
     ids.has(a.id.replace("intelligence-", "")),
   );

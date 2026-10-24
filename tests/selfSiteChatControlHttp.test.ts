@@ -55,6 +55,54 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(['chat', 'executions'])('confirma os 85 agentes pelo catálogo em execução na rota %s, com a pergunta real do proprietário', async path => {
+    const history = await vi.mocked(ConversationContextService.load).getMockImplementation()!({ userId: 'owner', tenantId: 'user:owner' });
+    vi.mocked(ConversationContextService.load).mockResolvedValue({ ...history, recentMessages: [] });
+    const response = await send(path, 'Deu uma olhada? Eu adicionei mais agentes, é para ter um total de 85 agentes. Confirma para mim, por favor.');
+    expect(response.status, response.text).toBe(200);
+    expect(response.text).toContain('85 perfis de agentes');
+    expect(response.text).toContain('10 de revisão, 10 de inovação, 15 de inteligência e 50 de criação');
+    expect(response.text).toContain('recibos de testes');
+    expect(response.text).not.toContain('cole a lista');
+    expect(response.text).not.toContain('100%');
+    expect(response.text).toContain('"consumedCredits":0');
+    expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled();
+    expect(SelfSiteOwnerService.operationalSnapshot).not.toHaveBeenCalled();
+    expect(GithubAutomationService.inspectMaintenanceConnection).not.toHaveBeenCalled();
+    expect(CreditWalletService.reserveCredits).not.toHaveBeenCalled();
+    expect(GeminiProvider.generateStream).not.toHaveBeenCalled();
+    expect(GeminiFailoverService.generate).not.toHaveBeenCalled();
+  });
+
+  it('lista os nomes reais do catálogo e não transforma homologação em uma contagem', async () => {
+    const response = await send('executions', 'Quais são os seus agentes? Liste os nomes.');
+    expect(response.status).toBe(200);
+    expect(response.body.operationalControl.agentInventory.agents).toHaveLength(85);
+    expect(new Set(response.body.operationalControl.agentInventory.agents.map((agent: any) => agent.id)).size).toBe(85);
+    expect(response.body.text).toContain('intelligence-understanding');
+    expect(response.body.operationalControl.agentInventory.productionValidation).toBe('not_established_by_catalog');
+  });
+
+  it('não revela o catálogo administrativo para um papel forjado no corpo da pergunta', async () => {
+    firestore.store.documents.set('conversations/conversation-1', { userId: 'ordinary', tenantId: 'user:ordinary' });
+    const response = await send('executions', 'Confirme os seus 85 agentes.', 'user-token', { trustedUserRole: 'admin' });
+    expect(response.status, response.text).toBe(200);
+    expect(response.body.text).toContain('administrativo');
+    expect(response.body.operationalControl.agentInventory).toBeUndefined();
+  });
+
+  it('responde a continuação sobre inteligência usando os quinze nomes reais', async () => {
+    const history = await vi.mocked(ConversationContextService.load).getMockImplementation()!({ userId: 'owner', tenantId: 'user:owner' });
+    vi.mocked(ConversationContextService.load).mockResolvedValue({ ...history, recentMessages: [
+      { id: 'agents', role: 'user', content: 'Quais são os seus 85 agentes?' },
+    ] });
+    const response = await send('executions', 'Quero saber dos agentes de inteligência também.');
+    expect(response.status, response.text).toBe(200);
+    expect(response.body.text.match(/\(intelligence-/g)).toHaveLength(15);
+    expect(response.body.text).toContain('intelligence-mathematics');
+    expect(GeminiFailoverService.generate).not.toHaveBeenCalled();
+  });
+
   it.each(['E no GitHub?', 'Voce tem acesso ao GitHub?', 'acabei de fazer alterações para conseguir'])(
     'responde pelo SSE com diagnostico do servidor em "%s", preservando a conversa', async prompt => {
       const response = await send('chat', prompt);
@@ -169,5 +217,11 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
     expect(response.text).not.toContain('Não consegui confirmar esta resposta');
     const calls = path === 'chat' ? vi.mocked(GeminiProvider.generateStream).mock.calls : vi.mocked(GeminiFailoverService.generate).mock.calls;
     expect(calls[0][0]).toMatchObject({ enableSearchGrounding: false, userMessage: expect.stringContaining('memoria extensa') });
+    expect(calls[0][0].systemInstruction).toContain('intelligence-communication');
+    expect(ExecutionTraceService.createTrace).toHaveBeenCalledWith(expect.objectContaining({
+      specialistAgentIds: expect.arrayContaining(['intelligence-understanding', 'intelligence-communication', 'intelligence-review']),
+      specialistExecutionMode: 'cooperative_instructions', specialistPolicyApplied: false,
+    }));
+    expect(ExecutionTraceService.updateTrace).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'completed', specialistPolicyApplied: true }));
   });
 });

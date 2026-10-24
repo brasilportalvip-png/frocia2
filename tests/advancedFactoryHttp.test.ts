@@ -60,16 +60,32 @@ vi.mock("../server/ai/geminiFailoverService.js", () => ({
 import { env } from "../server/config/env.js";
 import { projectVariableRouter } from "../server/routes/projectVariableRoutes.js";
 import { siteBuilderRouter } from "../server/routes/siteBuilderRoutes.js";
+import { professionalFactoryRouter } from '../server/routes/professionalFactoryRoutes.js';
 import { GeminiFailoverService } from "../server/ai/geminiFailoverService.js";
+import { CreditWalletService } from '../server/services/creditWalletService.js';
 import { CREATION_AGENTS } from "../shared/advancedAgentCatalog.js";
 const app = express();
 app.use(express.json());
 app.use("/variables", projectVariableRouter);
 app.use("/api", siteBuilderRouter);
+app.use('/factory', professionalFactoryRouter);
 const authenticated = (r: any) =>
   r.set("x-test-user", "owner-a").set("x-test-tenant", "tenant-a");
 
 describe("advanced factory HTTP integration", () => {
+  it('exige propriedade autenticada e consentimento explícito na manutenção de projetos', async () => {
+    const path = '/factory/projects/project-a/maintenance';
+    expect((await request(app).get(path)).status).toBe(401);
+    expect((await request(app).get(path).set('x-test-user', 'another-owner')).status).toBe(404);
+    const initial = await authenticated(request(app).get(path));
+    expect(initial.status, JSON.stringify(initial.body)).toBe(200);
+    expect(initial.body.enabled).toBe(false);
+    const saved = await authenticated(request(app).put(path)).send({ revision: 0, enabled: true, dailyCreditLimit: 95 });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body).toMatchObject({ enabled: true, revision: 1, dailyCreditLimit: 95 });
+    expect((await authenticated(request(app).put(path)).send({ revision: 0, enabled: false, dailyCreditLimit: 95 })).status).toBe(409);
+    expect(CreditWalletService.reserveCredits).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     state.data.clear();
     state.configured = true;

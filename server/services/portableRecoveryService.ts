@@ -21,6 +21,8 @@ export const PORTABLE_BACKUP_COLLECTIONS = [
   'site_factory_builds',
   'site_factory_media',
   'site_factory_alerts',
+  'site_factory_maintenance',
+  'site_factory_monitor_state',
   'payments',
   'payment_events',
   'credit_transactions',

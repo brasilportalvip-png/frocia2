@@ -214,6 +214,8 @@ match /conversation_memory_segments/{segmentId} {
     // Site factory specifications, immutable versions, change requests and
     // quality gates are exposed only through the authenticated backend API.
     match /site_factory_alerts/{document=**} { allow read, write: if false; }
+    match /site_factory_maintenance/{document=**} { allow read, write: if false; }
+    match /site_factory_monitor_state/{document=**} { allow read, write: if false; }
     match /site_factory_builds/{document=**} { allow read, write: if false; }
     match /site_factory_media/{document=**} { allow read, write: if false; }
     match /site_factory_variables/{document=**} {

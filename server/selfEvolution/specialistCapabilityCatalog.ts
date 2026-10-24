@@ -1,4 +1,5 @@
 import type { CommitteeRole } from './selfEvolutionTypes.js';
+import { describeAgentQuality } from '../../shared/agentQualityContracts.js';
 
 /** Missões dos dez revisores originais. Os agentes de inovação não são alterados. */
 interface SpecialistCapability {
@@ -146,6 +147,7 @@ export function buildSpecialistSystemInstruction(role: CommitteeRole): string {
   return [
     `Você é ${specialist.title}, especialista independente da Froc.IA (${role}).`,
     `MISSÃO: ${specialist.mission}`,
+    describeAgentQuality(role),
     'INVESTIGAÇÕES OBRIGATÓRIAS:',
     ...specialist.investigations.map((line, index) => `${index + 1}. ${line}`),
     'CRITÉRIOS DE ACEITAÇÃO:',

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
-import { SelfSiteOwnerService, isOwnSiteAccessFollowUp, isOwnSiteCapabilityQuestion,
+import { SelfSiteOwnerService, isOwnSiteAccessFollowUp, isOwnSiteCapabilityQuestion, isOwnSiteAgentQuestion,
   isOwnSiteRequest, isOwnSiteChangesQuestion, requestedOwnSiteToggle, requestsOwnSiteAction } from '../selfEvolution/selfSiteOwnerService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
 import { ConversationContextService } from './conversationContextService.js';
@@ -14,6 +14,26 @@ const safe = (value: unknown) => typeof value === 'string' ? RedactionService.re
 
 export function formatSelfSiteControlReceipt(control: Record<string, unknown>, prompt = ''): string {
   if (control.status === 'blocked') return safe(control.message) || 'Nao foi possivel confirmar o controle administrativo nesta sessao.';
+  const inventory = object(control.agentInventory);
+  if (inventory.source === 'running_server_catalog') {
+    const agents = Array.isArray(inventory.agents) ? inventory.agents.map(object) : [];
+    const total = agents.length;
+    const groups = ['review', 'innovation', 'intelligence', 'creation'].map(kind => agents.filter(agent => agent.kind === kind).length);
+    if (total !== inventory.total || new Set(agents.map(agent => agent.id)).size !== total)
+      return 'Encontrei uma inconsistência no catálogo de agentes deste servidor. A contagem precisa ser corrigida.';
+    const paragraphs = [
+      `Consultei o catálogo carregado nesta versão da Froc.IA: são ${total} perfis de agentes, com ${total} identificadores únicos.`,
+      `Composição: ${groups[0]} de revisão, ${groups[1]} de inovação, ${groups[2]} de inteligência e ${groups[3]} de criação de sites e aplicativos web.`,
+      'Os especialistas de inteligência são selecionados para a conversa. Os 50 de criação participam em dez disciplinas, com cinco contribuições registradas por disciplina na construção profissional.',
+      'Esta contagem vem do código em execução, sem precisar que você cole arquivos. Ela confirma os perfis instalados; a aprovação de produção de cada projeto depende dos recibos de testes, integrações e publicação. Não executei uma homologação completa nesta consulta.',
+    ];
+    const intelligenceOnly = /intelig[eê]ncia/i.test(prompt);
+    if (intelligenceOnly || /\b(?:liste|listar|quais|nomes)\b/i.test(prompt)) paragraphs.push(agents
+      .filter(agent => !intelligenceOnly || agent.kind === 'intelligence')
+      .map(agent => `- ${safe(agent.name)} (${safe(agent.id)})`).join('\n'));
+    if (/^[a-f0-9]{40}$/i.test(safe(inventory.deploymentCommitSha))) paragraphs.push(`Versão consultada: ${safe(inventory.deploymentCommitSha)}.`);
+    return paragraphs.join('\n\n');
+  }
   const action = object(control.action);
   const connection = object(control.connection);
   const operations = object(control.operations);
@@ -83,7 +103,8 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
 export class SelfSiteChatControlService {
   static async respond(params: ExecutionParams, correlationId: string) {
     if (params.attachments?.length) return null;
-    const potential = isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
+    const potential = isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
+      /\bagentes?\b/i.test(params.prompt) ||
       /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
       /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
     if (!potential) return null;
@@ -95,6 +116,7 @@ export class SelfSiteChatControlService {
     const recentMessages = [...history.recentMessages, ...(topic ? [{ role: 'user', content: topic.content }] : [])];
     if (!isOwnSiteRequest(params.prompt, recentMessages)) return null;
     if (!isOwnSiteCapabilityQuestion(params.prompt) && !isOwnSiteAccessFollowUp(params.prompt) &&
+        !isOwnSiteAgentQuestion(params.prompt, recentMessages) &&
         !isOwnSiteChangesQuestion(params.prompt, recentMessages) &&
         !requestsOwnSiteAction(params.prompt, recentMessages) && requestedOwnSiteToggle(params.prompt, recentMessages) === null) return null;
     if (params.abortSignal?.aborted) throw new Error('Solicitacao cancelada antes do controle administrativo.');

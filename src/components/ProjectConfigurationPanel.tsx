@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiClient } from "../services/apiClient";
+import { ProjectMaintenancePanel } from './ProjectMaintenancePanel';
 import {
   INTELLIGENCE_AGENTS,
   CREATION_AGENTS,
@@ -31,7 +32,7 @@ export function ProjectConfigurationPanel({
   suggestedSiteUrl,
   onSaved,
 }: Props) {
-  const [tab, setTab] = useState<"variables" | "agents" | "delivery">(
+  const [tab, setTab] = useState<"variables" | "agents" | "delivery" | "maintenance">(
     "variables",
   );
   const [variables, setVariables] = useState<Variable[]>([]);
@@ -178,13 +179,14 @@ export function ProjectConfigurationPanel({
         </header>
         <nav
           aria-label="Configuração do projeto"
-          className="flex gap-2 border-b border-white/10 p-3"
+          className="flex flex-wrap gap-2 border-b border-white/10 p-3"
         >
           {(
             [
               ["variables", "Variáveis"],
               ["agents", "Agentes"],
               ["delivery", "Entrega"],
+              ["maintenance", "Manutenção"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -199,6 +201,7 @@ export function ProjectConfigurationPanel({
           ))}
         </nav>
         <div className="overflow-y-auto p-4 sm:p-6">
+          {tab === 'maintenance' && <ProjectMaintenancePanel projectId={projectId} />}
           {tab === "variables" && (
             <div className="space-y-4">
               <p className="text-sm text-slate-300">

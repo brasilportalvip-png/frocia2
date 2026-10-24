@@ -84,11 +84,12 @@ export interface ProfessionalBuild extends BuildScope {
   billing: Billing | null;
   pendingBilling: Billing | null;
   consumedCredits: number;
+  generationCreditLimit?: number;
   certificate: any | null;
   publication: any | null;
   media: any | null;
   references: FactoryReference[];
-  monitoring?: { status: string; checkedAt: string; failures: string[] };
+  monitoring?: { status: string; checkedAt: string; failures: string[]; consecutiveFailures?: number };
 }
 export interface BuildRepository {
   create(build: ProfessionalBuild): Promise<ProfessionalBuild>;
@@ -360,6 +361,7 @@ export class ProfessionalBuildService {
     brief: unknown,
     key: string,
     references: FactoryReference[] = [],
+    initial?: { bundle?: ProfessionalBundle | null; media?: any; generationCreditLimit?: number },
   ) {
     if (!/^[A-Za-z0-9:_-]{8,160}$/.test(key))
       throw new FactoryError(
@@ -385,7 +387,7 @@ export class ProfessionalBuildService {
       updatedAt: now,
       lease: null,
       reports: [],
-      bundle: null,
+      bundle: initial?.bundle || null,
       feedback: [],
       repairs: 0,
       errors: 0,
@@ -395,7 +397,8 @@ export class ProfessionalBuildService {
       consumedCredits: 0,
       certificate: null,
       publication: null,
-      media: null,
+      media: initial?.media || null,
+      ...(initial?.generationCreditLimit ? { generationCreditLimit: initial.generationCreditLimit } : {}),
       references,
     });
     if (
@@ -414,8 +417,11 @@ export class ProfessionalBuildService {
     scope: BuildScope,
     instructions: string,
     key: string,
+    options?: { maintenance?: boolean },
   ) {
     const previous = await this.get(id, scope);
+    if (options?.maintenance && (previous.brief.media.images || previous.brief.media.video) && !previous.media?.complete)
+      throw new FactoryError('maintenance_media_unavailable', 'A mídia anterior precisa estar confirmada antes da manutenção automática.');
     if (!["ready", "failed", "cancelled"].includes(previous.status))
       throw new FactoryError(
         "build_active",
@@ -433,19 +439,17 @@ export class ProfessionalBuildService {
       },
       key,
       previous.references,
+      { bundle: previous.bundle,
+        ...(options?.maintenance ? {
+          generationCreditLimit: 95,
+          media: previous.media?.complete ? { ...previous.media,
+            assets: (previous.media.assets || []).map((asset: any) => ({ ...asset, creditsSpent: 0, reusedFromBuildId: previous.id })),
+          } : null,
+        } : {}),
+      },
     );
-    const token = randomUUID();
-    const claimed = await this.repository.claim(
-      next.id,
-      scope,
-      token,
-      Date.now(),
-    );
-    if (claimed) {
-      claimed.bundle = previous.bundle;
-      claimed.lease = null;
-      await this.repository.save(claimed, token);
-    }
+    // The previous bundle is initialized atomically with the new build. A
+    // duplicate change request must never overwrite a newer generated bundle.
     return this.get(next.id, scope);
   }
   async reconfigure(id: string, scope: BuildScope, key: string) {
@@ -545,6 +549,8 @@ export class ProfessionalBuildService {
     message: string,
     maxOutputTokens: number,
   ) {
+    if (b.generationCreditLimit && b.consumedCredits + amount > b.generationCreditLimit)
+      throw new FactoryError('maintenance_budget_exhausted', 'O limite de créditos desta manutenção foi atingido.');
     const bill: Billing = {
       key: "factory:" + b.id + ":" + randomUUID(),
       amount,
@@ -659,13 +665,15 @@ export class ProfessionalBuildService {
             rows.length !== 1 ||
             !Array.isArray(rows[0].decisions) ||
             !rows[0].decisions.length ||
+            rows[0].decisions.length > 20 ||
             !Array.isArray(rows[0].tests) ||
             !rows[0].tests.length ||
+            rows[0].tests.length > 20 ||
             rows[0].decisions.some(
-              (x: any) => typeof x !== "string" || x.length > 1500,
+              (x: any) => typeof x !== "string" || x.trim().length < 10 || x.length > 1500,
             ) ||
             rows[0].tests.some(
-              (x: any) => typeof x !== "string" || x.length > 800,
+              (x: any) => typeof x !== "string" || x.trim().length < 10 || x.length > 800,
             )
           )
             throw new FactoryError(
@@ -979,7 +987,7 @@ export class ProfessionalBuildService {
           0,
         ),
       estimatedMaximumCredits:
-        95 + b.brief.media.images * 18 + (b.brief.media.video ? 120 : 0),
+        b.generationCreditLimit || (95 + b.brief.media.images * 18 + (b.brief.media.video ? 120 : 0)),
       completedAgentIds: b.reports.flatMap((r) =>
         r.contributions.map((c) => c.agentId),
       ),

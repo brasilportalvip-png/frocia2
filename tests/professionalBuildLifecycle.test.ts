@@ -112,6 +112,46 @@ beforeEach(() => {
   env.MEMORY_ENCRYPTION_KEY = "factory-tests-encryption-key";
 });
 describe("professional build durable lifecycle", () => {
+  it('inicializa alteração atomicamente e não troca o bundle ao repetir a solicitação', async () => {
+    const s = setup();
+    const source = await configured(s);
+    source.status = 'ready';
+    s.repo.builds.set(source.id, structuredClone(source));
+    const changed = await s.service.change(source.id, scope, 'Corrija o resultado do orçamento.', 'change-safe-123456');
+    const updated = { ...fixtureBundle(), title: 'Título atualizado' };
+    s.repo.builds.set(changed.id, { ...changed, phase: 11, status: 'reviewing', bundle: updated });
+    const duplicate = await s.service.change(source.id, scope, 'Corrija o resultado do orçamento.', 'change-safe-123456');
+    expect(duplicate.bundle?.title).toBe('Título atualizado');
+    expect(duplicate.phase).toBe(11);
+  });
+  it('limita reparos automáticos e reutiliza a mídia sem nova cobrança', async () => {
+    const s = setup();
+    const source = await configured(s);
+    source.status = 'ready';
+    source.media = { complete: true, assets: [{ url: 'https://example.com/image.jpg', sha256: 'a'.repeat(64), creditsSpent: 18 }] };
+    s.repo.builds.set(source.id, structuredClone(source));
+    const repair = await s.service.change(source.id, scope, 'Corrija o resultado do orçamento.', 'maintenance-safe-123456', { maintenance: true });
+    expect(repair.generationCreditLimit).toBe(95);
+    expect(repair.media.assets[0].creditsSpent).toBe(0);
+    expect(repair.media.assets[0].reusedFromBuildId).toBe(source.id);
+    s.repo.builds.set(repair.id, { ...repair, consumedCredits: 95 });
+    const result = await s.service.advance(repair.id, scope);
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('limite de créditos');
+    expect(s.wallet.reserveCredits).toHaveBeenCalledTimes(12);
+  });
+  it.each(['decisions', 'tests'])('recusa parecer de especialista sem conteúdo em %s', async field => {
+    const s = setup();
+    const report = stageReport(FACTORY_STAGES[0].id);
+    report.contributions[0][field as 'decisions' | 'tests'] = ['   '];
+    vi.mocked(s.model.generate).mockResolvedValueOnce({ text: JSON.stringify(report), model: 'configured-test-model', inputTokens: 10, outputTokens: 10 });
+    const b = await s.service.start(scope, { prompt: 'Crie uma calculadora profissional.' }, 'empty-report-123456');
+    const result = await s.service.advance(b.id, scope);
+    expect(result.phase).toBe(0);
+    expect(result.reports).toHaveLength(0);
+    expect(result.status).not.toBe('ready');
+    expect(s.adapter.publish).not.toHaveBeenCalled();
+  });
   it("executes ten disciplines with five recorded experts each, preserving all 50 identities", async () => {
     const s = setup(),
       b = await planned(s);
