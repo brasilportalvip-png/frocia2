@@ -42,3 +42,24 @@ test('catalogue, keyboard focus and accessible controls', async ({ page }) => {
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Configurar projeto', exact: true })).toBeFocused();
 });
+
+test('maintenance requires an explicit choice and saves the daily credit limit', async ({ page }) => {
+  const url = '**/api/professional-factory/projects/project-test/maintenance';
+  let submitted: any;
+  await page.route(url, async route => {
+    if (route.request().method() === 'PUT') submitted = route.request().postDataJSON();
+    await route.fulfill({ json: { revision: submitted ? 1 : 0, enabled: submitted?.enabled || false,
+      dailyCreditLimit: submitted?.dailyCreditLimit || 95, usedCredits: 0, activeBuildId: null, lastResult: null } });
+  });
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Manutenção', exact: true }).click();
+  const checkbox = dialog.getByRole('checkbox', { name: /Autorizar correções/ });
+  await expect(checkbox).not.toBeChecked();
+  await checkbox.check();
+  await dialog.getByRole('spinbutton', { name: 'Limite diário de créditos para manutenção' }).fill('190');
+  await dialog.getByRole('button', { name: 'Salvar manutenção', exact: true }).click();
+  await expect(dialog.getByRole('status')).toHaveText('Configuração de manutenção salva.');
+  expect(submitted).toEqual({ revision: 0, enabled: true, dailyCreditLimit: 190 });
+  const analysis = await new AxeBuilder({ page }).include('[role=dialog]').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  expect(analysis.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
+});

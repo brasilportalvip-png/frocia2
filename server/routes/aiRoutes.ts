@@ -577,6 +577,9 @@ try {
             startedAt:
               new Date().toISOString(),
             completedAt: null,
+            specialistAgentIds: plan.specialistAgentIds,
+            specialistExecutionMode: 'cooperative_instructions',
+            specialistPolicyApplied: false,
             requestDomain:
               plan.classification.domain,
             requestComplexity:
@@ -1153,6 +1156,7 @@ recentMessages:
         executionId,
         {
           status: 'completed',
+          specialistPolicyApplied: true,
           inputTokens,
           outputTokens,
           consumedCredits,
@@ -1194,6 +1198,7 @@ recentMessages:
 
       sendEvent('completed', {
         executionId,
+        specialistAgentIds: plan.specialistAgentIds,
         consumedCredits,
         totalTokens:
           inputTokens + outputTokens,

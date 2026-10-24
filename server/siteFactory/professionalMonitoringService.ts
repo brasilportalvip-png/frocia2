@@ -1,17 +1,30 @@
 import { adminDb } from "../lib/firebaseAdmin.js";
 import { sourceDigest } from "./professionalContract.js";
 import type { ProfessionalBuild } from "./professionalBuildService.js";
-/** Monitoramento sem executar compras nem alterar dados do projeto. */
+import { ProfessionalMaintenanceService } from './professionalMaintenanceService.js';
+import { FieldPath } from 'firebase-admin/firestore';
+/** Monitoramento não efetua compras. Reparos só entram na fila por política
+ * autenticada do proprietário do projeto e passam pelos gates da fábrica. */
 export async function monitorProfessionalProjects(
   request: typeof fetch = fetch,
 ) {
-  const docs = await adminDb
+  const maintenance = new ProfessionalMaintenanceService();
+  await maintenance.reconcile();
+  const cursorRef = adminDb.collection('site_factory_monitor_state').doc('cursor');
+  const saved = (await cursorRef.get()).data()?.lastId;
+  let query = adminDb
     .collection("site_factory_builds")
     .where("status", "==", "ready")
-    .limit(100)
-    .get();
+    .orderBy(FieldPath.documentId()).limit(25);
+  if (typeof saved === 'string' && /^[a-f0-9]{64}$/.test(saved)) query = query.startAfter(saved);
+  let docs = await query.get();
+  if (!docs.docs.length && saved) docs = await adminDb.collection('site_factory_builds')
+    .where('status', '==', 'ready').orderBy(FieldPath.documentId()).limit(25).get();
+  const deadline = Date.now() + 240000;
   for (const doc of docs.docs) {
+    if (Date.now() > deadline) break;
     const b = doc.data() as ProfessionalBuild;
+    await cursorRef.set({ lastId: doc.id, checkedAt: new Date().toISOString() });
     const project = await adminDb.collection("projects").doc(b.projectId).get();
     if (
       !project.exists ||
@@ -52,6 +65,7 @@ export async function monitorProfessionalProjects(
           h.ok !== true ||
           h.environment !== "production" ||
           !Array.isArray(h.checks) ||
+          !h.checks.length ||
           h.checks.some((c: any) => c.status !== "passed" || !c.receiptId)
         )
           failures.push("Integração indisponível: " + i.name);
@@ -63,9 +77,13 @@ export async function monitorProfessionalProjects(
       status: failures.length ? "degraded" : "healthy",
       checkedAt: new Date().toISOString(),
       failures,
+      consecutiveFailures: failures.length
+        ? b.monitoring?.status === 'degraded'
+          ? (b.monitoring.consecutiveFailures || 1) + (Date.now() - Date.parse(b.monitoring.checkedAt) >= 300000 ? 1 : 0)
+          : 1 : 0,
     };
     await doc.ref.update({ monitoring });
-    if (failures.length)
+    if (failures.length || b.monitoring?.status === 'degraded')
       await adminDb
         .collection("site_factory_alerts")
         .doc(b.id)
@@ -75,6 +93,13 @@ export async function monitorProfessionalProjects(
           tenantId: b.tenantId,
           userId: b.userId,
           ...monitoring,
+          resolved: !failures.length,
         });
+    try {
+      const result = await maintenance.react(b, monitoring);
+      if (result.status === 'queued') await doc.ref.update({ maintenance: result });
+    } catch (error) {
+      console.warn('factory_maintenance_pending', { buildId: b.id, reason: error instanceof Error ? error.name : 'unavailable' });
+    }
   }
 }

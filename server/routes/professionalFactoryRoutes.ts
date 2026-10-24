@@ -15,6 +15,7 @@ import {
 } from "../siteFactory/professionalContract.js";
 import { getProfessionalFactory } from "../siteFactory/professionalRuntime.js";
 import { GithubAutomationService } from "../selfEvolution/githubAutomationService.js";
+import { ProfessionalMaintenanceService } from '../siteFactory/professionalMaintenanceService.js';
 export const professionalFactoryRouter = Router();
 professionalFactoryRouter.use(
   requireAuth,
@@ -71,6 +72,16 @@ const startSchema = z
     attachments: z.unknown().optional(),
   })
   .strict();
+professionalFactoryRouter.get('/projects/:projectId/maintenance', async (req: AuthenticatedRequest, res) => {
+  try { return res.json(await new ProfessionalMaintenanceService().get(await scope(req))); }
+  catch (e) { return error(res, e); }
+});
+professionalFactoryRouter.put('/projects/:projectId/maintenance', async (req: AuthenticatedRequest, res) => {
+  try {
+    const result = await new ProfessionalMaintenanceService().configure(await scope(req), req.body);
+    return res.json(result);
+  } catch (e) { return error(res, e); }
+});
 professionalFactoryRouter.post(
   "/projects/:projectId/builds",
   async (req: AuthenticatedRequest, res) => {

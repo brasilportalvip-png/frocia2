@@ -2,9 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { buildSelfSiteKnowledge, isSelfSourceReadable, splitSelfSource } from '../server/selfEvolution/selfSiteKnowledgeService.js';
 import { RepositoryArchitectureService } from '../server/ai/repositoryArchitectureService.js';
 import { buildEngineeringContext } from '../worker/engineering-context.mjs';
-import { isOwnSiteRequest, requestsOwnSiteAction, requestedOwnSiteToggle, SelfSiteOwnerService } from '../server/selfEvolution/selfSiteOwnerService.js';
+import { isOwnSiteRequest, isOwnSiteAgentQuestion, requestsOwnSiteAction, requestedOwnSiteToggle, SelfSiteOwnerService } from '../server/selfEvolution/selfSiteOwnerService.js';
 
 describe('Conhecimento do proprio site e controle do proprietario', () => {
+  it.each([
+    'Deu uma olhada? Eu adicionei mais agentes, é para ter um total de 85 agentes. Confirma para mim, por favor.',
+    'Quantos agentes você tem?',
+    'Os seus 85 agentes estão funcionando?',
+    'Quais são os seus agentes?',
+  ])('reconhece uma consulta ao catálogo instalado: %s', prompt => {
+    expect(isOwnSiteAgentQuestion(prompt)).toBe(true);
+    expect(isOwnSiteRequest(prompt)).toBe(true);
+    expect(requestsOwnSiteAction(prompt)).toBe(false);
+  });
+
+  it.each([
+    'Quantos agentes tem outra empresa?',
+    'Confira os agentes de https://github.com/outra/empresa',
+    'Crie 85 agentes prontos para meu aplicativo.',
+    'Qual o total de agentes químicos nessa fórmula?',
+  ])('não confunde outro assunto ou uma criação com inventário: %s', prompt => {
+    expect(isOwnSiteAgentQuestion(prompt)).toBe(false);
+  });
+  it('fornece o catálogo atual ao contexto mesmo sem índice atualizado do executor', async () => {
+    const text = await SelfSiteOwnerService.context({ role: 'admin', userId: 'owner', prompt: 'Quantos agentes você tem?' });
+    expect(text).toContain('"total":85');
+    expect(text).toContain('running_server_catalog');
+    expect(text).not.toContain('indice do repositorio ainda nao foi gerado');
+  });
   it('mapeia todos os arquivos, as rotas, o menu e os 85 agentes', () => {
     const files = [
       ...Array.from({ length: 125 }, (_, i) => ({ path: `server/services/module${i}.ts`, content: `export const module${i} = true;` })),

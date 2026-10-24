@@ -184,6 +184,9 @@ export interface ExecutionRecord {
   requestSensitivity?: RequestSensitivity;
   requiresSearch?: boolean;
   toolsRequested?: string[];
+  specialistAgentIds?: string[];
+  specialistExecutionMode?: 'cooperative_instructions';
+  specialistPolicyApplied?: boolean;
   researchEvidenceStatus?:
     | 'not_requested'
     | 'supported'

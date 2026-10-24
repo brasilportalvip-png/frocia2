@@ -56,6 +56,7 @@ export class AIExecutionService {
     correlationId: string
   ): Promise<{
     text: string;
+    specialistAgentIds?: string[];
     modelUsed: string;
     executionId: string;
     consumedCredits: number;
@@ -273,6 +274,9 @@ const attemptedModels: string[] = [];
         createdAt: new Date().toISOString(),
         startedAt: new Date().toISOString(),
         completedAt: null,
+        specialistAgentIds: plan.specialistAgentIds,
+        specialistExecutionMode: 'cooperative_instructions',
+        specialistPolicyApplied: false,
         requestDomain:
           plan.classification.domain,
         requestComplexity:
@@ -830,6 +834,7 @@ const consumedCredits =
     // 10. Finalize Trace
     await ExecutionTraceService.updateTrace(executionId, {
   status: 'completed',
+  specialistPolicyApplied: true,
   inputTokens,
   outputTokens,
 
@@ -884,6 +889,7 @@ const consumedCredits =
 
     return {
       text: aiResponseText,
+      specialistAgentIds: plan.specialistAgentIds,
       modelUsed: modelToUse,
       executionId,
       consumedCredits,
