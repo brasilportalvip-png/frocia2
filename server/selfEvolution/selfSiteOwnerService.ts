@@ -127,8 +127,10 @@ export class SelfSiteOwnerService {
       });
     }
     const dispatch = await GithubAutomationService.dispatchSelfMaintenance();
-    await ref.set({ dispatchConfirmed: dispatch.success, dispatchMessage: dispatch.message, updatedAt: new Date().toISOString() }, { merge: true });
-    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, message: dispatch.message };
+    await ref.set({ dispatchConfirmed: dispatch.success, dispatchMessage: dispatch.message,
+      dispatchDiagnostic: dispatch.diagnostic || null, updatedAt: new Date().toISOString() }, { merge: true });
+    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, message: dispatch.message,
+      diagnostic: dispatch.diagnostic || null };
   }
 
   static async control(input: OwnerControlInput): Promise<Record<string, unknown> | null> {

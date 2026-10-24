@@ -22,8 +22,8 @@ function prepareGitHubApp() {
   process.env.GITHUB_REPO = 'test-repo';
 
   vi.spyOn(GithubAppService, 'isConfigured').mockReturnValue(true);
-  const findInstallation = vi.spyOn(GithubAppService, 'findRepositoryInstallation')
-    .mockResolvedValue(12345);
+  const findInstallation = vi.spyOn(GithubAppService, 'inspectRepositoryInstallation')
+    .mockResolvedValue({ installationId: 12345, appId: 456, appSlug: 'froc-ia' });
   const getInstallationToken = vi.spyOn(GithubAppService, 'installationToken')
     .mockResolvedValue({ token: 'temporary-installation-token' } as
       Awaited<ReturnType<typeof GithubAppService.installationToken>>);

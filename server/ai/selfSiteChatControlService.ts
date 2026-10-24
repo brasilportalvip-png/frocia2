@@ -40,13 +40,26 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
     paragraphs.push(states[String(action.status)] || 'Consultei o recibo do pedido.');
     if (safe(action.candidateId)) paragraphs.push(`Tarefa: ${safe(action.candidateId)}.`);
     if (safe(action.message)) paragraphs.push(safe(action.message));
+    const dispatch = object(action.dispatch);
+    if (safe(dispatch.message)) paragraphs.push(safe(dispatch.message));
   } else paragraphs.push('Consultei o acesso real desta sessao e o estado registrado dos agentes.');
   if (connection.status) paragraphs.push(`Ligacao do chat com o GitHub: ${safe(connection.message) || safe(connection.status)}.`);
+  if (safe(connection.repository)) paragraphs.push(`Repositorio consultado: ${safe(connection.repository)}.`);
+  if (safe(connection.credentialEnvironment)) paragraphs.push(`Credencial usada na Vercel: ${safe(connection.credentialEnvironment)}.`);
+  if (connection.credential === 'github_app') {
+    const id = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? String(value) : 'nao informado';
+    paragraphs.push(`App confirmado pelo GitHub: ${safe(connection.appSlug) || 'slug nao informado'} (ID ${id(connection.appId)}); instalacao ${id(connection.installationId)}.`);
+    const permissions = object(connection.permissions);
+    paragraphs.push(`Permissoes efetivas: ${['actions', 'contents', 'pull_requests'].map(name => `${name}=${safe(permissions[name]) || 'nao confirmado'}`).join(', ')}.`);
+  }
+  if (safe(connection.selectionNotice)) paragraphs.push(safe(connection.selectionNotice));
+  if (safe(connection.workflowState)) paragraphs.push(`Estado do workflow: ${safe(connection.workflowState)}.`);
+  if (safe(connection.deploymentCommitSha)) paragraphs.push(`Versao do chat na Vercel: ${safe(connection.deploymentCommitSha)}.`);
   if (object(integrations.github).contentsWriteVerified === true) {
     paragraphs.push(`Executor externo: escrita no GitHub confirmada na verificacao registrada${safe(integrations.checkedAt) ? ` em ${safe(integrations.checkedAt)}` : ''}.`);
   }
   if (runner.state || runner.status) {
-    paragraphs.push(`Ultima tarefa registrada: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
+    paragraphs.push(`Ultima tarefa registrada${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
   }
   if (action.status === 'requested' || action.status === 'queued') paragraphs.push('Este pedido aguarda as etapas de teste, revisao e verificacao da publicacao.');
   return paragraphs.join('\n\n');

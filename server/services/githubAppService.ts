@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { formatGithubFailure, inspectGithubFailure, type GithubApiDiagnostic } from './githubApiDiagnostics.js';
 
 const API = 'https://api.github.com';
 const TIMEOUT_MS = 15_000;
@@ -19,7 +20,7 @@ export interface GithubProjectConnection {
 }
 
 export class GithubAppError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 400) {
+  constructor(readonly code: string, message: string, readonly status = 400, readonly diagnostic?: GithubApiDiagnostic) {
     super(message);
     this.name = 'GithubAppError';
   }
@@ -58,10 +59,12 @@ async function githubFetch(path: string, token: string, init: RequestInit = {}) 
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!response.ok) {
+    const diagnostic = await inspectGithubFailure(response, [token]);
     throw new GithubAppError(
       response.status === 403 ? 'github_permission_denied' : 'github_app_request_failed',
-      `GitHub App retornou HTTP ${response.status}.`,
-      response.status
+      formatGithubFailure('GitHub App recusou a requisicao', diagnostic),
+      response.status,
+      diagnostic
     );
   }
   return response.status === 204 ? null : response.json();
@@ -120,6 +123,12 @@ export class GithubAppService {
     owner: string,
     repository: string
   ): Promise<number> {
+    return (await this.inspectRepositoryInstallation(owner, repository)).installationId;
+  }
+
+  static async inspectRepositoryInstallation(owner: string, repository: string): Promise<{
+    installationId: number; appId?: number; appSlug?: string;
+  }> {
     const repo = safeOwnerRepo(owner, repository);
 
     const result = await githubFetch(
@@ -141,7 +150,11 @@ export class GithubAppService {
       );
     }
 
-    return installationId;
+    return {
+      installationId,
+      ...(typeof result.app_id === 'number' && Number.isSafeInteger(result.app_id) && result.app_id > 0 ? { appId: result.app_id } : {}),
+      ...(typeof result.app_slug === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(result.app_slug) ? { appSlug: result.app_slug } : {}),
+    };
   }
 
   static async listInstallationRepositories(installationId: number) {

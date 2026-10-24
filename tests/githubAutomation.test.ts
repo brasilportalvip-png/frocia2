@@ -171,6 +171,29 @@ afterEach(() => {
 describe(
   'GitHub Automation with real commit',
   () => {
+    it('registra o motivo real do HTTP 403 ao criar PR, sem expor o token do executor', async () => {
+      process.env.GITHUB_TOKEN = 'executor-private-token';
+      process.env.GITHUB_OWNER = 'test-owner'; process.env.GITHUB_REPO = 'test-repo'; process.env.GITHUB_BASE_BRANCH = 'main';
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(mockResponse([]))
+        .mockResolvedValueOnce(mockResponse({ object: { sha: BASE_COMMIT_SHA } }))
+        .mockResolvedValueOnce(mockResponse({ sha: BASE_COMMIT_SHA, tree: { sha: BASE_TREE_SHA } }))
+        .mockResolvedValueOnce(mockResponse({ sha: BLOB_SHA }))
+        .mockResolvedValueOnce(mockResponse({ sha: CREATED_TREE_SHA }))
+        .mockResolvedValueOnce(mockResponse({ sha: CREATED_COMMIT_SHA }))
+        .mockResolvedValueOnce(mockResponse({}, 201))
+        .mockResolvedValueOnce(Response.json({ message: 'GitHub Actions is not permitted to create or approve pull requests. executor-private-token' }, {
+          status: 403, headers: { 'X-GitHub-Request-Id': 'ABCD:1234', 'X-Accepted-GitHub-Permissions': 'pull_requests=write' },
+        }));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.createBranchAndPR(candidate, patch);
+      expect(result.success).toBe(false);
+      expect(result.errorMessage).toContain('GitHub Actions is not permitted to create or approve pull requests');
+      expect(result.errorMessage).toContain('pull_requests=write');
+      expect(result.errorMessage).toContain('ABCD:1234');
+      expect(result.errorMessage).not.toContain('executor-private-token');
+    });
+
     it('diagnostica acesso negado antes da geracao paga de um patch', async () => {
       process.env.GITHUB_TOKEN = 'test-token';
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403 })));

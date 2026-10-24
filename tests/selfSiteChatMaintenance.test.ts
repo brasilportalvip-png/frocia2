@@ -123,11 +123,13 @@ describe('Conversa do dono ligada ao executor de manutencao', () => {
   it('mostra o bloqueio de Actions do App sem exigir que o dono envie credenciais ao chat', async () => {
     vi.stubEnv('GITHUB_TOKEN', '');
     vi.mocked(GithubAppService.isConfigured).mockReturnValue(true);
-    vi.spyOn(GithubAppService, 'findRepositoryInstallation').mockResolvedValue(123);
+    vi.spyOn(GithubAppService, 'inspectRepositoryInstallation').mockResolvedValue({ installationId: 123, appId: 456, appSlug: 'froc-ia' });
     vi.spyOn(GithubAppService, 'installationToken').mockResolvedValue({ token: 'segredo-app', expiresAt: '2026-10-24T00:00:00Z',
       permissions: { contents: 'write', actions: 'read' } });
     const connection = await GithubAutomationService.inspectMaintenanceConnection();
-    expect(connection).toMatchObject({ status: 'blocked', credential: 'github_app', actionsWrite: 'denied' });
+    expect(connection).toMatchObject({ status: 'blocked', credential: 'github_app', actionsWrite: 'denied',
+      appId: 456, appSlug: 'froc-ia', installationId: 123, workflowState: 'active' });
+    expect(connection.message).toContain('Actions:read');
     expect(JSON.stringify(connection)).not.toContain('segredo-app');
   });
 

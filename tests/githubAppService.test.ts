@@ -95,4 +95,25 @@ describe('GithubAppService', () => {
       /^Bearer /
     );
   });
+
+  it('retorna a identidade confirmada pelo GitHub para diagnosticar o App em uso', async () => {
+    process.env.GITHUB_APP_ID = '12345'; process.env.GITHUB_APP_PRIVATE_KEY = pem; process.env.GITHUB_APP_SLUG = 'slug-antigo';
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 77, app_id: 12345, app_slug: 'froc-ia-real',
+      permissions: { actions: 'read' }, access_tokens_url: 'private-unused-field' })));
+    expect(await GithubAppService.inspectRepositoryInstallation('owner', 'repo')).toEqual({
+      installationId: 77, appId: 12345, appSlug: 'froc-ia-real',
+    });
+  });
+
+  it('preserva o motivo de recusa da API sem devolver o JWT usado na chamada', async () => {
+    process.env.GITHUB_APP_ID = '12345'; process.env.GITHUB_APP_PRIVATE_KEY = pem; process.env.GITHUB_APP_SLUG = 'froc-ia';
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => Response.json({
+      message: `Resource not accessible by integration ${(init.headers as Record<string, string>).Authorization}`,
+    }, { status: 403, headers: { 'X-GitHub-Request-Id': '1234:ABCD' } })));
+    const error = await GithubAppService.inspectRepositoryInstallation('owner', 'repo').catch(value => value);
+    expect(error).toMatchObject({ code: 'github_permission_denied', status: 403, diagnostic: { requestId: '1234:ABCD' } });
+    expect(error.message).toContain('Resource not accessible by integration');
+    expect(error.message).not.toContain('eyJ');
+    expect(JSON.stringify(error)).not.toContain('BEGIN PRIVATE KEY');
+  });
 });

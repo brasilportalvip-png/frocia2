@@ -6,8 +6,8 @@ import {
 } from './selfEvolutionTypes.js';
 
 import { EngineeringSandboxEvidenceService } from './engineeringSandboxEvidenceService.js';
-import { GithubAppService } from '../services/githubAppService.js';
-import { RedactionService } from './redactionService.js';
+import { GithubAppError, GithubAppService } from '../services/githubAppService.js';
+import { formatGithubFailure, inspectGithubFailure, safeGithubText } from '../services/githubApiDiagnostics.js';
 
 const GITHUB_API_URL =
   'https://api.github.com';
@@ -69,6 +69,22 @@ export interface MergePullRequestResult {
   message: string;
 }
 
+interface MaintenanceCredential {
+  token: string;
+  source: 'token' | 'github_app';
+  environment: 'GITHUB_TOKEN' | 'GITHUB_APP_TOKEN' | 'GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY';
+  permissions?: Record<string, string>;
+  installationId?: number;
+  appId?: number;
+  appSlug?: string;
+}
+
+export interface MaintenanceDispatchResult {
+  success: boolean;
+  message: string;
+  diagnostic?: Record<string, unknown>;
+}
+
 export class GithubAutomationService {
   /** Consulta sem criar commit nem disparar um ciclo pago. Os segredos do
    * Actions nao sao automaticamente credenciais do backend que atende o chat. */
@@ -77,26 +93,36 @@ export class GithubAutomationService {
     const repo = process.env.GITHUB_REPO || 'frocia2';
     const checkedAt = new Date().toISOString();
     const workflowUrl = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml`;
-    const base = { scope: 'chat_backend', repository: `${owner}/${repo}`, checkedAt, workflowUrl };
+    const deploymentSha = process.env.VERCEL_GIT_COMMIT_SHA;
+    const base = { scope: 'chat_backend', repository: `${owner}/${repo}`, checkedAt, workflowUrl,
+      ...(/^[a-f0-9]{40}$/i.test(deploymentSha || '') ? { deploymentCommitSha: deploymentSha } : {}) };
     if (!this.isConfigured()) return { ...base, status: 'not_configured', code: 'chat_github_credential_missing',
       message: 'O backend que atende este chat nao possui GITHUB_TOKEN/GITHUB_APP_TOKEN nem GitHub App configurado. Configure a integracao no ambiente do servidor da Vercel. As secrets do Actions sao de outro ambiente; isto nao significa que os agentes do executor tenham apenas leitura.' };
     try {
       const access = await this.resolveCredential(owner, repo);
+      const identity = this.credentialDiagnostic(access);
       const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml`, {
         headers: this.getHeaders(access.token),
       });
-      if (!response.ok) return { ...base, credential: access.source, status: 'blocked', code: 'chat_workflow_access_denied', httpStatus: response.status,
-        message: `A credencial do backend nao conseguiu consultar o workflow de manutencao: HTTP ${response.status}.` };
+      if (!response.ok) {
+        const diagnostic = await inspectGithubFailure(response, [access.token]);
+        return { ...base, ...identity, ...diagnostic, status: 'blocked', code: 'chat_workflow_access_denied',
+          message: formatGithubFailure('A credencial do backend nao conseguiu consultar o workflow de manutencao', diagnostic) };
+      }
       const workflow = await response.json() as { state?: string };
       const actionsPermission = access.permissions?.actions;
-      const blocked = (actionsPermission !== undefined && actionsPermission !== 'write') || workflow.state !== 'active';
-      return { ...base, credential: access.source, status: blocked ? 'blocked' : 'available', workflowState: workflow.state,
-        workflowRead: 'confirmed', actionsWrite: actionsPermission === 'write' ? 'granted' : actionsPermission ? 'denied' : 'not_verified',
-        message: blocked ? 'Confira se o workflow esta ativo e se o GitHub App possui Actions:write.'
+      const denied = access.source === 'github_app' && actionsPermission !== 'write';
+      const blocked = denied || workflow.state !== 'active';
+      return { ...base, ...identity, status: blocked ? 'blocked' : 'available', workflowState: workflow.state || 'unknown',
+        workflowRead: 'confirmed', actionsWrite: actionsPermission === 'write' ? 'granted' : denied ? 'denied' : 'not_verified',
+        code: denied ? 'chat_actions_write_missing' : blocked ? 'chat_workflow_inactive' : 'chat_workflow_read_confirmed',
+        message: denied ? `A instalacao usada pela Vercel concede Actions:${actionsPermission || 'sem acesso'}; iniciar a manutencao exige Actions:write. Atualize e aprove as permissoes desta instalacao.`
+          : blocked ? `O workflow consultado esta ${workflow.state || 'com estado desconhecido'}; e necessario estar active para iniciar a manutencao.`
           : 'O chat possui credencial e consultou o workflow. Uma ordem autenticada pode solicitar manutencao; somente o recibo do dispatch confirma o inicio solicitado. A escrita de arquivos, testes, PR e publicacao sao executados pela esteira externa.' };
     } catch (error) {
-      return { ...base, status: 'blocked', code: 'chat_workflow_check_failed',
-        message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'Falha na consulta da integracao do chat.') };
+      return { ...base, status: 'blocked', code: error instanceof GithubAppError ? error.code : 'chat_workflow_check_failed',
+        ...(error instanceof GithubAppError ? error.diagnostic : {}),
+        message: safeGithubText(error instanceof Error ? error.message : 'Falha na consulta da integracao do chat.') };
     }
   }
 
@@ -120,21 +146,29 @@ export class GithubAutomationService {
     } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Falha ao solicitar CI.' }; }
   }
 
-  static async dispatchSelfMaintenance(): Promise<{ success: boolean; message: string }> {
+  static async dispatchSelfMaintenance(): Promise<MaintenanceDispatchResult> {
     if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
     const repo = process.env.GITHUB_REPO || 'frocia2';
     try {
-      const token = await this.resolveAccessToken(owner, repo);
+      const access = await this.resolveCredential(owner, repo);
+      const identity = { repository: `${owner}/${repo}`, ...this.credentialDiagnostic(access) };
+      if (access.source === 'github_app' && access.permissions?.actions !== 'write') {
+        return { success: false, diagnostic: { ...identity, code: 'chat_actions_write_missing' },
+          message: `A solicitacao permanece na fila: a instalacao ${access.installationId} do App ${access.appSlug || access.appId || 'configurado'} concede Actions:${access.permissions?.actions || 'sem acesso'}. Iniciar o workflow exige Actions:write nesta instalacao.` };
+      }
       const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml/dispatches`, {
-        method: 'POST', headers: this.getHeaders(token, true),
+        method: 'POST', headers: this.getHeaders(access.token, true),
         body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main' }),
       });
-      return { success: response.ok, message: response.ok
-        ? 'Execucao de manutencao solicitada ao GitHub Actions; acompanhe o resultado na fila.'
-        : `A solicitacao permanece na fila; GitHub recusou iniciar o workflow: HTTP ${response.status}.` };
+      if (response.ok) return { success: true, diagnostic: { ...identity, httpStatus: response.status },
+        message: 'Execucao de manutencao solicitada ao GitHub Actions; acompanhe o resultado na fila.' };
+      const diagnostic = await inspectGithubFailure(response, [access.token]);
+      return { success: false, diagnostic: { ...identity, ...diagnostic },
+        message: formatGithubFailure('A solicitacao permanece na fila; GitHub recusou iniciar o workflow', diagnostic) };
     } catch (error) {
-      return { success: false, message: `A solicitacao permanece na fila: ${error instanceof Error ? error.message : 'falha de comunicacao com GitHub'}` };
+      return { success: false, ...(error instanceof GithubAppError ? { diagnostic: { code: error.code, ...error.diagnostic } } : {}),
+        message: `A solicitacao permanece na fila: ${safeGithubText(error instanceof Error ? error.message : 'falha de comunicacao com GitHub')}` };
     }
   }
 
@@ -174,9 +208,7 @@ export class GithubAutomationService {
   }
 
   private static isConfigured(): boolean {
-    const token =
-      process.env.GITHUB_TOKEN ||
-      process.env.GITHUB_APP_TOKEN;
+    const token = process.env.GITHUB_TOKEN?.trim() || process.env.GITHUB_APP_TOKEN?.trim();
 
     const owner =
       process.env.GITHUB_OWNER ||
@@ -203,29 +235,33 @@ export class GithubAutomationService {
     return (await this.resolveCredential(owner, repo)).token;
   }
 
-  private static async resolveCredential(owner: string, repo: string): Promise<{
-    token: string; source: 'token' | 'github_app'; permissions?: Record<string, string>;
-  }> {
-    const staticToken =
-      process.env.GITHUB_TOKEN ||
-      process.env.GITHUB_APP_TOKEN;
-
-    if (staticToken?.trim()) {
-      return { token: staticToken.trim(), source: 'token' };
+  private static async resolveCredential(owner: string, repo: string): Promise<MaintenanceCredential> {
+    for (const environment of ['GITHUB_TOKEN', 'GITHUB_APP_TOKEN'] as const) {
+      const token = process.env[environment]?.trim();
+      if (token) return { token, source: 'token', environment };
     }
 
-    const installationId =
-      await GithubAppService.findRepositoryInstallation(
-        owner,
-        repo
-      );
+    const installation = await GithubAppService.inspectRepositoryInstallation(owner, repo);
 
     const access =
       await GithubAppService.installationToken(
-        installationId
+        installation.installationId
       );
 
-    return { token: access.token, source: 'github_app', permissions: access.permissions };
+    return { token: access.token, source: 'github_app', environment: 'GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY',
+      permissions: access.permissions, ...installation };
+  }
+
+  private static credentialDiagnostic(access: MaintenanceCredential): Record<string, unknown> {
+    const permissions = Object.fromEntries(['actions', 'contents', 'pull_requests', 'checks', 'workflows'].map(name =>
+      [name, ['read', 'write'].includes(access.permissions?.[name] || '') ? access.permissions![name] : 'none']));
+    return { credential: access.source, credentialEnvironment: access.environment,
+      ...(access.source === 'github_app' ? { appId: access.appId || null, appSlug: access.appSlug || null,
+        installationId: access.installationId, permissions } : {
+        selectionNotice: GithubAppService.isConfigured()
+          ? `O servidor selecionou ${access.environment} antes do GitHub App. Alterar as permissoes do App nao modifica esse token.`
+          : `O servidor usa ${access.environment}; suas permissoes de escrita dependem desta credencial.`,
+      }) };
   }
 
   private static getHeaders(
@@ -778,7 +814,7 @@ export class GithubAutomationService {
 
       if (!pullRequestResponse.ok) {
         return this.createFailure(
-          `Falha ao criar Pull Request no GitHub: HTTP ${pullRequestResponse.status}.`
+          formatGithubFailure('Falha ao criar Pull Request no GitHub', await inspectGithubFailure(pullRequestResponse, [token]))
         );
       }
 
