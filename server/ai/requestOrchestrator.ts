@@ -45,6 +45,11 @@ function buildSystemPolicy(
     `- Sensibilidade classificada: ${classification.sensitivity}.`,
   ];
 
+  if (classification.reasons.includes('conversation_context_without_external_research')) rules.push(
+    '- Esta mensagem e uma fala pessoal, continuacao, lembranca da conversa ou cumprimento. Responda naturalmente usando o historico; ela nao exige fontes externas.',
+    '- Mensagens antigas sobre falta de fontes ou acesso nao sao prova da situacao atual. Nao repita um bloqueio antigo como resposta a uma despedida ou comentario do usuario.'
+  );
+
   if (classification.requiresSearch) {
     rules.push(
       '- Consulte fontes atuais antes de afirmar fatos temporais.',

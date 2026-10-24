@@ -1,4 +1,5 @@
 import { RedactionService } from '../selfEvolution/redactionService.js';
+import { isEverydayConversation } from './conversationalIntent.js';
 
 export interface ContinuityFact {
   messageId: string;
@@ -17,7 +18,8 @@ export interface ConversationContinuity {
 
 export function isConversationalFollowUp(content: string): boolean {
   const text = content.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-  return text.length < 12 || /^(?:sim\b|nao\b|feito\b|pronto\b|prefiro\b|confirmo\b|aprovado\b|combinado\b|e agora\b|continue\b|pode continuar\b|acabei\b|ja (?:fiz|fazer|configurei|liberei|alterei|salvei)\b|fiz (?:isso|as alteracoes)\b|tambem\b)/.test(text);
+  return (isEverydayConversation(content) && /\b(?:bom dia|boa tarde|boa noite|vou descansar|vou dormir|por hoje e so|ate amanha|ate mais)\b/.test(text)) ||
+    text.length < 12 || /^(?:sim\b|nao\b|feito\b|pronto\b|prefiro\b|confirmo\b|aprovado\b|combinado\b|e agora\b|continue\b|pode continuar\b|acabei\b|ja (?:fiz|fazer|configurei|liberei|alterei|salvei)\b|fiz (?:isso|as alteracoes)\b|tambem\b)/.test(text);
 }
 
 /** Apenas extrai falas do usuario com origem. Nao transforma falas antigas
@@ -34,7 +36,9 @@ export function buildConversationContinuity(messages: Array<{
   const merge = (prior: ContinuityFact[], fresh: ContinuityFact[], limit: number) =>
     [...new Map([...prior, ...fresh].map(fact => [fact.messageId, excerpt(fact)])).values()]
       .sort((a, b) => (Date.parse(a.createdAt || '') || 0) - (Date.parse(b.createdAt || '') || 0)).slice(-limit);
-  const topics = merge(previous?.activeTopic ? [previous.activeTopic] : [],
+  const previousTopic = previous?.activeTopic && !isConversationalFollowUp(previous.activeTopic.content) ? previous.activeTopic :
+    previous?.goals?.filter(fact => !isConversationalFollowUp(fact.content)).at(-1);
+  const topics = merge(previousTopic ? [previousTopic] : [],
     userFacts.filter(fact => !isConversationalFollowUp(fact.content)), 1);
   return {
     version: 1, activeTopic: topics.at(-1) || null,

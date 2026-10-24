@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
 import { SelfSiteOwnerService, isOwnSiteAccessFollowUp, isOwnSiteCapabilityQuestion,
-  isOwnSiteRequest, requestedOwnSiteToggle, requestsOwnSiteAction } from '../selfEvolution/selfSiteOwnerService.js';
+  isOwnSiteRequest, isOwnSiteChangesQuestion, requestedOwnSiteToggle, requestsOwnSiteAction } from '../selfEvolution/selfSiteOwnerService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
 import { ConversationContextService } from './conversationContextService.js';
 import { ExecutionTraceService } from './executionTraceService.js';
@@ -20,6 +20,19 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
   const integrations = object(operations.lastVerifiedExternalIntegrations);
   const runner = object(operations.lastRunner);
   const paragraphs: string[] = [];
+  const changes = object(control.repositoryChanges);
+  if (changes.status) {
+    if (changes.status !== 'checked') return `Nao consegui concluir a leitura atual dos commits de ${safe(changes.repository)}. ${safe(changes.message)} O estado dos agentes nao comprova quais alteracoes foram feitas hoje.`;
+    const commits = Array.isArray(changes.commits) ? changes.commits.map(object) : [];
+    const escape = (text: string) => text.replace(/[\\`*_{}\[\]<>#|!]/g, '\\$&');
+    paragraphs.push(`Consultei agora os commits de ${safe(changes.repository)}, branch ${safe(changes.branch)}, no periodo ${safe(changes.period)}.`);
+    paragraphs.push(`Encontrei ${commits.length} commit(s)${changes.complete === true ? ' no intervalo consultado' : ' na leitura limitada'}.`);
+    if (commits.length) paragraphs.push(commits.slice(0, 20).map(commit =>
+      `- ${safe(commit.sha).slice(0, 7)}: ${escape(safe(commit.title))}`).join('\n'));
+    if (commits.length > 20 || changes.complete !== true) paragraphs.push('A lista exibida e parcial. Esta consulta nao afirma que todos os arquivos foram revisados ou que as mudancas ja foram publicadas.');
+    if (commits.length && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[a-f0-9]{40}$/i.test(safe(commits[0].url))) paragraphs.push(`Commit mais recente consultado: ${safe(commits[0].url)}`);
+    return paragraphs.join('\n\n');
+  }
   if (/mem[oó]ria/i.test(prompt)) {
     const memory = object(operations.memory);
     paragraphs.push(memory.encryptedArchiveConfigured === true
@@ -70,7 +83,8 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
 export class SelfSiteChatControlService {
   static async respond(params: ExecutionParams, correlationId: string) {
     if (params.attachments?.length) return null;
-    const potential = isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) ||
+    const potential = isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
+      /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
       /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
     if (!potential) return null;
     const tenantId = params.tenantId || `user:${params.userId}`;
@@ -81,6 +95,7 @@ export class SelfSiteChatControlService {
     const recentMessages = [...history.recentMessages, ...(topic ? [{ role: 'user', content: topic.content }] : [])];
     if (!isOwnSiteRequest(params.prompt, recentMessages)) return null;
     if (!isOwnSiteCapabilityQuestion(params.prompt) && !isOwnSiteAccessFollowUp(params.prompt) &&
+        !isOwnSiteChangesQuestion(params.prompt, recentMessages) &&
         !requestsOwnSiteAction(params.prompt, recentMessages) && requestedOwnSiteToggle(params.prompt, recentMessages) === null) return null;
     if (params.abortSignal?.aborted) throw new Error('Solicitacao cancelada antes do controle administrativo.');
     const startedAt = new Date().toISOString();

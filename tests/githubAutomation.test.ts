@@ -375,6 +375,7 @@ describe(
             );
 
         expect(result.success).toBe(true);
+        expect(result.branchName).toContain(BASE_COMMIT_SHA.slice(0, 12));
         expect(result.commitSha).toBe(
           CREATED_COMMIT_SHA
         );

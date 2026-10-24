@@ -10,6 +10,7 @@ import { GithubAutomationService } from '../server/selfEvolution/githubAutomatio
 import { CIGateService } from '../server/selfEvolution/ciGateService.js';
 import { BudgetService } from '../server/selfEvolution/budgetService.js';
 import type { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
+import { CertifiedPatchCheckpointService } from '../server/selfEvolution/certifiedPatchCheckpointService.js';
 
 describe('Retomada do ciclo depois do merge', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -56,5 +57,50 @@ describe('Retomada do ciclo depois do merge', () => {
     vi.spyOn(BudgetService, 'consumeBudget').mockResolvedValue(false);
     expect((await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).state).toBe('approved_for_work');
     expect(patch).not.toHaveBeenCalled();
+  });
+
+  function staleSetup() {
+    const prepared = setup(); prepared.candidate.state = 'patch_created';
+    const oldPatch = { status: 'success', success: true, baseSha: 'a'.repeat(40), files: [{ path: 'src/fix.ts', content: 'old' }] } as any;
+    const newPatch = { ...oldPatch, baseSha: 'b'.repeat(40), files: [{ path: 'src/fix.ts', content: 'new' }] };
+    vi.spyOn(CertifiedPatchCheckpointService, 'load').mockResolvedValue(oldPatch);
+    const save = vi.spyOn(CertifiedPatchCheckpointService, 'save').mockResolvedValue(undefined);
+    vi.spyOn(BudgetService, 'canExecuteAgentRun').mockResolvedValue(true);
+    vi.spyOn(BudgetService, 'consumeBudget').mockResolvedValue(true);
+    prepared.patch.mockResolvedValue(newPatch);
+    const pr = vi.spyOn(GithubAutomationService, 'createBranchAndPR')
+      .mockResolvedValueOnce({ status: 'failed', success: false, requiresRegeneration: true, errorMessage: 'A main mudou.' })
+      .mockResolvedValue({ status: 'success', success: true, commitSha: 'c'.repeat(40), branchName: 'froc-evolution/r1/new-base', pullRequestUrl: 'https://github.com/owner/site/pull/99' });
+    vi.spyOn(CIGateService, 'runCIGate').mockResolvedValue({ status: 'pending', details: 'CI real aguardando.' } as any);
+    return { ...prepared, oldPatch, newPatch, pr, save };
+  }
+
+  it('regenera o checkpoint antigo na mesma execucao, com orcamento e nova certificacao antes do PR', async () => {
+    const { patch, newPatch, pr, save } = staleSetup();
+    expect((await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).state).toBe('ci_pending');
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(BudgetService.consumeBudget).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith('publication-test', newPatch);
+    expect(pr).toHaveBeenNthCalledWith(2, expect.anything(), newPatch);
+    expect(save.mock.invocationCallOrder[0]).toBeLessThan(pr.mock.invocationCallOrder[1]);
+  });
+  it('conserva a retomada sem gerar codigo quando falta orcamento para atualizar a base', async () => {
+    const { patch, pr, save } = staleSetup();
+    vi.mocked(BudgetService.canExecuteAgentRun).mockResolvedValue(false);
+    const result = await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test');
+    expect(result.state).toBe('approved_for_work');
+    expect(patch).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled(); expect(pr).toHaveBeenCalledTimes(1);
+  });
+  it('nao publica o checkpoint antigo se a geracao nova falha', async () => {
+    const { patch, pr, save } = staleSetup();
+    patch.mockResolvedValue({ status: 'failed', success: false, errorMessage: 'Novo teste falhou.' } as any);
+    expect(await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).toMatchObject({ state: 'tests_failed', message: 'Novo teste falhou.' });
+    expect(save).not.toHaveBeenCalled(); expect(pr).toHaveBeenCalledTimes(1);
+  });
+  it('limita a uma nova geracao quando a main muda repetidamente', async () => {
+    const { patch, pr } = staleSetup();
+    pr.mockResolvedValue({ status: 'failed', success: false, requiresRegeneration: true });
+    expect((await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).state).toBe('approved_for_work');
+    expect(patch).toHaveBeenCalledTimes(1); expect(pr).toHaveBeenCalledTimes(2);
   });
 });

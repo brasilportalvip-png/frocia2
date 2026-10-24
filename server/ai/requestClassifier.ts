@@ -5,6 +5,7 @@ import {
 } from './types/ai.js';
 import { SocialSearchService } from './socialSearchService.js';
 import { SiteAuditService } from '../services/siteAuditService.js';
+import { isConversationRecall, isEverydayConversation } from './conversationalIntent.js';
 
 interface ClassificationInput {
   mode: AIMode;
@@ -81,7 +82,9 @@ const DOMAIN_PATTERNS: Array<{
 ];
 
 const CURRENT_INFORMATION_PATTERN =
-  /\b(hoje|agora|atual(?:mente)?|tempo real|ao vivo|recente|[uú]ltim[oa]s?|not[ií]cias?|pre[çc]os?|promo[çc][oõ]es?|cota[çc][aã]o|agenda|calend[aá]rio|hor[aá]rios?|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento|placar|resultado do jogo|classifica[çc][aã]o|campeonato|tr[aâ]nsito|evento|aberto agora)\b/i;
+  /\b(tempo real|ao vivo|not[ií]cias?|pre[çc]os?|promo[çc][oõ]es?|cota[çc][aã]o|agenda|calend[aá]rio|hor[aá]rios?|vers[aã]o|lan[çc]amento|presidente|ceo|lei vigente|regulamento|placar|resultado do jogo|classifica[çc][aã]o|campeonato|tr[aâ]nsito|evento|aberto agora)\b/i;
+const TEMPORAL_REFERENCE_PATTERN = /\b(?:hoje|agora|atual(?:mente)?|recente|[uú]ltim[oa]s?)\b/i;
+const FACT_REQUEST_PATTERN = /\b(?:qual|quais|quanto|quantos|onde|quando|como|quem|mostre|informe|pesquise|busque|verifique|compare|explique|recomende|veja|ver)\b/i;
 
 const VOLATILE_TECH_INFORMATION_PATTERN =
   /\b(gemini|openai|chatgpt|gpt|claude|anthropic|firebase|vercel|react|node(?:\.js)?|typescript|vite|npm)\b[\s\S]{0,120}\b(modelo|models?|api|sdk|vers[aã]o|pre[çc]o|plano|dispon[ií]vel|deprecat\w*|documenta[çc][aã]o|limite|quota)\b|\b(modelo|models?|api|sdk|vers[aã]o|pre[çc]o|plano|dispon[ií]vel|deprecat\w*|documenta[çc][aã]o|limite|quota)\b[\s\S]{0,120}\b(gemini|openai|chatgpt|gpt|claude|anthropic|firebase|vercel|react|node(?:\.js)?|typescript|vite|npm)\b/i;
@@ -92,9 +95,6 @@ const EXPLICIT_WEB_RESEARCH_PATTERN =
 
 const LIVE_INFORMATION_PATTERN =
   /\b(?:futebol|esportes?|jogos?|placar|tabela|campeonato|not[ií]cias?|mercado|bolsa|d[oó]lar|euro|bitcoin|cripto|pre[çc]os?|produto|restaurante|hotel|viagem|voos?|tempo|clima|tr[aâ]nsito|cinema|eventos?)\b/i;
-
-const CONVERSATIONAL_CHECK_IN_PATTERN =
-  /^\s*(?:oi|ol[aá]|bom dia|boa tarde|boa noite|tudo bem|como (?:voc[eê]|c[eê]) (?:est[aá]|vai)|(?:est[aá] )?tudo bem com (?:voc[eê]|c[eê])|como (?:voc[eê]|c[eê]) se sente|(?:voc[eê]|c[eê]) est[aá] bem)(?=\s|[?!.,]|$)/i;
 
 const ATTACHMENT_ONLY_PATTERN =
   /\b(?:somente|apenas|exclusivamente)\b[\s\S]{0,80}\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b|\b(?:anex[oa]|arquivo|documento|pdf|planilha|csv|zip|reposit[oó]rio)\b[\s\S]{0,80}\b(?:somente|apenas|exclusivamente)\b/i;
@@ -210,10 +210,9 @@ export class AIRequestClassifier {
           )
         : null;
 
-    const conversationalCheckIn =
-      CONVERSATIONAL_CHECK_IN_PATTERN.test(
-        prompt
-      );
+    const conversationalCheckIn = isEverydayConversation(prompt);
+    const localConversation = input.mode !== 'research' && !highStakes && !explicitWebResearch &&
+      !requiresSocialSearch && !requiresSiteAudit && (conversationalCheckIn || isConversationRecall(prompt));
 
     const localArtifactRecall =
       artifactMemoryReference &&
@@ -223,6 +222,7 @@ export class AIRequestClassifier {
     const requiresSearch =
       !attachmentOnly &&
       !localArtifactRecall &&
+      !localConversation &&
       (
         input.mode === 'research' ||
         highStakes ||
@@ -237,7 +237,7 @@ export class AIRequestClassifier {
     ) ||
     VOLATILE_TECH_INFORMATION_PATTERN.test(
       prompt
-    )
+    ) || (TEMPORAL_REFERENCE_PATTERN.test(prompt) && (FACT_REQUEST_PATTERN.test(prompt) || LIVE_INFORMATION_PATTERN.test(prompt)))
   )
 ) ||
 explicitWebResearch ||
@@ -322,6 +322,8 @@ explicitWebResearch ||
         'artifact_memory_recall_without_web_search'
       );
     }
+
+    if (localConversation) reasons.push('conversation_context_without_external_research');
 
     if (requiresSocialSearch) {
       reasons.push(

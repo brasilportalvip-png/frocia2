@@ -111,30 +111,25 @@ export class SelfEvolutionOrchestrator {
       }
 
       let certifiedPatch: PatchResult | undefined;
-      if (candidate.state === 'approved_for_work') {
+      let generatedThisExecution = false;
+      const generateCertifiedPatch = async (): Promise<{ patch?: PatchResult; message?: string }> => {
+        if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) return { message: 'A manutencao foi pausada antes da nova geracao.' };
         if (!(await BudgetService.canExecuteAgentRun(candidate.estimatedCostCredits))) {
-          return {
-            state: candidate.state,
-            message: 'Orçamento de execução insuficiente. Nenhum código foi gerado.',
-          };
+          return { message: 'Orçamento de execução insuficiente. Nenhum código foi gerado.' };
         }
 
         if (!(await BudgetService.consumeBudget(candidate.estimatedCostCredits))) {
-          return { state: candidate.state, message: 'Orcamento ocupado por outra execucao. Nenhum codigo foi gerado.' };
+          return { message: 'Orcamento ocupado por outra execucao. Nenhum codigo foi gerado.' };
         }
         await transition('agent_running');
-
+        generatedThisExecution = true;
         const patch = await CodeAgentService.generatePatchAndTest(candidate);
         if (!patch.success) {
           await transition('tests_failed');
-          return {
-            state: 'tests_failed',
-            message: patch.errorMessage || 'O worker não conseguiu gerar e testar o patch.',
-          };
+          return { message: patch.errorMessage || 'O worker não conseguiu gerar e testar o patch.' };
         }
 
         await CertifiedPatchCheckpointService.save(candidateId, patch);
-        certifiedPatch = patch;
         await transition('tests_passed');
         await AuditService.logEvent({
           actor: 'engineering-sandbox',
@@ -149,20 +144,39 @@ export class SelfEvolutionOrchestrator {
             `diff ${patch.executionEvidence?.diffSha256 || '(sem hash)'}.`,
         });
 
+        return { patch };
+      };
+      if (candidate.state === 'approved_for_work') {
+        const result = await generateCertifiedPatch();
+        if (!result.patch) return { state: candidate.state, message: result.message! };
+        certifiedPatch = result.patch;
       }
 
       if (candidate.state === 'tests_passed' || candidate.state === 'patch_created') {
-        const patch = certifiedPatch || await CertifiedPatchCheckpointService.load(candidateId);
+        let patch = certifiedPatch || await CertifiedPatchCheckpointService.load(candidateId);
         if (!patch) {
           await transition('tests_failed');
           return { state: 'tests_failed', message: 'Patch certificado nao encontrado. Tarefa preservada para nova tentativa sem publicar codigo nao comprovado.' };
         }
         await transition('patch_created');
-        const pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
+        let pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
+        if (pr.requiresRegeneration) {
+          await AuditService.logEvent({ actor: 'self-evolution', action: 'refresh_stale_certified_patch', resource: candidateId,
+            riskLevel: candidate.riskLevel, result: 'failure', commitHash: patch.baseSha,
+            reason: 'A main mudou; o checkpoint antigo nao sera publicado. Nova geracao exige orcamento e certificacao completa.' });
+          await transition('approved_for_work');
+          if (generatedThisExecution) return { state: 'approved_for_work',
+            message: 'A main mudou durante esta execucao. Tarefa preservada para nova geracao certificada na proxima retomada; o patch antigo nao foi publicado.' };
+          const refreshed = await generateCertifiedPatch();
+          if (!refreshed.patch) return { state: candidate.state, message: refreshed.message! };
+          patch = refreshed.patch;
+          await transition('patch_created');
+          pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
+        }
         if (!pr.success || !pr.commitSha || !pr.branchName || !pr.pullRequestUrl) {
           if (pr.requiresRegeneration) {
-            await transition('tests_failed');
-            return { state: 'tests_failed', message: pr.errorMessage || 'A base mudou; o patch precisa ser gerado e certificado novamente.' };
+            await transition('approved_for_work');
+            return { state: 'approved_for_work', message: 'A main mudou novamente. Tarefa preservada para nova geracao certificada na proxima retomada; o patch antigo nao foi publicado.' };
           }
           return {
             state: 'patch_created',

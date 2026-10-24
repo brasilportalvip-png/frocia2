@@ -13,9 +13,22 @@ export type OwnerControlInput = { role?: string; userId: string; prompt: string;
 const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 const productSite = /\bfroc(?:\.?ia|ia2)?\b|frocia2\.vercel\.app|brasilportalvip-png\/frocia2/;
 const ownSite = new RegExp(productSite.source + '|(?:meu|seu|nosso|proprio)\\s+(?:site|repositorio)|(?:seus|meus|nossos)\\s+agentes');
+const githubSpeech = (prompt: string) => normalize(prompt).replace(/\b(?:git[ -]*(?:hub|gub|ob)|gtop)\b/g, 'github');
+
+export function isOwnSiteChangesQuestion(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
+  const text = githubSpeech(prompt);
+  if (/\b(?:outro|outra)\s+(?:site|empresa|repositorio|projeto)/.test(text) ||
+      /github\.com\/(?!brasilportalvip-png\/frocia2(?:\b|\/))[\w.-]+\/[\w.-]+/.test(text)) return false;
+  const asks = /\b(?:ver|veja|ve|viu|olhada|olhe|olha|verifiqu\w*|mostr\w*|listar?|confir\w*|quais|quant[oa]s)\b/.test(text);
+  const changes = /\b(?:melhorias|alteracoes|alteracao|mudancas|commits?|mudei|alterei|corrigi|fiz)\b/.test(text);
+  const prior = recentMessages.filter(message => message.role === 'user').slice(-5)
+    .some(message => ownSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content) || isOwnSiteChangesQuestion(message.content));
+  const scope = ownSite.test(text) || /\b(?:para|pra) voce\b/.test(text) || (prior && /\b(?:github|melhorias|alteracoes|mudancas|commits)\b/.test(text));
+  return asks && changes && scope;
+}
 
 export function isOwnSiteCapabilityQuestion(prompt: string): boolean {
-  const text = normalize(prompt);
+  const text = githubSpeech(prompt);
   return /^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text) ||
     /\b(?:memoria)\b.{0,35}\b(?:ativa|configurada|funcionando|capacidade|tamanho)\b|\b(?:qual|como esta)\b.{0,50}\bmemoria\b/.test(text) ||
     /\b(?:voce|vc)\b.{0,35}\b(?:tem|possui|consegue|pode)\b.{0,70}\b(?:github|vercel|commit|push|repositorio)\b/.test(text) ||
@@ -39,6 +52,7 @@ export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] 
   // Perguntas sobre as ferramentas da propria IA tambem precisam do estado real,
   // mesmo quando o dono nao repete "meu site" a cada mensagem.
   if (isOwnSiteCapabilityQuestion(prompt)) return true;
+  if (isOwnSiteChangesQuestion(prompt, recentMessages)) return true;
   const priorOwnerTopic = recentMessages.filter(message => message.role === 'user' && message.content !== prompt)
     .slice(-5).some(message => ownSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
   return priorOwnerTopic && (isOwnSiteAccessFollowUp(prompt) || /\b(?:github|vercel|agentes|site|repositorio|commit|push|deploy|correcoes|corrija|conserta|conserte|arrume|repare|auditoria|varredura|isso|tudo)\b/.test(text));
@@ -159,12 +173,17 @@ export class SelfSiteOwnerService {
       }
       // Uma falha de consulta ao indice nao pode apagar o recibo de um comando
       // que ja foi persistido/enviado ao GitHub.
-      const [operations, connection] = await Promise.allSettled([
+      const explicitPeriod = /\b(?:hoje|ontem|recentes|ultimas)\b/.test(normalize(input.prompt));
+      const priorPeriod = explicitPeriod ? null : (input.recentMessages || []).filter(message => message.role === 'user').slice(-5).reverse()
+        .map(message => normalize(message.content).match(/\b(hoje|ontem)\b/)?.[1]).find(Boolean);
+      const changesPrompt = priorPeriod ? `${input.prompt}\nPeriodo retomado da conversa: ${priorPeriod}.` : input.prompt;
+      const [operations, connection, changes] = await Promise.allSettled([
         this.operationalSnapshot(),
         GithubAutomationService.inspectMaintenanceConnection(),
+        isOwnSiteChangesQuestion(input.prompt, input.recentMessages) ? GithubAutomationService.readRecentRepositoryChanges(changesPrompt) : Promise.resolve(null),
       ]);
       const result = (value: PromiseSettledResult<unknown>) => value.status === 'fulfilled' ? value.value : { status: 'unavailable' };
-      return { status: 'checked', connection: result(connection), operations: result(operations), action };
+      return { status: 'checked', connection: result(connection), operations: result(operations), action, repositoryChanges: result(changes) };
     } catch (error) {
       return { status: 'blocked', message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'falha de acesso') };
     }

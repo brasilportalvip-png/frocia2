@@ -22,6 +22,8 @@ import { CreditWalletService } from '../server/services/creditWalletService.js';
 import { GeminiProvider } from '../server/ai/providers/geminiProvider.js';
 import { GeminiFailoverService } from '../server/ai/geminiFailoverService.js';
 import { buildConversationContinuity } from '../server/ai/conversationContinuity.js';
+import { ArtifactMemoryService } from '../server/ai/artifactMemoryService.js';
+import { PromptRegistry } from '../server/ai/promptRegistry.js';
 
 const app = express(); app.use(express.json());
 app.use((req: any, _res, next) => { req.correlationId = 'test-control-correlation'; next(); });
@@ -121,5 +123,51 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
     expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Voce consegue alterar a cor do botao?' }, 'test')).toBeNull();
     expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Qual permissao e necessaria no banco de dados de outro projeto?' }, 'test')).toBeNull();
     expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled();
+  });
+
+  it.each(['chat', 'executions'])('le as melhorias pela rota %s com a transcricao do celular, sem iniciar trabalho nem cobrar', async path => {
+    const read = vi.spyOn(GithubAutomationService, 'readRecentRepositoryChanges').mockResolvedValue({ status: 'checked', repository: 'brasilportalvip-png/frocia2',
+      branch: 'main', fetchedAt: '2026-10-24T01:00:00Z', period: '2026-10-23 (America/Sao_Paulo)', until: '2026-10-24T01:00:00Z', complete: true,
+      commits: [{ sha: 'a'.repeat(40), title: 'feat: memoria extensa', url: `https://github.com/brasilportalvip-png/frocia2/commit/${'a'.repeat(40)}`, committedAt: '2026-10-23T23:00:00Z' }] });
+    const response = await send(path, 'Vamos, dê uma olhada aí e verifique o tanto de coisa que eu alterei para melhorar você no GTOP.');
+    expect(response.status, response.text).toBe(200);
+    expect(response.text).toContain('feat: memoria extensa'); expect(response.text).not.toContain('nao tenho uma ferramenta');
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled(); expect(CreditWalletService.reserveCredits).not.toHaveBeenCalled();
+    expect(GeminiProvider.generateStream).not.toHaveBeenCalled(); expect(GeminiFailoverService.generate).not.toHaveBeenCalled();
+  });
+  it('mantem o periodo de hoje na continuacao sobre as alteracoes do repositorio', async () => {
+    const history = await vi.mocked(ConversationContextService.load).getMockImplementation()!({ userId: 'owner', tenantId: 'user:owner' });
+    vi.mocked(ConversationContextService.load).mockResolvedValue({ ...history, recentMessages: [
+      { id: 'work', role: 'user', content: 'Hoje melhorei meu site Froc IA e seus agentes.' },
+    ] });
+    const read = vi.spyOn(GithubAutomationService, 'readRecentRepositoryChanges').mockResolvedValue({ status: 'checked', repository: 'brasilportalvip-png/frocia2', branch: 'main',
+      period: 'hoje', fetchedAt: '', until: '', complete: true, commits: [] });
+    const response = await send('chat', 'Veja as alteracoes no GTOP.');
+    expect(response.status).toBe(200);
+    expect(read).toHaveBeenCalledWith(expect.stringContaining('Periodo retomado da conversa: hoje'));
+    expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled();
+  });
+
+  it.each(['chat', 'executions'])('preserva a despedida e o contexto pela rota %s, sem o bloqueio de fontes', async path => {
+    vi.spyOn(ArtifactMemoryService, 'rememberAndRetrieve').mockResolvedValue([]);
+    vi.spyOn(MemoryService, 'getActiveMemories').mockResolvedValue([]);
+    vi.spyOn(PromptRegistry, 'getActivePrompt').mockResolvedValue('Converse naturalmente.');
+    vi.spyOn(ExecutionTraceService, 'updateTrace').mockResolvedValue(undefined);
+    vi.mocked(CreditWalletService.reserveCredits).mockResolvedValue({ reservationId: 'reservation-conversation' } as any);
+    vi.spyOn(CreditWalletService, 'confirmConsumption').mockResolvedValue({} as any);
+    vi.mocked(ConversationContextService.load).mockResolvedValue({ summary: '', summarySourceMessageIds: [], omittedMessageCount: 0,
+      historyWindowLimited: false, longTermSegments: [], longTermMessagesPreserved: 0,
+      recentMessages: [{ id: 'work', role: 'user', content: 'Quero memoria extensa e que voce mantenha a conversa.' }] });
+    const answer = 'Boa noite, Flavio. Descanse bem!';
+    vi.mocked(GeminiProvider.generateStream).mockImplementation(async function* () { yield { text: answer }; } as any);
+    vi.mocked(GeminiFailoverService.generate).mockResolvedValue({ response: { text: answer, inputTokens: 100, outputTokens: 10 }, model: 'gemini-test',
+      attemptedModels: ['gemini-test'], fallbackUsed: false } as any);
+    const response = await send(path, 'Por hoje é só, eu já trabalhei muito, agora eu vou descansar.');
+    expect(response.status, response.text).toBe(200);
+    expect(response.text).toContain(answer);
+    expect(response.text).not.toContain('Não consegui confirmar esta resposta');
+    const calls = path === 'chat' ? vi.mocked(GeminiProvider.generateStream).mock.calls : vi.mocked(GeminiFailoverService.generate).mock.calls;
+    expect(calls[0][0]).toMatchObject({ enableSearchGrounding: false, userMessage: expect.stringContaining('memoria extensa') });
   });
 });

@@ -85,7 +85,60 @@ export interface MaintenanceDispatchResult {
   diagnostic?: Record<string, unknown>;
 }
 
+export interface RepositoryChangesReceipt {
+  status: 'checked' | 'unavailable'; repository: string; branch: string; fetchedAt: string;
+  period: string; since?: string; until: string; complete: boolean; message?: string;
+  commits: Array<{ sha: string; title: string; url: string; committedAt: string }>;
+}
+
 export class GithubAutomationService {
+  /** Leitura autenticada do repositorio configurado; nao dispara agentes ou modifica arquivos. */
+  static async readRecentRepositoryChanges(prompt: string, now = new Date()): Promise<RepositoryChangesReceipt> {
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const branch = process.env.GITHUB_BASE_BRANCH || 'main';
+    const normalized = prompt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const day = new Date(now.getTime() - (/\bontem\b/.test(normalized) ? 86_400_000 : 0));
+    const dayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(day);
+    const offset = new Intl.DateTimeFormat('en', { timeZone: 'America/Sao_Paulo', timeZoneName: 'longOffset' }).formatToParts(day)
+      .find(part => part.type === 'timeZoneName')!.value.replace('GMT', '') || '+00:00';
+    const dated = /\b(?:hoje|ontem)\b/.test(normalized);
+    const since = dated ? new Date(`${dayKey}T00:00:00${offset}`).toISOString() : undefined;
+    const until = /\bontem\b/.test(normalized)
+      ? new Date(Date.parse(since!) + 86_400_000 - 1).toISOString() : now.toISOString();
+    const base = { repository: `${owner}/${repo}`, branch, fetchedAt: now.toISOString(), period: dated ? `${dayKey} (America/Sao_Paulo)` : 'commits recentes',
+      ...(since ? { since } : {}), until };
+    const commits: RepositoryChangesReceipt['commits'] = [];
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      let complete = true;
+      for (let page = 1; page <= (dated ? 2 : 1); page++) {
+        const query = new URLSearchParams({ sha: branch, per_page: dated ? '100' : '20', page: String(page), until,
+          ...(since ? { since } : {}) });
+        const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?${query}`, {
+          headers: this.getHeaders(access.token),
+        }, 10_000);
+        if (!response.ok) throw new Error(formatGithubFailure('GitHub recusou consultar os commits', await inspectGithubFailure(response, [access.token])));
+        const rows: unknown = await response.json();
+        if (!Array.isArray(rows)) throw new Error('GitHub retornou uma lista de commits invalida.');
+        for (const row of rows) {
+          const sha = typeof row?.sha === 'string' ? row.sha : '';
+          const date = row?.commit?.committer?.date || row?.commit?.author?.date;
+          const time = typeof date === 'string' ? Date.parse(date) : NaN;
+          if (!/^[a-f0-9]{40}$/i.test(sha) || !Number.isFinite(time) || time > Date.parse(until) || (since && time < Date.parse(since))) continue;
+          if (!commits.some(commit => commit.sha === sha)) commits.push({ sha, title: safeGithubText(String(row?.commit?.message || '').split('\n')[0], [access.token]).slice(0, 220),
+            url: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commit/${sha}`, committedAt: new Date(time).toISOString() });
+        }
+        const more = /rel="next"/.test(response.headers.get('link') || '');
+        complete = dated && !more;
+        if (!more) break;
+      }
+      return { ...base, status: 'checked', complete, commits };
+    } catch (error) {
+      return { ...base, status: 'unavailable', complete: false, commits,
+        message: safeGithubText(error instanceof Error ? error.message : 'Falha ao consultar os commits do repositorio.') };
+    }
+  }
   /** Consulta sem criar commit nem disparar um ciclo pago. Os segredos do
    * Actions nao sao automaticamente credenciais do backend que atende o chat. */
   static async inspectMaintenanceConnection(): Promise<Record<string, unknown>> {
@@ -288,12 +341,13 @@ export class GithubAutomationService {
 
   private static githubFetch(
     url: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs = GITHUB_REQUEST_TIMEOUT_MS
   ): Promise<Response> {
     return fetch(url, {
       ...options,
       signal: AbortSignal.timeout(
-        GITHUB_REQUEST_TIMEOUT_MS
+        timeoutMs
       )
     });
   }
@@ -414,11 +468,14 @@ export class GithubAutomationService {
       );
     }
 
-    const branchName =
+    const legacyBranchName =
       `froc-evolution/` +
       `${candidate.riskLevel.toLowerCase()}/` +
       `${safeCandidateId}-` +
       `${slug || 'improvement'}`;
+    const scopedBranchName = `${legacyBranchName}-${patch.baseSha?.slice(0, 12) || 'base-missing'}`;
+    const branchName = candidate.pullRequestUrl && [legacyBranchName, scopedBranchName].includes(candidate.branchName || '')
+      ? candidate.branchName! : scopedBranchName;
 
     if (
       branchName === targetBaseBranch ||
