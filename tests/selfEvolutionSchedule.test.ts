@@ -3,14 +3,14 @@ import { planSelfEvolutionRun } from '../scripts/self-evolution-schedule.mjs';
 
 const NOW = new Date('2026-10-23T12:47:00Z');
 const context = {
-  eventName: 'schedule', runId: 99,
+  eventName: 'schedule', runId: 99, sha: 'a'.repeat(40),
   repo: { owner: 'brasilportalvip-png', repo: 'frocia2' },
   payload: { repository: { default_branch: 'main' } },
 };
 
 function successfulRun(overrides: Record<string, unknown> = {}) {
   return {
-    id: 18, head_branch: 'main', event: 'schedule', conclusion: 'success',
+    id: 18, head_sha: 'a'.repeat(40), head_branch: 'main', event: 'schedule', conclusion: 'success',
     created_at: '2026-10-23T12:17:00Z', ...overrides,
   };
 }
@@ -65,6 +65,11 @@ describe('Recuperacao do agendamento dos agentes', () => {
       successfulRun({ id: 19, head_branch: 'feature/test' }),
       successfulRun({ id: 20, event: 'push' }),
     ], { 18: [{ name: 'execute', conclusion: 'failure' }] });
+    await expect(planSelfEvolutionRun({ github, context, now: NOW })).resolves.toMatchObject({ shouldRun: true });
+  });
+
+  it('uma versão nova não herda o marcador verde de um código anterior', async () => {
+    const github = api([successfulRun({ head_sha: 'b'.repeat(40) })], { 18: [completedJob()] });
     await expect(planSelfEvolutionRun({ github, context, now: NOW })).resolves.toMatchObject({ shouldRun: true });
   });
 

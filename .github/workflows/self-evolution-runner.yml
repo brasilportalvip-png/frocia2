@@ -302,5 +302,5 @@ jobs:
         run: node scripts/self-evolution-worker-diagnostics.mjs
 
       - name: Rodada diaria finalizada
-        if: ${{ steps.cycle.outputs.requires_resume == 'false' }}
+        if: ${{ steps.cycle.outputs.daily_complete == 'true' }}
         run: echo "Rodada encerrada sem retomada pendente. Consulte o resumo para cobertura e bloqueios."

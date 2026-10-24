@@ -1,8 +1,10 @@
+import { RedactionService } from './redactionService.js';
 export interface PreviewDeployResult {
   status: 'ready' | 'failed' | 'not_configured' | 'pending';
   previewUrl?: string;
   deploymentId?: string;
   smokeTestsPassed?: boolean;
+  diagnostic?: { phase: 'smoke'; httpStatus?: number; failureKind: string; dependencies?: Record<string, boolean> };
   errorMessage?: string;
 }
 
@@ -104,26 +106,38 @@ export class PreviewDeploymentService {
       }
       const previewUrl = preview.origin;
 
-      // Run real smoke test on preview URL
-      let smokeTestsPassed = false;
+      // Keep health as a release gate; preserve only safe diagnostic fields.
+      let diagnostic: PreviewDeployResult['diagnostic'];
       try {
         const pingRes = await fetch(`${previewUrl}/api/health`, { method: 'GET', signal: AbortSignal.timeout(15_000), redirect: 'error' });
-        smokeTestsPassed = pingRes.ok;
-      } catch {
-        smokeTestsPassed = false;
+        if (!pingRes.ok) {
+          const dependencies: Record<string, boolean> = {};
+          // Never return arbitrary response bodies (tokens, headers or private HTML).
+          if (pingRes.status === 503 && pingRes.headers.get('content-type')?.includes('application/json')) {
+            try {
+              const body = await pingRes.json();
+              for (const key of ['firebaseConfigured', 'mercadoPagoConfigured', 'geminiConfigured'])
+                if (typeof body?.[key] === 'boolean') dependencies[key] = body[key];
+            } catch { console.warn('Preview: resposta de health sem JSON valido.'); }
+          }
+          diagnostic = { phase: 'smoke', httpStatus: pingRes.status,
+            failureKind: [401, 403].includes(pingRes.status) ? 'access_denied' : pingRes.status === 503 ? 'dependencies_not_ready' : 'http_error',
+            ...(Object.keys(dependencies).length ? { dependencies } : {}) };
+        }
+      } catch (error) {
+        diagnostic = { phase: 'smoke', failureKind: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout' : 'network_or_redirect_error' };
       }
-
+      const smokeTestsPassed = !diagnostic;
+      const dependencySummary = diagnostic?.dependencies ? ' Dependencias: ' + JSON.stringify(diagnostic.dependencies) + '.' : '';
       return {
-        status: smokeTestsPassed ? 'ready' : 'failed',
-        deploymentId: latest.uid,
-        previewUrl,
-        smokeTestsPassed,
-        errorMessage: smokeTestsPassed ? undefined : 'Smoke test falhou na URL de preview do deployment Vercel.',
+        status: smokeTestsPassed ? 'ready' : 'failed', deploymentId: latest.uid, previewUrl, smokeTestsPassed,
+        ...(diagnostic ? { diagnostic } : {}),
+        errorMessage: diagnostic ? `Smoke test do preview reprovado: ${diagnostic.failureKind}${diagnostic.httpStatus ? `; HTTP ${diagnostic.httpStatus}` : ''}.${dependencySummary}` : undefined,
       };
     } catch (err: any) {
       return {
         status: 'failed',
-        errorMessage: `Erro ao gerenciar preview deployment Vercel: ${err?.message || err}`,
+        errorMessage: `Erro ao gerenciar preview deployment Vercel: ${RedactionService.redactSensitiveData(String(err?.message || err)).slice(0, 500)}`,
       };
     }
   }

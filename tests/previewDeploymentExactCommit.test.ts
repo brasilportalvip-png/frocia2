@@ -29,6 +29,28 @@ describe('Preview do commit exato da correcao', () => {
     expect(f).toHaveBeenCalledTimes(3);
     expect(String(f.mock.calls[0][0])).toContain(`meta-githubCommitSha=${sha}`);
   });
+  it.each([401, 403, 503, 500])('preserva HTTP %s e não aprova preview indisponível', async status => {
+    const f = setup();
+    const original = f.getMockImplementation()!;
+    f.mockImplementation(async (url: string | URL) => String(url).endsWith('/api/health')
+      ? Response.json({ firebaseConfigured: true, mercadoPagoConfigured: false, geminiConfigured: true, secret: 'never-return-body' }, { status })
+      : original(url));
+    const result = await PreviewDeploymentService.createPreviewDeployment('candidate', 'branch', sha);
+    expect(result).toMatchObject({ status: 'failed', smokeTestsPassed: false, diagnostic: { phase: 'smoke', httpStatus: status } });
+    expect(result.errorMessage).toContain(`HTTP ${status}`);
+    expect(JSON.stringify(result)).not.toContain('never-return-body');
+    if (status === 503) expect(result.diagnostic?.dependencies).toEqual({ firebaseConfigured: true, mercadoPagoConfigured: false, geminiConfigured: true });
+  });
+  it('distingue timeout de rejeição HTTP sem divulgar a exceção', async () => {
+    const f = setup(); const original = f.getMockImplementation()!;
+    f.mockImplementation(async (url: string | URL) => {
+      if (String(url).endsWith('/api/health')) throw Object.assign(new Error('private-secret'), { name: 'TimeoutError' });
+      return original(url);
+    });
+    const result = await PreviewDeploymentService.createPreviewDeployment('candidate', 'branch', sha);
+    expect(result).toMatchObject({ status: 'failed', diagnostic: { failureKind: 'timeout' } });
+    expect(JSON.stringify(result)).not.toContain('private-secret');
+  });
   it('nao consulta deploys quando o SHA nao foi informado', async () => {
     const f = setup();
     expect((await PreviewDeploymentService.createPreviewDeployment('candidate', 'branch')).status).toBe('pending');
