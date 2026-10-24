@@ -25,7 +25,7 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
   onRefresh
 }) => {
     const openNewTab = () => {
-    if (site?.professionalBuildId && site.productionUrl) { try { const url=new URL(site.productionUrl);if(url.protocol==='https:')window.open(url.href,'_blank','noopener,noreferrer'); } catch {} return; }
+    if (site?.professionalBuildId && site.productionUrl) { try { const url=new URL(site.productionUrl);if(url.protocol==='https:')window.open(url.href,'_blank','noopener,noreferrer'); } catch { window.alert('O endereço publicado é inválido. Consulte o painel de entrega.'); } return; }
     if (!site?.html) return;
 
     const escapedHtml = site.html
