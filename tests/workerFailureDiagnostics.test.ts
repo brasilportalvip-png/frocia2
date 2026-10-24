@@ -34,6 +34,14 @@ describe('Diagnostico autenticado do HTTP 422', () => {
     expect(verify(payload)).toMatchObject({ stage: 'typecheck', detail: 'src/App.tsx(10): error TS2322' });
   });
 
+  it('mantem o motivo da geracao e o status do provedor ao esgotar a retomada', () => {
+    const payload = workerFailurePayload({ body, stage: 'restore_baseline', error: new Error('autonomous_repair_exhausted'),
+      repairCycle: { attempts: [{ attempt: 3, passed: false, failure: { stage: 'generation', providerStatus: 503,
+        summary: 'generator_provider_error; providerStatus=503' } }] } });
+    expect(verify(payload)).toMatchObject({ stage: 'generation', providerStatus: 503, detail: 'generator_provider_error; providerStatus=503' });
+    expect(payload.commands).toEqual([]);
+  });
+
   it('mostra a falha de navegador em stdout mesmo quando stderr contem aviso do Firebase', () => {
     const stdout = commandDiagnosticExcerpt('Running tests\nError: browserType.launch: Executable doesn\'t exist at /ms-playwright/chromium_headless_shell-1234/chrome\nInstale o navegador exigido.\n' + 'caso listado no resumo\n'.repeat(200));
     const payload = workerFailurePayload({ body, stage: 'certification', error: new Error('autonomous_repair_exhausted'),

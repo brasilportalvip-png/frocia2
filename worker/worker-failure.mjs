@@ -35,8 +35,8 @@ export function workerFailurePayload({ body, stage, error, commands = [], repair
     candidateId: body?.candidateId, requestNonce: body?.requestNonce,
     issuedAt: new Date().toISOString(), stage: safeDiagnosticText(lastFailure?.stage || stage, 80),
     error: safeDiagnosticText(error?.message || error || 'worker_failed'),
-    detail: failureDetail(lastFailure, error),
-    providerStatus: Number.isInteger(error?.status) ? error.status : null,
+    detail: failureDetail(lastFailure, error) || safeDiagnosticText(lastFailure?.summary || ''),
+    providerStatus: Number.isInteger(lastFailure?.providerStatus) ? lastFailure.providerStatus : Number.isInteger(error?.status) ? error.status : null,
     commands: commands.slice(-12),
     attempts: Array.isArray(repairCycle?.attempts) ? repairCycle.attempts.map(a => ({
       attempt: a.attempt, passed: a.passed,

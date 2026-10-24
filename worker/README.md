@@ -21,6 +21,31 @@ homologar previews. Ele não deve ser implantado dentro do processo da Vercel.
 - ciclo autônomo limitado de diagnóstico, restauração, nova correção e recertificação;
 - nenhuma tentativa é selecionada sem passar por todos os comandos obrigatórios.
 
+## Geracao estruturada e recuperacao
+
+O worker solicita `responseJsonSchema` com arquivos completos e mensagem de
+commit, alem do MIME JSON. Confere o `finishReason` antes de interpretar o texto;
+uma resposta `MAX_TOKENS` e descartada mesmo se seu prefixo for JSON valido.
+Nao completa aspas/chaves nem aplica trechos de uma resposta interrompida.
+
+A primeira tentativa permite 32.768 tokens de saida; as seguintes permitem ate
+65.536, dentro do limite do modelo padrao `gemini-3.1-pro-preview`. Cada chamada
+tem timeout de tres minutos e uma unica tentativa no SDK. O ciclo coordena as
+novas geracoes, com tres tentativas por padrao e teto de cinco. Nao e preciso
+criar variaveis novas para esta recuperacao.
+
+Erros de JSON, resposta incompleta e formato/caminho invalido ficam registrados
+na etapa `generation`. Antes da proxima tentativa, a baseline e restaurada e o
+diagnostico e enviado ao modelo, sem reutilizar o texto incompleto. Falhas de
+autenticacao/autorizacao e bloqueios do provedor encerram o ciclo sem repeticao.
+Falhas de geracao nao executam a aplicacao nem a certificacao do patch. Uma
+resposta valida continua dependendo de todos os comandos obrigatorios e rollback.
+
+Os logs de geracao mostram somente tentativa, motivo de termino, quantidade de
+caracteres/tokens e limite de saida. O codigo gerado e as credenciais nao entram
+nesses logs. Se todas as tentativas falharem, o recibo assinado conserva o motivo
+da ultima geracao e os testes nao sao apresentados como aprovados.
+
 ## Implantação obrigatória
 
 1. Construa `docker build -t frocia-engineering-worker ./worker`.
