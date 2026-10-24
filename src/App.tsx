@@ -1,3 +1,5 @@
+import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
+import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
 import React, {
   useState,
   useEffect,
@@ -172,6 +174,8 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.6-flash');
 
   const [savedSites, setSavedSites] = useState<GeneratedSite[]>([]);
+  const [professionalBuildId, setProfessionalBuildId] = useState<string | null>(null);
+  const [isProjectConfigurationOpen, setIsProjectConfigurationOpen] = useState(false);
   const [activeSite, setActiveSite] = useState<GeneratedSite | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
@@ -631,13 +635,21 @@ const fetchConversations = async () => {
     tone: string;
     features: string[];
   },
-  files: UploadedFile[] = []
+  files: UploadedFile[] = [],
+  budgetApproved = false
 ) => {
   if (!isAuthenticated) {
     setIsAuthOpen(true);
     setErrorMsg(
       'É necessário fazer login para gerar projetos com a Froc.IA.'
     );
+    return;
+  }
+
+  if (!budgetApproved) {
+    const images=/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0;
+    const video=/v[ií]deo|veo\s*3/i.test(data.prompt);
+    setCostModal({isOpen:true,opType:'Construção profissional',credits:95+images*18+(video?120:0),desc:'Limite estimado incluindo planejamento, geração, revisão e até duas correções. Mídias solicitadas estão incluídas. A publicação só é aprovada após os testes. Credenciais externas são configuradas pelo painel.',onConfirm:()=>{setCostModal(prev=>({...prev,isOpen:false}));void handleGenerateSite(data,files,true);}});
     return;
   }
 
@@ -653,77 +665,12 @@ const fetchConversations = async () => {
   setErrorMsg(null);
 
   try {
-    const attachments =
-      toAIAttachmentPayloads(files);
-
-    const result = await apiClient<{
-      siteTitle: string;
-      description: string;
-      html: string;
-      suggestedRefinements: string[];
-    }>('/api/generate-site', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify({
-        ...data,
-        attachments,
-        modelName: selectedModel
-      })
-    });
-
-    const sitePayload = {
-      title:
-        result.siteTitle ||
-        'Novo Projeto Froc.IA',
-      description:
-        result.description ||
-        data.prompt,
-      prompt: data.prompt,
-      category: data.category,
-      colorPalette: data.colorPalette,
-      tone: data.tone,
-      html: result.html,
-      suggestedRefinements:
-        result.suggestedRefinements || []
-    };
-
-    const saveRes = await apiClient<{
-      project: GeneratedSite;
-    }>('/api/projects', {
-      method: 'POST',
-      signal: requestController.signal,
-      body: JSON.stringify(sitePayload)
-    });
-
-    const createdProject =
-      saveRes.project;
-
-    setActiveSite(createdProject);
-
-    const updatedList = [
-      createdProject,
-      ...savedSites
-    ];
-
-    saveSitesToStorage(updatedList);
-
-    await refreshProfile();
-
-    setChatMessages([
-      {
-        id: `msg-${Date.now()}`,
-        sender: 'ai',
-        text:
-          `🎉 Seu projeto "${createdProject.title}" foi criado e salvo com sucesso! O que gostaria de personalizar a seguir?`,
-        timestamp: Date.now()
-      }
-    ]);
-
-    // Em telas menores o painel lateral de prévia não é exibido. Abra o
-    // resultado em tela cheia para que a criação nunca termine invisível.
-    if (window.matchMedia('(max-width: 1023px)').matches) {
-      setIsFullscreen(true);
-    }
+    const attachments = toAIAttachmentPayloads(files);
+    const saved = await apiClient<{project:GeneratedSite}>('/api/projects', {method:'POST',signal:requestController.signal,body:JSON.stringify({...data,title:'Novo projeto em construção',description:data.prompt.slice(0,1000),html:'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Construção em andamento</title></head><body><h1>Seu projeto está em construção</h1><p>Acompanhe as etapas no painel de entrega.</p></body></html>'})});
+    const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(saved.project.id)+'/builds',{method:'POST',signal:requestController.signal,body:JSON.stringify({brief:{...data,autoPublish:true,media:{images:/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0,video:/v[ií]deo|veo\s*3/i.test(data.prompt)}},idempotencyKey:crypto.randomUUID(),attachments})});
+    const project={...saved.project,professionalBuildId:result.build.id};
+    setActiveSite(project);saveSitesToStorage([project,...savedSites]);setProfessionalBuildId(result.build.id);
+    setChatMessages([{id:'factory-'+Date.now(),sender:'ai',timestamp:Date.now(),text:'Iniciei a construção completa do seu projeto. A equipe vai gerar o código, revisar, testar e verificar a publicação. Se faltarem credenciais ou dados do negócio, você poderá preenchê-los no painel, sem editar código.'}]);
   } catch (error: any) {
     if (
       error?.code ===
@@ -772,6 +719,13 @@ const fetchConversations = async () => {
       setIsAuthOpen(true);
       setErrorMsg('É necessário fazer login para refinar projetos com a Froc.IA.');
       return;
+    }
+
+    if (activeSite.professionalBuildId) {
+      setIsRefining(true);setErrorMsg(null);
+      try {const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(activeSite.id)+'/builds/'+encodeURIComponent(activeSite.professionalBuildId)+'/change',{method:'POST',body:JSON.stringify({instructions:instruction,idempotencyKey:crypto.randomUUID()})});const updated={...activeSite,professionalBuildId:result.build.id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(result.build.id);}
+      catch(e:any){setErrorMsg(e.message||'Não foi possível solicitar a alteração.');}
+      finally{setIsRefining(false);}return;
     }
 
     setIsRefining(true);
@@ -1253,6 +1207,7 @@ const handleGeneralChat = async (
 
   const handleManualHtmlUpdate = (newHtml: string) => {
     if (!activeSite) return;
+    if (activeSite.professionalBuildId) { setErrorMsg('Este projeto possui frontend e backend. Solicite a alteração no chat para revisar e testar o projeto completo.'); return; }
     const updatedSite = { ...activeSite, html: newHtml, updatedAt: Date.now() };
     setActiveSite(updatedSite);
     const updatedList = savedSites.map(s => s.id === updatedSite.id ? updatedSite : s);
@@ -1261,6 +1216,7 @@ const handleGeneralChat = async (
 
   const handleNewSite = () => {
     setActiveSite(null);
+    setProfessionalBuildId(null);
     setChatMessages([]);
     setErrorMsg(null);
   };
@@ -1332,7 +1288,7 @@ const handleGeneralChat = async (
         deviceView={deviceView}
         setDeviceView={setDeviceView}
         onNewSite={handleNewSite}
-        onExport={() => setIsExportOpen(true)}
+        onExport={() => activeSite?.professionalBuildId ? setProfessionalBuildId(activeSite.professionalBuildId) : setIsExportOpen(true)}
         onOpenFullscreen={() => setIsFullscreen(true)}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
@@ -1344,6 +1300,17 @@ const handleGeneralChat = async (
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
+      {activeSite?.id && !activeSite.id.startsWith('local-') && (
+        <div className="flex justify-end border-b border-white/10 bg-slate-950 px-4 py-1">
+          <button type="button" onClick={() => activeSite.professionalBuildId ? setProfessionalBuildId(activeSite.professionalBuildId) : setIsProjectConfigurationOpen(true)} className="rounded-lg px-3 py-2 text-xs text-violet-200 hover:bg-white/5">Variáveis e entrega do projeto</button>
+        </div>
+      )}
+      {professionalBuildId && activeSite?.id && (
+        <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{const updated={...activeSite,professionalBuildId:id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(id);}} onReady={(url,title)=>{const updated={...activeSite,title,productionUrl:url};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));void refreshProfile();}}/>
+      )}
+      {isProjectConfigurationOpen && activeSite?.id && (
+        <ProjectConfigurationPanel key={activeSite.id} projectId={activeSite.id} title={activeSite.title} onClose={() => setIsProjectConfigurationOpen(false)} />
+      )}
       {profileError && (
         <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200 z-40">
           <div className="flex items-center gap-2">
@@ -1369,6 +1336,7 @@ const handleGeneralChat = async (
             onSelectSite={(site) => {
               setActiveSite(site);
               setNavMode('studio');
+              if(site.professionalBuildId)setProfessionalBuildId(site.professionalBuildId);
             }}
             onNewSite={() => {
               handleNewSite();
@@ -1429,6 +1397,7 @@ const handleGeneralChat = async (
               onSelectTemplate={handleSelectTemplate}
               onLoadSavedSite={(site) => {
                 setActiveSite(site);
+                if(site.professionalBuildId){setProfessionalBuildId(site.professionalBuildId);setIsMobileSidebarOpen(false);return;}
                 setActiveArtifact({
                   id: site.id,
                   title: site.title,
@@ -1472,7 +1441,7 @@ const handleGeneralChat = async (
 
 
              onSendMessage={async (text, mode, files = []) => {
-  if (mode === 'Criador de projetos') {
+  if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
     await handleGenerateSite(
       {
         prompt: text,

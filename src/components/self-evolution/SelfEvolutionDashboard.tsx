@@ -1,3 +1,4 @@
+import { INTELLIGENCE_AGENTS, CREATION_AGENTS } from '../../../shared/advancedAgentCatalog';
 import React, { useState, useEffect } from 'react';
 import { Activity, Shield, AlertTriangle, Zap, CheckCircle, RefreshCw, GitPullRequest, ExternalLink, OctagonAlert, Play, RotateCcw } from 'lucide-react';
 import { auth } from '../../lib/firebase';
@@ -298,8 +299,8 @@ export const SelfEvolutionDashboard: React.FC = () => {
       {/* Catalogo real de agentes; nao declara execucao sem evidencia. */}
       <section className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <h3 className="text-lg font-bold">Equipe Froc.IA: 20 agentes especializados</h3>
-          <span className="text-xs text-white/50">10 revisores + 10 agentes de inovacao</span>
+          <h3 className="text-lg font-bold">Equipe Froc.IA: 85 agentes especializados</h3>
+          <span className="text-xs text-white/50">20 existentes + 15 de inteligência + 50 de criação</span>
         </div>
         <p className="text-xs text-white/55">
           Catalogo configurado no codigo. O trabalho dos agentes depende das execucoes reais do GitHub Actions;
@@ -319,6 +320,23 @@ export const SelfEvolutionDashboard: React.FC = () => {
             </ul>
           </div>
         </div>
+      </section>
+
+      <section className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+        <p className="text-xs text-white/60">Os novos especialistas atuam como perspectivas cooperantes no modelo configurado. O catálogo e as direções aplicadas não comprovam execução independente, testes ou publicação.</p>
+        {[{ title: '15 especialistas de inteligência', agents: INTELLIGENCE_AGENTS }, { title: '50 especialistas de criação', agents: CREATION_AGENTS }].map(group => (
+          <details key={group.title} className="rounded-xl border border-white/10 p-4">
+            <summary className="cursor-pointer font-semibold">{group.title}</summary>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">{group.agents.map(agent => (
+              <details key={agent.id} className="rounded-lg bg-black/15 p-3">
+                <summary className="cursor-pointer text-sm">{agent.name}</summary>
+                <p className="mt-2 text-xs text-white/70">{agent.mission}</p>
+                <ol className="mt-2 list-decimal pl-4 text-xs text-white/60">{agent.method.map((step, i) => <li key={i}>{step}</li>)}</ol>
+                <p className="mt-2 text-xs text-white/60">Entregas: {agent.deliverables.join('; ')}</p>
+              </details>
+            ))}</div>
+          </details>
+        ))}
       </section>
 
       {/* Candidate List Section */}

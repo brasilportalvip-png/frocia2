@@ -25,6 +25,7 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
   onRefresh
 }) => {
     const openNewTab = () => {
+    if (site?.professionalBuildId && site.productionUrl) { try { const url=new URL(site.productionUrl);if(url.protocol==='https:')window.open(url.href,'_blank','noopener,noreferrer'); } catch {} return; }
     if (!site?.html) return;
 
     const escapedHtml = site.html
@@ -90,7 +91,7 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
             <div className="w-2.5 h-2.5 rounded-full bg-green-500/60"></div>
           </div>
           <div className="mx-auto bg-black/40 px-3 py-0.5 rounded-md border border-white/5 text-[10px] text-white/50 font-mono">
-            www.{site ? site.title.toLowerCase().replace(/[^a-z0-9]/g, '-') : 'projeto'}.froc.ia
+            {site?.productionUrl ? site.productionUrl.replace(/^https?:\/\//, '').split('/')[0] : 'Prévia do projeto'}
           </div>
         </div>
 

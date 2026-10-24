@@ -1,3 +1,4 @@
+import { ADVANCED_AGENTS } from '../../shared/advancedAgentCatalog.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -78,6 +79,7 @@ export function buildSelfSiteKnowledge(files: SelfSiteSource[], commitSha: strin
       ...COMMITTEE_ROLES.map(id => ({ id, name: SPECIALIST_CAPABILITIES[id].title,
         mission: SPECIALIST_CAPABILITIES[id].mission, kind: 'review' })),
       ...INNOVATION_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: 'innovation' })),
+      ...ADVANCED_AGENTS.map(a => ({ id: a.id, name: a.name, mission: a.mission, kind: a.kind })),
     ], generatedAt: new Date().toISOString(),
   };
 }

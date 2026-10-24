@@ -92,6 +92,7 @@ export interface GeminiGenerateOptions {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   maxRetries?: number;
+  maxOutputTokens?: number;
 }
 
 export interface GeminiResponse {
@@ -182,6 +183,8 @@ export class GeminiProvider {
       },
     };
 
+    if (options.maxOutputTokens) config.maxOutputTokens = options.maxOutputTokens;
+    if (options.jsonSchema && responseFormat === 'json') config.responseJsonSchema = options.jsonSchema;
     if (systemInstruction) {
       config.systemInstruction = systemInstruction;
     }

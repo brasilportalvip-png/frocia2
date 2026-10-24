@@ -1,0 +1,97 @@
+name: Froc.IA - Fabrica Profissional
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,27,47 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: frocia-professional-factory
+  cancel-in-progress: false
+jobs:
+  build-projects:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443 github.com:443 codeload.github.com:443 *.githubusercontent.com:443 *.githubapp.com:443
+            registry.npmjs.org:443 nodejs.org:443
+            auth.docker.io:443 registry-1.docker.io:443 production.cloudflare.docker.com:443 production.cloudfront.docker.com:443 *.docker.io:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            deb.debian.org:80 security.debian.org:80
+            cdn.playwright.dev:443 playwright.download.prss.microsoft.com:443 playwright.azureedge.net:443
+            storage.googleapis.com:443 *.googleapis.com:443 *.firebaseio.com:443
+            api.vercel.com:443 *.vercel.app:443
+            api.stripe.com:443 js.stripe.com:443 checkout.stripe.com:443
+            api.mercadopago.com:443 sdk.mercadopago.com:443 *.mercadopago.com.br:443
+            api.indexnow.org:443 www.gstatic.com:443 fonts.gstatic.com:443 *.firebaseapp.com:443
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Consultar fila
+        id: queue
+        env:
+          NODE_ENV: test
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY }}
+        run: node --import tsx scripts/professional-factory-runner.ts --check
+      - name: Construir executor isolado
+        if: steps.queue.outputs.has_jobs == 'true'
+        run: docker build -t frocia-factory-worker ./worker
+      - name: Iniciar executor
+        if: steps.queue.outputs.has_jobs == 'true'
+        env:
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+        run: |
+          docker run -d --name frocia-factory-worker --read-only \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g \
+            --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add KILL --cap-add SETUID --cap-add SETGID \
+            --security-opt no-new-privileges --pids-limit 256 --memory 4g --cpus 2 \
+            -p 127.0.0.1:8080:8080 \
+            -e SELF_EVOLUTION_WORKER_TOKEN -e SELF_EVOLUTION_WORKER_SIGNING_SECRET \
+            -e SANDBOX_NETWORK_POLICY=restricted frocia-factory-worker
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Conferir binarios e isolamento
+        if: steps.queue.outputs.has_jobs == 'true'
+        run: docker exec frocia-factory-worker node /worker/sandbox-preflight.mjs
+      - name: Executar fabrica
+        if: steps.queue.outputs.has_jobs == 'true'
+        env:
+          NODE_ENV: test
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID || vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET || vars.FIREBASE_STORAGE_BUCKET }}
+          MEMORY_ENCRYPTION_KEY: ${{ secrets.MEMORY_ENCRYPTION_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MEDIA_API_KEY: ${{ secrets.GEMINI_MEDIA_API_KEY }}
+          GEMINI_CODE_MODEL: ${{ vars.GEMINI_CODE_MODEL || 'gemini-3.8-flash' }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image' }}
+          VEO_VERTEX_PROJECT_ID: ${{ vars.VEO_VERTEX_PROJECT_ID || secrets.FIREBASE_PROJECT_ID }}
+          VEO_VERTEX_MODEL: ${{ vars.VEO_VERTEX_MODEL || 'veo-3.1-generate-001' }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID || vars.VERCEL_TEAM_ID }}
+          SELF_EVOLUTION_WORKER_URL: http://127.0.0.1:8080
+          SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
+          SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
+        run: node --import tsx scripts/professional-factory-runner.ts --run
+      - name: Monitorar entregas publicadas
+        env:
+          NODE_ENV: test
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: node --import tsx scripts/professional-factory-runner.ts --monitor
+      - name: Finalizar executor
+        if: always()
+        run: docker rm -f frocia-factory-worker || true

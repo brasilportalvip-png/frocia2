@@ -199,6 +199,32 @@ export class GithubAutomationService {
     } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Falha ao solicitar CI.' }; }
   }
 
+  static async dispatchProfessionalFactory(): Promise<MaintenanceDispatchResult> {
+    if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      const identity = { repository: `${owner}/${repo}`, ...this.credentialDiagnostic(access) };
+      if (access.source === 'github_app' && access.permissions?.actions !== 'write') {
+        return { success: false, diagnostic: { ...identity, code: 'chat_actions_write_missing' },
+          message: `A solicitacao permanece na fila: a instalacao ${access.installationId} do App ${access.appSlug || access.appId || 'configurado'} concede Actions:${access.permissions?.actions || 'sem acesso'}. Iniciar o workflow exige Actions:write nesta instalacao.` };
+      }
+      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/professional-factory.yml/dispatches`, {
+        method: 'POST', headers: this.getHeaders(access.token, true),
+        body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main' }),
+      });
+      if (response.ok) return { success: true, diagnostic: { ...identity, httpStatus: response.status },
+        message: 'Execucao de fabrica profissional solicitada ao GitHub Actions; acompanhe o resultado na fila.' };
+      const diagnostic = await inspectGithubFailure(response, [access.token]);
+      return { success: false, diagnostic: { ...identity, ...diagnostic },
+        message: formatGithubFailure('A solicitacao permanece na fila; GitHub recusou iniciar o workflow', diagnostic) };
+    } catch (error) {
+      return { success: false, ...(error instanceof GithubAppError ? { diagnostic: { code: error.code, ...error.diagnostic } } : {}),
+        message: `A solicitacao permanece na fila: ${safeGithubText(error instanceof Error ? error.message : 'falha de comunicacao com GitHub')}` };
+    }
+  }
+
   static async dispatchSelfMaintenance(): Promise<MaintenanceDispatchResult> {
     if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';

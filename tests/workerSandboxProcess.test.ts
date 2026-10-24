@@ -31,6 +31,8 @@ describe('Comandos reais do executor da sandbox', () => {
       return result.stdout.toString();
     };
     await git('init', '-q');
+    // A fixture exige bytes LF independentemente da configuracao global do Git no Windows.
+    await git('config', 'core.autocrlf', 'false');
     await fs.writeFile(path.join(cwd, 'value.txt'), 'baseline\n');
     await git('add', '.');
     await git('-c', 'user.name=Test', '-c', 'user.email=test@localhost', 'commit', '-qm', 'baseline');

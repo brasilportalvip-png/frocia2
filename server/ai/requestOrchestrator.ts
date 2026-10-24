@@ -1,3 +1,4 @@
+import { intelligenceTeam } from '../agents/intelligenceTeamService.js';
 import { AIRouter } from './aiRouter.js';
 import { AIRequestClassifier } from './requestClassifier.js';
 import { ToolRegistry } from './toolRegistry.js';
@@ -29,6 +30,7 @@ interface RequestPlanInput {
 }
 
 export interface AIRequestPlan {
+  specialistAgentIds: string[];
   classification: RequestClassification;
   effectiveMode: AIMode;
   route: RouterResult;
@@ -194,13 +196,15 @@ const effectiveMode: AIMode =
       sensitivity: classification.sensitivity,
       preferredModel: input.preferredModel,
     });
+    const team = intelligenceTeam(classification, input.prompt);
     return {
+      specialistAgentIds: team.agents.map(agent => agent.id),
       classification,
       effectiveMode,
       route,
       tools,
       systemPolicy:
-        buildSystemPolicy(classification),
+        [buildSystemPolicy(classification), team.policy].join("\n\n"),
     };
   }
 }

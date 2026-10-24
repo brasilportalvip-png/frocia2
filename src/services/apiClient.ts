@@ -242,7 +242,7 @@ export async function apiClient<T = any>(
 export async function apiClientBlob(
   endpoint: string,
   options: ApiClientOptions = {},
-  expectedType: 'video' | 'image' = 'video'
+  expectedType: 'video' | 'image' | 'zip' = 'video'
 ): Promise<Blob> {
   const headers = new Headers(options.headers);
 
@@ -339,11 +339,11 @@ export async function apiClientBlob(
 
     if (
     blob.size === 0 ||
-    !blob.type.toLowerCase().startsWith(`${expectedType}/`)
+    !(expectedType === 'zip' ? blob.type.toLowerCase() === 'application/zip' : blob.type.toLowerCase().startsWith(`${expectedType}/`))
   ) {
     throw new ApiClientError(
       `O servidor não retornou um arquivo de ${
-        expectedType === 'image' ? 'imagem' : 'vídeo'
+        expectedType === 'zip' ? 'projeto ZIP' : expectedType === 'image' ? 'imagem' : 'vídeo'
       } válido.`,
       502,
       'invalid_media_blob'
