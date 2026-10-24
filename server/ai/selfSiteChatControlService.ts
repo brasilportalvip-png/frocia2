@@ -1,3 +1,4 @@
+import { agentValidationIntent, formatAgentValidation } from '../selfEvolution/agentValidationService.js';
 import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
@@ -14,6 +15,7 @@ const safe = (value: unknown) => typeof value === 'string' ? RedactionService.re
 
 export function formatSelfSiteControlReceipt(control: Record<string, unknown>, prompt = ''): string {
   if (control.status === 'blocked') return safe(control.message) || 'Nao foi possivel confirmar o controle administrativo nesta sessao.';
+  if (control.agentValidation) return formatAgentValidation(object(control.agentValidation));
   const inventory = object(control.agentInventory);
   if (inventory.source === 'running_server_catalog') {
     const agents = Array.isArray(inventory.agents) ? inventory.agents.map(object) : [];
@@ -103,7 +105,7 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
 export class SelfSiteChatControlService {
   static async respond(params: ExecutionParams, correlationId: string) {
     if (params.attachments?.length) return null;
-    const potential = isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
+    const potential = /homologa[cç][aã]o|homologar|evid[eê]ncias|registros de execu[cç][aã]o/i.test(params.prompt) || isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
       /\bagentes?\b/i.test(params.prompt) ||
       /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
       /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
@@ -115,7 +117,7 @@ export class SelfSiteChatControlService {
     const topic = history.continuity?.activeTopic;
     const recentMessages = [...history.recentMessages, ...(topic ? [{ role: 'user', content: topic.content }] : [])];
     if (!isOwnSiteRequest(params.prompt, recentMessages)) return null;
-    if (!isOwnSiteCapabilityQuestion(params.prompt) && !isOwnSiteAccessFollowUp(params.prompt) &&
+    if (!agentValidationIntent(params.prompt, recentMessages) && !isOwnSiteCapabilityQuestion(params.prompt) && !isOwnSiteAccessFollowUp(params.prompt) &&
         !isOwnSiteAgentQuestion(params.prompt, recentMessages) &&
         !isOwnSiteChangesQuestion(params.prompt, recentMessages) &&
         !requestsOwnSiteAction(params.prompt, recentMessages) && requestedOwnSiteToggle(params.prompt, recentMessages) === null) return null;

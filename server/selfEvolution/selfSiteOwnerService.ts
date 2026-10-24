@@ -6,6 +6,7 @@ import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import { RedactionService } from './redactionService.js';
 import type { ImprovementCandidate } from './selfEvolutionTypes.js';
 import { AuditService } from './auditService.js';
+import { AgentValidationService, agentValidationIntent } from './agentValidationService.js';
 import { env } from '../config/env.js';
 
 type OwnerMessage = { role: string; content: string };
@@ -64,6 +65,7 @@ export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] 
   // Perguntas sobre as ferramentas da propria IA tambem precisam do estado real,
   // mesmo quando o dono nao repete "meu site" a cada mensagem.
   if (isOwnSiteCapabilityQuestion(prompt)) return true;
+  if (agentValidationIntent(prompt, recentMessages)) return true;
   if (isOwnSiteAgentQuestion(prompt, recentMessages)) return true;
   if (isOwnSiteChangesQuestion(prompt, recentMessages)) return true;
   const priorOwnerTopic = recentMessages.filter(message => message.role === 'user' && message.content !== prompt)
@@ -165,7 +167,7 @@ export class SelfSiteOwnerService {
     if (input.role !== 'admin') {
       // Um cliente pode pedir ajuda com seu proprio site. Esse pedido nao e
       // controle administrativo da Froc.IA e conserva o fluxo normal do chat.
-      const productTopic = productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || isOwnSiteAgentQuestion(input.prompt, input.recentMessages) || (input.recentMessages || [])
+      const productTopic = agentValidationIntent(input.prompt, input.recentMessages) || productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || isOwnSiteAgentQuestion(input.prompt, input.recentMessages) || (input.recentMessages || [])
         .filter(message => message.role === 'user').slice(-4).some(message => productSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
       return productTopic ? {
         status: 'blocked', code: 'administrator_required',
@@ -173,6 +175,9 @@ export class SelfSiteOwnerService {
       } : null;
     }
     try {
+      if (agentValidationIntent(input.prompt, input.recentMessages)) {
+        return { status: 'checked', agentValidation: await AgentValidationService.respond(input.userId, input.prompt) };
+      }
       // Counting installed profiles is a local, read-only operation. A stale
       // Firestore index or an unavailable GitHub token cannot change this count.
       if (isOwnSiteAgentQuestion(input.prompt, input.recentMessages) &&
