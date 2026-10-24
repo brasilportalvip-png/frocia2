@@ -1,5 +1,5 @@
-import templatePackage from "./templates/package.json";
-import templateLock from "./templates/package-lock.json";
+import templatePackage from "./templates/package.json" with { type: "json" };
+import templateLock from "./templates/package-lock.json" with { type: "json" };
 import { createHash } from "node:crypto";
 import { ProfessionalBundle, sourceDigest } from "./professionalContract.js";
 export interface ProjectFile {
