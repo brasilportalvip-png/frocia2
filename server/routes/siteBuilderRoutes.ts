@@ -1,3 +1,4 @@
+import { creationTeamPolicy, previewDelivery } from '../siteFactory/creationTeamService.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middlewares/requireAuth.js';
@@ -283,7 +284,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
 
     const generation = await GeminiFailoverService.generate({
       model: modelName,
-      systemInstruction,
+      systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
       userMessage: userPrompt,
       attachments: providerAttachments,
       responseFormat: 'json',
@@ -302,7 +303,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       const retryResponse = await GeminiFailoverService.generate({
         model: generation.model,
         userMessage: `Instrução: Corrija e retorne ESTRITAMENTE no formato JSON com "siteTitle", "description", "html" (código HTML completo) e "suggestedRefinements".\n\nTexto original:\n${rawText}`,
-        systemInstruction,
+        systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
         responseFormat: 'json',
         temperature: 0.3,
         timeoutMs: SITE_FORMAT_REPAIR_TIMEOUT_MS,
@@ -320,7 +321,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
     if (!functionalGate.passed) {
       const repairResponse = await GeminiFailoverService.generate({
         model: generation.model,
-        systemInstruction,
+        systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
         userMessage: [
           'O projeto abaixo foi reprovado pelo gate funcional.',
           'Corrija TODOS os problemas listados e devolva ESTRITAMENTE o JSON completo com siteTitle, description, html e suggestedRefinements.',
@@ -359,6 +360,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
     });
 
     return res.json({
+      delivery: previewDelivery(prompt),
       siteTitle: finalData.siteTitle,
       description: finalData.description,
       html: finalData.html,
@@ -528,7 +530,7 @@ ${currentHtml}
 
     const generation = await GeminiFailoverService.generate({
       model: modelName,
-      systemInstruction,
+      systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
       userMessage: providerMessage,
       attachments: providerAttachments,
       responseFormat: 'json',
@@ -549,6 +551,7 @@ ${currentHtml}
 
     return res.json({
       html: finalData.html,
+      delivery: previewDelivery(instructionText),
       explanation: finalData.explanation,
       suggestedRefinements: finalData.suggestedRefinements,
       consumedCredits: REFINE_SITE_CREDIT_COST,

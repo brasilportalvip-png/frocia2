@@ -177,7 +177,7 @@ match /conversation_memory_segments/{segmentId} {
 
     // Projects Collection
     match /projects/{projectId} {
-  allow create: if isAuthenticated() && (
+  allow create: if isAuthenticated() && !request.resource.data.keys().hasAny(['professionalBuildId','productionUrl']) && (
     request.resource.data.userId == request.auth.uid ||
     isAdmin()
   );
@@ -191,7 +191,8 @@ match /conversation_memory_segments/{segmentId} {
     isAdmin() ||
     (
       resource.data.userId == request.auth.uid &&
-      request.resource.data.userId == request.auth.uid
+      request.resource.data.userId == request.auth.uid &&
+      !request.resource.data.diff(resource.data).affectedKeys().hasAny(['professionalBuildId','productionUrl','tenantId'])
     )
   );
 }
@@ -212,6 +213,12 @@ match /conversation_memory_segments/{segmentId} {
 
     // Site factory specifications, immutable versions, change requests and
     // quality gates are exposed only through the authenticated backend API.
+    match /site_factory_alerts/{document=**} { allow read, write: if false; }
+    match /site_factory_builds/{document=**} { allow read, write: if false; }
+    match /site_factory_media/{document=**} { allow read, write: if false; }
+    match /site_factory_variables/{document=**} {
+      allow read, write: if false;
+    }
     match /site_factory_projects/{document=**} {
       allow read, write: if false;
     }

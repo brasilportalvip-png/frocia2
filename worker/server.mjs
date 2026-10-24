@@ -1,3 +1,4 @@
+import { registerProfessionalFactory } from './professional-factory.mjs';
 import crypto from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -43,6 +44,8 @@ function sendSigned(res, payload, status = 200) {
   res.setHeader('x-frocia-worker-signature', sign(raw));
   return res.status(status).send(raw);
 }
+registerProfessionalFactory(app, authenticate, sendSigned, chromium, AxeBuilder);
+
 async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
   console.log('[worker:command]', JSON.stringify({ id, event: 'start' }));
   const result = await run(command, args, cwd, timeout, {}, true);

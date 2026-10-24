@@ -5,7 +5,7 @@ import { buildEngineeringContext } from '../worker/engineering-context.mjs';
 import { isOwnSiteRequest, requestsOwnSiteAction, requestedOwnSiteToggle, SelfSiteOwnerService } from '../server/selfEvolution/selfSiteOwnerService.js';
 
 describe('Conhecimento do proprio site e controle do proprietario', () => {
-  it('mapeia todos os arquivos, as rotas, o menu e os vinte agentes', () => {
+  it('mapeia todos os arquivos, as rotas, o menu e os 85 agentes', () => {
     const files = [
       ...Array.from({ length: 125 }, (_, i) => ({ path: `server/services/module${i}.ts`, content: `export const module${i} = true;` })),
       { path: 'server/routes/products.ts', content: `productRouter.get('/products/:id', requireAuth, handler); productRouter.post('/products', requireAuth, create);` },
@@ -13,8 +13,8 @@ describe('Conhecimento do proprio site e controle do proprietario', () => {
     ];
     const map = buildSelfSiteKnowledge(files, 'a'.repeat(40));
     expect(map.filesCount).toBe(127);
-    expect(map.agents).toHaveLength(20);
-    expect(new Set(map.agents.map(a => a.id)).size).toBe(20);
+    expect(map.agents).toHaveLength(85);
+    expect(new Set(map.agents.map(a => a.id)).size).toBe(85);
     expect(map.navigation.map(v => v.label)).toEqual(['Início', 'Nova tela']);
     expect(map.routes).toEqual(expect.arrayContaining([
       expect.objectContaining({ method: 'GET', path: '/products/:id', file: 'server/routes/products.ts', line: 1 }),

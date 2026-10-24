@@ -17,6 +17,10 @@ const AUDIT_COLLECTION = 'disaster_recovery_audit';
 export const PORTABLE_BACKUP_COLLECTIONS = [
   'users',
   'projects',
+  'site_factory_variables',
+  'site_factory_builds',
+  'site_factory_media',
+  'site_factory_alerts',
   'payments',
   'payment_events',
   'credit_transactions',

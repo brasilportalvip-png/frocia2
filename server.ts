@@ -1,3 +1,5 @@
+import { professionalFactoryRouter } from './server/routes/professionalFactoryRoutes.js';
+import { projectVariableRouter } from './server/routes/projectVariableRoutes.js';
 import express, {
   NextFunction,
   Request,
@@ -178,6 +180,8 @@ export async function createApp() {
   app.use('/api', knowledgeRouter);
   app.use('/api', siteBuilderRouter);
   app.use('/api/site-factory', siteFactoryRouter);
+  app.use('/api/project-variables', projectVariableRouter);
+  app.use('/api/professional-factory', professionalFactoryRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
   app.use('/api/admin/observability', observabilityRouter);

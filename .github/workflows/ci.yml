@@ -73,6 +73,9 @@ jobs:
       - name: Run Browser E2E Gates
         run: npm run test:e2e
 
+      - name: Run Professional Project Panel Browser Tests
+        run: npx playwright test --config playwright.professional.config.ts
+
       - name: Run Full Test Suite
         run: npm test
 

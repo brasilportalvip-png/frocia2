@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Teste do painel de projetos</title></head>
+<body><div id="root"></div><script type="module">
+import '/src/index.css';
+import React, {useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {ProjectConfigurationPanel} from '/src/components/ProjectConfigurationPanel.tsx';
+function Fixture() {
+ const [open,setOpen]=useState(false);
+ return React.createElement(React.Fragment,null,
+  React.createElement('button',{onClick:()=>setOpen(true)},'Configurar projeto'),
+  open && React.createElement(ProjectConfigurationPanel,{projectId:'project-test',title:'Projeto de teste',onClose:()=>setOpen(false)}));
+}
+createRoot(document.getElementById('root')).render(React.createElement(Fixture));
+</script></body></html>
