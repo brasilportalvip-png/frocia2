@@ -40,6 +40,9 @@ jobs:
       - name: Validate Production Integrity
         run: npm run validate:production-integrity
 
+      - name: Validate Native Node Serverless Startup
+        run: node scripts/validate-serverless-runtime.mjs
+
       - name: TypeScript Linting
         run: npm run lint
 
