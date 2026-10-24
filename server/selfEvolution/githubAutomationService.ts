@@ -199,6 +199,33 @@ export class GithubAutomationService {
     } catch (error) { return { success: false, message: error instanceof Error ? error.message : 'Falha ao solicitar CI.' }; }
   }
 
+  /** Fixed validation workflow: no code changes, model calls or production deploy. */
+  static async agentValidationRun(requestId: string, dispatch = false): Promise<Record<string, unknown>> {
+    if (!/^validation-[a-f0-9]{32}$/.test(requestId)) return { status: 'blocked', message: 'Identificador de validação inválido.' };
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const base = `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      if (dispatch) {
+        if (access.source === 'github_app' && access.permissions?.actions !== 'write')
+          return { status: 'blocked', message: 'A instalação do GitHub App não concede Actions:write.' };
+        const response = await this.githubFetch(`${base}/actions/workflows/agent-validation.yml/dispatches`, {
+          method: 'POST', headers: this.getHeaders(access.token, true),
+          body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main', inputs: { request_id: requestId } }),
+        });
+        if (response.status !== 204) return { status: 'blocked', message: formatGithubFailure('GitHub recusou a validação', await inspectGithubFailure(response, [access.token])) };
+        return { status: 'dispatch_accepted', httpStatus: 204, message: 'GitHub aceitou a solicitação. O início e o resultado ainda precisam ser confirmados.' };
+      }
+      const response = await this.githubFetch(`${base}/actions/workflows/agent-validation.yml/runs?event=workflow_dispatch&per_page=50`, { headers: this.getHeaders(access.token) });
+      if (!response.ok) return { status: 'unavailable', message: formatGithubFailure('Não consegui consultar a validação', await inspectGithubFailure(response, [access.token])) };
+      const data = await response.json() as { workflow_runs?: Array<{ id: number; display_title: string; html_url: string; head_sha: string; status: string; conclusion: string | null }> };
+      const run = data.workflow_runs?.find(run => run.display_title === requestId);
+      return run ? { status: run.status, conclusion: run.conclusion, runId: run.id, url: run.html_url, commitSha: run.head_sha }
+        : { status: 'not_found_in_window', message: 'Nenhuma execução correspondente encontrada nas últimas 50 rodadas deste workflow. Isso não comprova que nunca executou.' };
+    } catch (error) { return { status: 'unavailable', message: safeGithubText(error instanceof Error ? error.message : 'Falha ao consultar GitHub') }; }
+  }
+
   static async dispatchProfessionalFactory(): Promise<MaintenanceDispatchResult> {
     if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';

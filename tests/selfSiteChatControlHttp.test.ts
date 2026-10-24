@@ -1,3 +1,4 @@
+import { AgentValidationService } from '../server/selfEvolution/agentValidationService.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
@@ -54,6 +55,20 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
     vi.spyOn(GeminiFailoverService, 'generate').mockRejectedValue(new Error('must_not_generate_control_receipt'));
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['chat', 'executions'])('encaminha homologação real pelo controle na rota %s sem modelo ou cobrança', async path => {
+    vi.spyOn(AgentValidationService, 'respond').mockResolvedValue({ inventoryTotal: 85, agents: [], limitations: [],
+      request: { requestId: 'validation-' + 'a'.repeat(32), status: 'dispatch_accepted' }, run: { status: 'queued' }, scope: 'Validação automatizada solicitada.' } as any);
+    const response = await send(path, 'Execute uma homologação dos seus 85 agentes.');
+    expect(response.status, response.text).toBe(200);
+    expect(AgentValidationService.respond).toHaveBeenCalledWith('owner', 'Execute uma homologação dos seus 85 agentes.');
+    expect(response.text).toContain('dispatch_accepted');
+    expect(response.text).not.toContain('Consultei o catálogo');
+    expect(GeminiProvider.generateStream).not.toHaveBeenCalled();
+    expect(GeminiFailoverService.generate).not.toHaveBeenCalled();
+    expect(CreditWalletService.reserveCredits).not.toHaveBeenCalled();
+    expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled();
+  });
 
   it.each(['chat', 'executions'])('confirma os 85 agentes pelo catálogo em execução na rota %s, com a pergunta real do proprietário', async path => {
     const history = await vi.mocked(ConversationContextService.load).getMockImplementation()!({ userId: 'owner', tenantId: 'user:owner' });
