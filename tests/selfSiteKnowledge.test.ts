@@ -88,6 +88,7 @@ describe('Conhecimento do proprio site e controle do proprietario', () => {
     expect(requestsOwnSiteAction('Corrija os erros do meu site Froc IA')).toBe(true);
     expect(requestsOwnSiteAction('Faça uma varredura completa no meu site')).toBe(true);
     expect(requestsOwnSiteAction('Corrija o site de outra empresa')).toBe(false);
+    expect(requestsOwnSiteAction('Inicie agora a manutenção e autoevolução do próprio site Froc.IA')).toBe(true);
   });
 
   it('nao disponibiliza conhecimento ou acoes administrativas a um usuario comum', async () => {

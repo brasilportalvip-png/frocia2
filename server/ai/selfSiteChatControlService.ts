@@ -94,7 +94,15 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
     paragraphs.push(`Executor externo: escrita no GitHub confirmada na verificacao registrada${safe(integrations.checkedAt) ? ` em ${safe(integrations.checkedAt)}` : ''}.`);
   }
   if (runner.state || runner.status) {
-    paragraphs.push(`Ultima tarefa registrada${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
+    const rawState = String(runner.state || runner.status);
+    const stateLabels: Record<string, string> = {
+      detected: 'tarefa registrada',
+      tests_passed: 'testes concluídos',
+      patch_created: 'correção criada',
+      accepted: 'publicação confirmada'
+    };
+    const friendlyState = stateLabels[rawState] || safe(rawState);
+    paragraphs.push(`Ultima tarefa registrada${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${friendlyState}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
   }
   if (action.status === 'requested' || action.status === 'queued') paragraphs.push('Este pedido aguarda as etapas de teste, revisao e verificacao da publicacao.');
   return paragraphs.join('\n\n');
