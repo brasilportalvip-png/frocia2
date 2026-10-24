@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
 } from 'node:crypto';
 import { env } from '../config/env.js';
@@ -29,6 +30,15 @@ function encryptionKey(): Buffer | null {
   // A 32-byte base64/hex key is preferred. Hashing also permits rotation from
   // a high-entropy secret without ever persisting that secret in Firestore.
   return createHash('sha256').update(configured).digest();
+}
+
+/** Indice lexical privado: o mesmo termo produz chaves diferentes por conta. */
+export function protectedMemoryLookupTerms(terms: Iterable<string>, tenantId: string, userId: string): string[] {
+  const key = encryptionKey();
+  if (!key) throw new MemoryEncryptionUnavailableError();
+  return [...new Set(terms)].map(term => createHmac('sha256', key)
+    .update(`conversation-lookup-v1\0${tenantId}\0${userId}\0${term}`)
+    .digest().subarray(0, 16).toString('base64url'));
 }
 
 export function encryptPersonalMemory(

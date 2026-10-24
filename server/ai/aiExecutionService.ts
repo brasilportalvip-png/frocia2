@@ -1,4 +1,5 @@
 import { CreditWalletService } from '../services/creditWalletService.js';
+import { SelfSiteChatControlService } from './selfSiteChatControlService.js';
 import { SafetyService } from './safetyService.js';
 import { AIRequestOrchestrator } from './requestOrchestrator.js';
 import { ContextBuilder } from './contextBuilder.js';
@@ -153,6 +154,9 @@ export class AIExecutionService {
         throw new Error('Conversa não encontrada ou não pertence ao usuário.');
       }
     }
+
+    const operational = await SelfSiteChatControlService.respond({ ...params, prompt: sanitizedPrompt }, correlationId);
+    if (operational) return operational;
 
     const artifactMemories =
   await ArtifactMemoryService.rememberAndRetrieve({
@@ -329,7 +333,8 @@ if (params.abortSignal?.aborted) {
        const assembled = await ContextBuilder.assemble({
         userId,
         selfSiteContext: await SelfSiteOwnerService.context({ role: params.trustedUserRole, userId, prompt: sanitizedPrompt,
-          recentMessages: conversationContext.recentMessages }),
+          recentMessages: [...conversationContext.recentMessages, ...(conversationContext.continuity?.activeTopic
+            ? [{ role: 'user', content: conversationContext.continuity.activeTopic.content }] : [])] }),
         tenantId,
         userDisplayName,
         mode: executionMode,

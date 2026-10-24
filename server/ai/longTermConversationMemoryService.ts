@@ -4,13 +4,14 @@ import { adminDb } from '../lib/firebaseAdmin.js';
 import {
   decryptPersonalMemory,
   encryptPersonalMemory,
+  protectedMemoryLookupTerms,
 } from './memoryCryptoService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
 import { env } from '../config/env.js';
 import { EmbeddingService } from './embeddingService.js';
+import { orderConversationMessages } from '../utils/conversationMessageOrdering.js';
 
 const SEGMENT_MESSAGE_LIMIT = 12;
-const MESSAGE_CHARACTER_LIMIT = 1_200;
 const SEGMENT_CHARACTER_LIMIT = 14_000;
 const RETRIEVAL_CANDIDATE_LIMIT = 1_000;
 const RETRIEVAL_RESULT_LIMIT = 12;
@@ -22,6 +23,7 @@ export interface LongTermSourceMessage {
   content: string;
   createdAt?: string | null;
   archivedSegmentId?: string | null;
+  archivedVersion?: number;
 }
 
 export interface LongTermConversationSegment {
@@ -62,6 +64,8 @@ interface SegmentDraft {
   characterCount: number;
   firstMessageAt: string | null;
   lastMessageAt: string | null;
+  sourceMessageParts: Array<{ messageId: string; part: number; parts: number }>;
+  completedMessageIds: string[];
 }
 
 function normalizeText(value: unknown, limit: number): string {
@@ -113,43 +117,56 @@ export function buildLongTermConversationSegments(input: {
   conversationId: string;
   messages: LongTermSourceMessage[];
 }): SegmentDraft[] {
-  const eligible = input.messages.filter(
-    (message) =>
-      !message.archivedSegmentId &&
-      Boolean(normalizeText(message.content, MESSAGE_CHARACTER_LIMIT))
-  );
   const segments: SegmentDraft[] = [];
-
-  for (let offset = 0; offset < eligible.length; offset += SEGMENT_MESSAGE_LIMIT) {
-    const group = eligible.slice(offset, offset + SEGMENT_MESSAGE_LIMIT);
-    const sourceMessageIds = group.map((message) => message.id);
-    const content = group
-      .map((message) => {
-        const role = message.role === 'assistant' ? 'Assistente' : 'Usuário';
-        return `[msg:${message.id}] ${role}: ${normalizeText(
-          message.content,
-          MESSAGE_CHARACTER_LIMIT
-        )}`;
-      })
-      .join('\n')
-      .slice(0, SEGMENT_CHARACTER_LIMIT);
-
-    if (!content) continue;
+  let group: Array<{ message: LongTermSourceMessage; text: string; part: number; parts: number }> = [];
+  const flush = () => {
+    if (!group.length) return;
+    const sourceMessageIds = [...new Set(group.map(entry => entry.message.id))];
+    const sourceMessageParts = group.map(entry => ({ messageId: entry.message.id, part: entry.part, parts: entry.parts }));
+    const completedMessageIds = group.filter(entry => entry.part === entry.parts).map(entry => entry.message.id);
+    const content = group.map(entry => entry.text).join('\n');
     segments.push({
       id: deterministicSegmentId(
         input.tenantId,
         input.conversationId,
-        sourceMessageIds
+        ['full-history-v2', ...sourceMessageParts.map(part => JSON.stringify(part))]
       ),
       content,
       sourceMessageIds,
-      messageCount: group.length,
+      sourceMessageParts,
+      completedMessageIds,
+      messageCount: completedMessageIds.length,
       characterCount: content.length,
-      firstMessageAt: group[0]?.createdAt || null,
-      lastMessageAt: group[group.length - 1]?.createdAt || null,
+      firstMessageAt: group[0].message.createdAt || null,
+      lastMessageAt: group[group.length - 1].message.createdAt || null,
+    });
+    group = [];
+  };
+  for (const message of input.messages) {
+    if (message.archivedSegmentId && message.archivedVersion === 2) continue;
+    const content = RedactionService.redactSensitiveData(message.content)
+      .replace(/\r\n/g, '\n').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim();
+    if (!content) continue;
+    const chunks: string[] = [];
+    for (let start = 0; start < content.length;) {
+      let end = Math.min(start + 12_000, content.length);
+      // Nao dividir pares UTF-16 nem perder o final de mensagens extensas.
+      if (end < content.length && /[\uD800-\uDBFF]/.test(content[end - 1])) end--;
+      chunks.push(content.slice(start, end));
+      start = end;
+    }
+    // Mensagens multipartes possuem fronteiras estaveis mesmo se o processo
+    // cair depois de concluir mensagens anteriores do mesmo lote.
+    if (chunks.length > 1) flush();
+    chunks.forEach((chunk, index) => {
+      const role = message.role === 'assistant' ? 'Assistente' : 'Usuário';
+      const text = `[msg:${message.id}] ${role}${chunks.length > 1 ? ` (parte ${index + 1}/${chunks.length})` : ''}: ${chunk}`;
+      if (group.length >= SEGMENT_MESSAGE_LIMIT || group.reduce((sum, entry) => sum + entry.text.length + 1, text.length) > SEGMENT_CHARACTER_LIMIT) flush();
+      group.push({ message, text, part: index + 1, parts: chunks.length });
+      if (chunks.length > 1) flush();
     });
   }
-
+  flush();
   return segments;
 }
 
@@ -280,18 +297,21 @@ export class LongTermConversationMemoryService {
     ) {
       return { segmentCount: 0, archivedMessageCount: 0 };
     }
-    const messageSnapshot = await adminDb
+    let query = adminDb
       .collection('messages')
       .where('conversationId', '==', input.conversationId)
       .where('userId', '==', input.userId)
-      .orderBy('createdAt', 'desc')
-      .limit(200)
-      .get();
-    const messages = messageSnapshot.docs
-      .slice()
-      .reverse()
+      .orderBy('createdAt', 'asc')
+      .limit(200);
+    if (typeof conversation.longTermMemoryArchiveCursor === 'string') {
+      const cursor = await adminDb.collection('messages').doc(conversation.longTermMemoryArchiveCursor).get();
+      const data = cursor.data();
+      if (cursor.exists && data?.conversationId === input.conversationId && data?.userId === input.userId) query = query.startAfter(cursor);
+    }
+    const messageSnapshot = await query.get();
+    const messages = orderConversationMessages(messageSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), document: doc })))
       .map((doc) => {
-        const data = doc.data();
+        const data = doc.document.data();
         return {
           id: doc.id,
           role: data.role === 'assistant' ? ('assistant' as const) : ('user' as const),
@@ -301,16 +321,32 @@ export class LongTermConversationMemoryService {
             typeof data.longTermMemorySegmentId === 'string'
               ? data.longTermMemorySegmentId
               : null,
+          archivedVersion: data.longTermMemoryVersion,
         };
       });
-    return this.archive({
+    const result = await this.archive({
       ...input,
+      maximumNewSegments: 8,
       conversationTitle:
         typeof conversation.title === 'string' ? conversation.title : 'Conversa',
       projectId:
         typeof conversation.projectId === 'string' ? conversation.projectId : null,
       messages,
     });
+    const conversationRef = adminDb.collection('conversations').doc(input.conversationId);
+    await adminDb.runTransaction(async transaction => {
+      const latest = (await transaction.get(conversationRef)).data();
+      if (latest?.userId !== input.userId || (latest.tenantId || `user:${latest.userId}`) !== input.tenantId) return;
+      // Outra consulta pode ter avancado enquanto o lote era arquivado.
+      if ((latest.longTermMemoryArchiveCursor || null) !== (conversation.longTermMemoryArchiveCursor || null)) return;
+      transaction.set(conversationRef, {
+        longTermMemoryArchiveCursor: result.requiresResume ? conversation.longTermMemoryArchiveCursor || null :
+          messageSnapshot.docs.at(-1)?.id || conversation.longTermMemoryArchiveCursor || null,
+        longTermMemoryBackfillPending: result.requiresResume || messageSnapshot.size === 200,
+        longTermMemoryArchiveCheckedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+    return result;
   }
 
   static async archive(input: {
@@ -319,8 +355,9 @@ export class LongTermConversationMemoryService {
     conversationId: string;
     conversationTitle: string;
     projectId?: string | null;
+    maximumNewSegments?: number;
     messages: LongTermSourceMessage[];
-  }): Promise<{ segmentCount: number; archivedMessageCount: number }> {
+  }): Promise<{ segmentCount: number; archivedMessageCount: number; requiresResume?: boolean }> {
     if (!adminDb) return { segmentCount: 0, archivedMessageCount: 0 };
     const segments = buildLongTermConversationSegments({
       tenantId: input.tenantId,
@@ -332,7 +369,17 @@ export class LongTermConversationMemoryService {
     }
 
     let archivedMessageCount = 0;
+    let segmentCount = 0;
     for (const segment of segments) {
+      const segmentRef = adminDb.collection('conversation_memory_segments').doc(segment.id);
+      const prior = await segmentRef.get();
+      if (prior.data()?.formatVersion === 2) continue;
+      if (segmentCount >= (input.maximumNewSegments ?? Number.POSITIVE_INFINITY)) {
+        return { segmentCount, archivedMessageCount, requiresResume: true };
+      }
+      // Falhar antes de chamar embeddings se a chave privada nao estiver pronta.
+      const protectedContent = encryptPersonalMemory(segment.content, input.tenantId, input.userId);
+      const lookupTokens = protectedMemoryLookupTerms(normalizeTerms(segment.content), input.tenantId, input.userId);
       let embedding: number[] | null = null;
       try {
         embedding = await EmbeddingService.generateEmbedding(segment.content);
@@ -342,66 +389,63 @@ export class LongTermConversationMemoryService {
           error
         );
       }
-      const protectedContent = encryptPersonalMemory(
-        segment.content,
-        input.tenantId,
-        input.userId
-      );
-      const batch = adminDb.batch();
-      const segmentRef = adminDb
-        .collection('conversation_memory_segments')
-        .doc(segment.id);
-      batch.set(
-        segmentRef,
-        {
-          userId: input.userId,
-          tenantId: input.tenantId,
-          conversationId: input.conversationId,
-          conversationTitle: normalizeText(input.conversationTitle, 120) || 'Conversa',
-          projectId: input.projectId || null,
-          ...protectedContent,
-          sourceMessageIds: segment.sourceMessageIds,
-          messageCount: segment.messageCount,
-          characterCount: segment.characterCount,
-          embedding,
-          embeddingModel: embedding
-            ? env.GEMINI_EMBEDDING_MODEL
-            : null,
-          embeddingVersion: embedding
-            ? 'semantic-v1'
-            : null,
-          firstMessageAt: segment.firstMessageAt,
-          lastMessageAt: segment.lastMessageAt,
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      for (const messageId of segment.sourceMessageIds) {
-        batch.set(
-          adminDb.collection('messages').doc(messageId),
+      const created = await adminDb.runTransaction(async transaction => {
+        const existing = await transaction.get(segmentRef);
+        if (existing.data()?.formatVersion === 2) return false;
+        transaction.set(
+          segmentRef,
           {
-            longTermMemorySegmentId: segment.id,
-            longTermMemoryArchivedAt: FieldValue.serverTimestamp(),
+            userId: input.userId,
+            tenantId: input.tenantId,
+            conversationId: input.conversationId,
+            conversationTitle: normalizeText(input.conversationTitle, 120) || 'Conversa',
+            projectId: input.projectId || null,
+            ...protectedContent,
+            sourceMessageIds: segment.sourceMessageIds,
+            sourceMessageParts: segment.sourceMessageParts,
+            completedMessageIds: segment.completedMessageIds,
+            formatVersion: 2,
+            lookupTokens,
+            messageCount: segment.messageCount,
+            characterCount: segment.characterCount,
+            embedding,
+            embeddingModel: embedding
+              ? env.GEMINI_EMBEDDING_MODEL
+              : null,
+            embeddingVersion: embedding
+              ? 'semantic-v1'
+              : null,
+            firstMessageAt: segment.firstMessageAt,
+            lastMessageAt: segment.lastMessageAt,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
-        archivedMessageCount += 1;
-      }
-      await batch.commit();
+        // A origem so e marcada depois da ultima parte. Uma queda no meio
+        // permite retomar as partes restantes sem considerar o texto completo.
+        for (const messageId of segment.completedMessageIds) {
+          transaction.set(
+            adminDb.collection('messages').doc(messageId),
+            {
+              longTermMemorySegmentId: segment.id,
+              longTermMemoryVersion: 2,
+              longTermMemoryArchivedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+        transaction.set(adminDb.collection('conversations').doc(input.conversationId), {
+          longTermMemoryEnabled: true, longTermMemoryFormatVersion: 2,
+          longTermMemoryUpdatedAt: FieldValue.serverTimestamp(),
+          longTermMemorySegmentCount: FieldValue.increment(1),
+          longTermMemoryMessageCount: FieldValue.increment(segment.messageCount),
+        }, { merge: true });
+        return true;
+      });
+      if (created) { segmentCount++; archivedMessageCount += segment.messageCount; }
     }
-
-    await adminDb.collection('conversations').doc(input.conversationId).set(
-      {
-        longTermMemoryEnabled: true,
-        longTermMemoryUpdatedAt: FieldValue.serverTimestamp(),
-        longTermMemorySegmentCount: FieldValue.increment(segments.length),
-        longTermMemoryMessageCount: FieldValue.increment(archivedMessageCount),
-      },
-      { merge: true }
-    );
-
-    return { segmentCount: segments.length, archivedMessageCount };
+    return { segmentCount, archivedMessageCount };
   }
 
   static async retrieve(input: {
@@ -414,15 +458,30 @@ export class LongTermConversationMemoryService {
   }): Promise<LongTermConversationSegment[]> {
     if (!adminDb) return [];
     try {
-      const snapshot = await adminDb
+      const collection = adminDb.collection('conversation_memory_segments');
+      const lookupTokens = protectedMemoryLookupTerms([...normalizeTerms(input.prompt)]
+        .sort((a, b) => b.length - a.length).slice(0, 30), input.tenantId, input.userId);
+      // A busca indexada cobre o acervo inteiro, inclusive fatos mais antigos
+      // que os mil segmentos recentes. A chave HMAC ja vincula a conta/tenant;
+      // a identidade de cada documento ainda e conferida antes de descriptografar.
+      const indexed = lookupTokens.length ? collection.where('lookupTokens', 'array-contains-any', lookupTokens).limit(250).get() : Promise.resolve(null);
+      const recent = adminDb
         .collection('conversation_memory_segments')
         .where('userId', '==', input.userId)
         .where('tenantId', '==', input.tenantId)
         .orderBy('createdAt', 'desc')
         .limit(RETRIEVAL_CANDIDATE_LIMIT)
         .get();
-      const segments = snapshot.docs.flatMap((doc) => {
+      const results = await Promise.allSettled([recent, indexed]);
+      const documents = [...new Map(results.flatMap(result => {
+        if (result.status === 'fulfilled') return result.value?.docs || [];
+        console.warn('Uma das buscas de memoria esta indisponivel; usando as demais.', result.reason);
+        return [];
+      }).map(doc => [doc.id, doc])).values()];
+      const segments = documents.flatMap((doc) => {
         try {
+          const data = doc.data();
+          if (data.userId !== input.userId || (data.tenantId || `user:${data.userId}`) !== input.tenantId) return [];
           return [mapStoredSegment(doc)];
         } catch (error) {
           console.warn(`Segmento de memória ${doc.id} ignorado.`, error);
@@ -514,6 +573,13 @@ export class LongTermConversationMemoryService {
       deleted += owned.length;
       if (snapshot.size < 400) break;
     }
+    const conversationRef = adminDb.collection('conversations').doc(conversationId);
+    const conversation = (await conversationRef.get()).data();
+    if (conversation?.userId === userId && (conversation.tenantId || `user:${userId}`) === tenantId) {
+      await conversationRef.update({ continuityMemory: FieldValue.delete(), continuityUpdatedAt: FieldValue.delete(),
+        longTermMemoryArchiveCursor: FieldValue.delete(), longTermMemoryBackfillPending: false,
+        longTermMemorySegmentCount: 0, longTermMemoryMessageCount: 0 });
+    }
     return deleted;
   }
 
@@ -536,6 +602,22 @@ export class LongTermConversationMemoryService {
       await batch.commit();
       deleted += snapshot.size;
       if (snapshot.size < 400) break;
+    }
+    let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+    while (true) {
+      let query = adminDb.collection('conversations').where('userId', '==', userId).limit(400);
+      if (cursor) query = query.startAfter(cursor);
+      const conversations = await query.get();
+      const batch = adminDb.batch();
+      for (const doc of conversations.docs) {
+        if ((doc.data().tenantId || `user:${userId}`) !== tenantId) continue;
+        batch.update(doc.ref, { continuityMemory: FieldValue.delete(), continuityUpdatedAt: FieldValue.delete(),
+          longTermMemoryArchiveCursor: FieldValue.delete(), longTermMemoryBackfillPending: false,
+          longTermMemorySegmentCount: 0, longTermMemoryMessageCount: 0 });
+      }
+      if (!conversations.empty) await batch.commit();
+      if (conversations.size < 400) break;
+      cursor = conversations.docs.at(-1);
     }
     return deleted;
   }

@@ -6,6 +6,7 @@ import { MemoryScopeAccessError, MemoryService } from '../ai/memoryService.js';
 import { MemoryPolicyViolationError } from '../ai/memoryPolicy.js';
 import { MemoryEncryptionUnavailableError } from '../ai/memoryCryptoService.js';
 import { LongTermConversationMemoryService } from '../ai/longTermConversationMemoryService.js';
+import { env } from '../config/env.js';
 
 export const memoryRouter = Router();
 
@@ -138,9 +139,14 @@ memoryRouter.get('/long-term/stats', requireAuth, async (req: AuthenticatedReque
       stats,
       policy: {
         originalMessagesPreserved: true,
-        retrieval: 'relevance_across_owned_conversations',
-        maximumSegmentsScannedPerRequest: 250,
-        maximumSegmentsInjectedPerRequest: 6,
+        totalStorageMessageLimit: null,
+        fullTextArchive: true,
+        encryptionConfigured: Boolean(env.MEMORY_ENCRYPTION_KEY?.trim()),
+        historicalBackfill: 'resumable_pages_of_200',
+        retrieval: 'recent_semantic_and_private_lexical_index_across_owned_conversations',
+        maximumRecentCandidatesPerRequest: 1000,
+        maximumIndexedCandidatesPerRequest: 250,
+        maximumSegmentsInjectedPerRequest: 12,
         privateOrCrossTenantAccess: false,
       },
     });

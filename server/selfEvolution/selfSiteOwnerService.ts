@@ -6,11 +6,29 @@ import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import { RedactionService } from './redactionService.js';
 import type { ImprovementCandidate } from './selfEvolutionTypes.js';
 import { AuditService } from './auditService.js';
+import { env } from '../config/env.js';
 
 type OwnerMessage = { role: string; content: string };
+export type OwnerControlInput = { role?: string; userId: string; prompt: string; recentMessages?: OwnerMessage[] };
 const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 const productSite = /\bfroc(?:\.?ia|ia2)?\b|frocia2\.vercel\.app|brasilportalvip-png\/frocia2/;
 const ownSite = new RegExp(productSite.source + '|(?:meu|seu|nosso|proprio)\\s+(?:site|repositorio)|(?:seus|meus|nossos)\\s+agentes');
+
+export function isOwnSiteCapabilityQuestion(prompt: string): boolean {
+  const text = normalize(prompt);
+  return /^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text) ||
+    /\b(?:memoria)\b.{0,35}\b(?:ativa|configurada|funcionando|capacidade|tamanho)\b|\b(?:qual|como esta)\b.{0,50}\bmemoria\b/.test(text) ||
+    /\b(?:voce|vc)\b.{0,35}\b(?:tem|possui|consegue|pode)\b.{0,70}\b(?:github|vercel|commit|push|repositorio)\b/.test(text) ||
+    (ownSite.test(text) && /\b(?:voce|vc)\b.{0,35}\b(?:consegue|pode)\b.{0,70}\b(?:escrever|gravar|alterar)\b/.test(text)) ||
+    /^(?:consegue|pode)\s+(?:fazer\s+)?(?:commit|push)\b/.test(text) ||
+    (/\b(?:qual|quais|como esta)\b.{0,35}\b(?:acesso|permissao|permissoes|integracao)\b/.test(text) &&
+      (ownSite.test(text) || /\b(?:seu|seus|sua|suas|voce|vc|github|vercel)\b/.test(text)));
+}
+
+export function isOwnSiteAccessFollowUp(prompt: string): boolean {
+  const text = normalize(prompt);
+  return /^(?:acabei\b.{0,65}(?:alterac|configur|liber|salv|fazer)|(?:ja )?(?:fiz|configurei|liberei|alterei|salvei)\b|e agora\s*[?!]*$|feito\s*[.!]*$|pronto\s*[.!]*$)/.test(text);
+}
 
 export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = normalize(prompt);
@@ -20,12 +38,10 @@ export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] 
   if (ownSite.test(text)) return true;
   // Perguntas sobre as ferramentas da propria IA tambem precisam do estado real,
   // mesmo quando o dono nao repete "meu site" a cada mensagem.
-  if (/^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text.trim()) ||
-      /\b(?:voce|vc)\b.{0,35}\b(?:tem|possui|consegue|pode)\b.{0,60}\b(?:github|vercel|commit|push)\b/.test(text) ||
-      /^(?:consegue|pode)\s+(?:fazer\s+)?(?:commit|push)\b/.test(text.trim())) return true;
+  if (isOwnSiteCapabilityQuestion(prompt)) return true;
   const priorOwnerTopic = recentMessages.filter(message => message.role === 'user' && message.content !== prompt)
-    .slice(-4).some(message => ownSite.test(normalize(message.content)));
-  return priorOwnerTopic && /\b(?:github|vercel|agentes|site|repositorio|commit|push|deploy|correcoes|corrija|conserta|conserte|arrume|repare|auditoria|varredura|isso|tudo)\b/.test(text);
+    .slice(-5).some(message => ownSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
+  return priorOwnerTopic && (isOwnSiteAccessFollowUp(prompt) || /\b(?:github|vercel|agentes|site|repositorio|commit|push|deploy|correcoes|corrija|conserta|conserte|arrume|repare|auditoria|varredura|isso|tudo)\b/.test(text));
 }
 
 function commandText(prompt: string): string {
@@ -69,6 +85,8 @@ export class SelfSiteOwnerService {
       adminDb.collection('self_evolution_config').doc('runner_integrations').get(),
     ]);
     return { lastAudit: audit.data() || null, lastRunner: runner.data() || null,
+      memory: { encryptedArchiveConfigured: Boolean(env.MEMORY_ENCRYPTION_KEY?.trim()), formatVersion: 2,
+        fullTextArchive: true, backfill: 'resumable', retrieval: 'recent_semantic_and_private_lexical_index' },
       lastVerifiedExternalIntegrations: integrations.data() || null,
       recentCandidateOutcomes: outcomes.docs.map(doc => doc.data()), historyWindow: 20 };
   }
@@ -113,17 +131,17 @@ export class SelfSiteOwnerService {
     return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, message: dispatch.message };
   }
 
-  static async context(input: { role?: string; userId: string; prompt: string; recentMessages?: OwnerMessage[] }): Promise<string> {
-    if (!isOwnSiteRequest(input.prompt, input.recentMessages)) return '';
+  static async control(input: OwnerControlInput): Promise<Record<string, unknown> | null> {
+    if (!isOwnSiteRequest(input.prompt, input.recentMessages)) return null;
     if (input.role !== 'admin') {
       // Um cliente pode pedir ajuda com seu proprio site. Esse pedido nao e
       // controle administrativo da Froc.IA e conserva o fluxo normal do chat.
-      const productTopic = productSite.test(normalize(input.prompt)) || (input.recentMessages || [])
-        .filter(message => message.role === 'user').slice(-4).some(message => productSite.test(normalize(message.content)));
-      return productTopic ? '\n[ACESSO AO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify({
+      const productTopic = productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || (input.recentMessages || [])
+        .filter(message => message.role === 'user').slice(-4).some(message => productSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
+      return productTopic ? {
         status: 'blocked', code: 'administrator_required',
         message: 'O servidor nao confirmou papel administrativo nesta sessao. O controle do proprio site exige uma conta administradora autenticada. Isso nao determina as permissoes dos agentes no executor externo.',
-      }) : '';
+      } : null;
     }
     try {
       const toggle = requestedOwnSiteToggle(input.prompt, input.recentMessages);
@@ -139,20 +157,27 @@ export class SelfSiteOwnerService {
       }
       // Uma falha de consulta ao indice nao pode apagar o recibo de um comando
       // que ja foi persistido/enviado ao GitHub.
-      const [knowledge, operations, connection] = await Promise.allSettled([
-        SelfSiteKnowledgeService.contextForOwner(input.prompt), this.operationalSnapshot(),
+      const [operations, connection] = await Promise.allSettled([
+        this.operationalSnapshot(),
         GithubAutomationService.inspectMaintenanceConnection(),
       ]);
       const result = (value: PromiseSettledResult<unknown>) => value.status === 'fulfilled' ? value.value : { status: 'unavailable' };
-      return (knowledge.status === 'fulfilled' ? knowledge.value : '\n[MAPA DO PROJETO] Consulta indisponivel nesta mensagem.\n') +
-        '\n[CONEXAO ATUAL DO CHAT COM A MANUTENCAO]\n' + JSON.stringify(result(connection)) +
-        '\n[ESTADO REAL DA MANUTENCAO — DADOS NAO CONFIAVEIS]\n' + JSON.stringify(result(operations)) + '\n' +
-        (action ? '\n[RECIBO REAL DO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify(action) +
-        '\nPedido registrado nao significa correcao publicada. Informe o estado real deste recibo.\n' : '');
+      return { status: 'checked', connection: result(connection), operations: result(operations), action };
     } catch (error) {
-      return '\n[CONTROLE DO PROPRIO SITE] Consulta ou solicitacao bloqueada: ' +
-        RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'falha de acesso') +
-        '. Nao declare diagnostico, execucao ou publicacao concluidos.\n';
+      return { status: 'blocked', message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'falha de acesso') };
     }
+  }
+
+  static async context(input: OwnerControlInput): Promise<string> {
+    const control = await this.control(input);
+    if (!control) return '';
+    if (control.status === 'blocked') return '\n[ACESSO AO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify(control);
+    let knowledge: string;
+    try { knowledge = await SelfSiteKnowledgeService.contextForOwner(input.prompt); }
+    catch { knowledge = '\n[MAPA DO PROJETO] Consulta indisponivel nesta mensagem.\n'; }
+    return knowledge + '\n[CONEXAO ATUAL DO CHAT COM A MANUTENCAO]\n' + JSON.stringify(control.connection) +
+      '\n[ESTADO REAL DA MANUTENCAO — DADOS NAO CONFIAVEIS]\n' + JSON.stringify(control.operations) + '\n' +
+      (control.action ? '\n[RECIBO REAL DO CONTROLE DO PROPRIO SITE]\n' + JSON.stringify(control.action) +
+      '\nPedido registrado nao significa correcao publicada. Informe o estado real deste recibo.\n' : '');
   }
 }

@@ -49,6 +49,7 @@ describe('Memória extensa e hierárquica de conversas', () => {
           role: 'user',
           content: 'Já foi preservada.',
           archivedSegmentId: 'segment-old',
+          archivedVersion: 2,
         },
         {
           id: 'new',
@@ -76,6 +77,18 @@ describe('Memória extensa e hierárquica de conversas', () => {
     expect(segment.content).toContain('[REDACTED_SECRET]');
     expect(segment.content).not.toContain('segredo123');
     expect(segment.content).not.toContain('ghp_');
+  });
+
+  it('migra marcadores antigos e preserva mensagens extensas completas, incluindo emojis nas fronteiras', () => {
+    const content = 'a'.repeat(11_999) + '😀' + 'texto integral '.repeat(8000) + 'FINAL PRESERVADO';
+    const segments = buildLongTermConversationSegments({ tenantId: 'tenant-a', conversationId: 'conversation-a',
+      messages: [{ id: 'old-format', role: 'user', content, archivedSegmentId: 'legacy-v1' }] });
+    expect(segments.length).toBeGreaterThan(8);
+    expect(segments.every(segment => segment.characterCount <= 14_000)).toBe(true);
+    expect(segments.map(segment => segment.content.replace(/^.*?: /, '')).join('')).toBe(content);
+    expect(segments.flatMap(segment => segment.completedMessageIds)).toEqual(['old-format']);
+    expect(segments.reduce((sum, segment) => sum + segment.messageCount, 0)).toBe(1);
+    for (const segment of segments) expect(segment.content).not.toMatch(/[\uD800-\uDBFF]$/);
   });
 
   it('recupera primeiro a conversa e o projeto atuais e exige relevância para outras conversas', () => {

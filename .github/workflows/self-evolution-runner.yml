@@ -93,8 +93,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "Verificando GitHub na rede protegida..."
-          getent ahostsv4 github.com | head -n 5 || true
-          curl --ipv4 --fail --silent --show-error --head --connect-timeout 10 --max-time 25 https://github.com/ > /dev/null
+          timeout 8s getent ahostsv4 github.com | head -n 5 || true
+          curl --ipv4 --fail --silent --show-error --head --connect-timeout 10 --max-time 25 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 90 https://github.com/ > /dev/null
           echo "GitHub acessivel."
 
       - name: Baixar codigo
@@ -147,7 +147,7 @@ jobs:
           set -euo pipefail
           for host in github.com nodejs.org release-assets.githubusercontent.com registry.npmjs.org auth.docker.io registry-1.docker.io production.cloudfront.docker.com cdn.playwright.dev playwright.download.prss.microsoft.com storage.googleapis.com generativelanguage.googleapis.com firestore.googleapis.com; do
             echo "Verificando TLS para ${host}:443"
-            if ! curl --ipv4 --head --silent --show-error --connect-timeout 6 --max-time 15 "https://${host}/" --output /dev/null; then
+            if ! curl --ipv4 --head --silent --show-error --connect-timeout 6 --max-time 15 --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 45 "https://${host}/" --output /dev/null; then
               echo "::error::Destino necessario bloqueado ou inacessivel: ${host}:443"
               exit 1
             fi
@@ -294,7 +294,7 @@ jobs:
           node --import tsx scripts/self-evolution-runner.ts --run
 
       - name: Registrar diagnostico do worker
-        if: ${{ always() }}
+        if: ${{ always() && hashFiles('scripts/self-evolution-worker-diagnostics.mjs') != '' }}
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}

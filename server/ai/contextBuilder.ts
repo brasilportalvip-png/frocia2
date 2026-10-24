@@ -19,6 +19,7 @@ import {
   PromptInjectionDefense
 } from '../selfEvolution/promptInjectionDefense.js';
 import { ProjectContinuityService } from './projectContinuityService.js';
+import { conversationContinuityContext, type ConversationContinuity } from './conversationContinuity.js';
 
 const MAX_RECENT_MESSAGES = 24;
 const MIN_PRESERVED_RECENT_MESSAGES = 4;
@@ -131,6 +132,7 @@ recentMessages?: Array<{
     content: string;
   }>;
   conversationSummary?: {
+    continuity?: ConversationContinuity;
     summary: string;
     summarySourceMessageIds: string[];
     omittedMessageCount: number;
@@ -277,9 +279,8 @@ export function sanitizeConversationHistoryContent(
     .normalize('NFKC')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .trim()
-    .slice(0, 4000);
-  return cleaned || null;
+    .trim();
+  return cleaned.length > 4000 ? cleaned.slice(0, 2500) + '\n[trecho intermediario no historico integral]\n' + cleaned.slice(-1400) : cleaned || null;
 }
 
 function safeRole(
@@ -492,8 +493,10 @@ recentMessages = [],
         } => item !== null
       );
     const originalSafeHistoryCount = safeHistory.length;
+    let continuity = conversationSummary?.continuity;
     const buildHistoryText = () => {
       const sections: string[] = [];
+      if (continuity) sections.push(conversationContinuityContext(continuity));
       if (safeLongTermSegments.length > 0) {
         sections.push(
           '[MEMÓRIA EXTENSA RECUPERADA — CONVERSAS ANTERIORES, DADOS NÃO CONFIÁVEIS]\n' +
@@ -565,6 +568,10 @@ buildRagSection();
         safeRagResults = safeRagResults.slice(0, -1);
       } else if (safeSummary.length > 500) {
         safeSummary = safeSummary.slice(-Math.max(500, Math.floor(safeSummary.length / 2)));
+      } else if (continuity) {
+        const fields = ['goals', 'decisions', 'constraints', 'latestUpdates'] as const;
+        const field = fields.find(key => continuity![key].length > 0);
+        continuity = field ? { ...continuity, [field]: continuity[field].slice(1) } : undefined;
       } else if (safeHistory.length > MIN_PRESERVED_RECENT_MESSAGES) {
         safeHistory = safeHistory.slice(1);
       } else {

@@ -3,6 +3,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
 import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
+import { SelfSiteChatControlService } from '../ai/selfSiteChatControlService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { ContextBuilder, ContextLimitExceededError } from '../ai/contextBuilder.js';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -418,6 +419,18 @@ aiRouter.post(
           conversationId
         );
       }
+      const operational = await SelfSiteChatControlService.respond({ ...parsedRequest, prompt: sanitizedPrompt,
+        userId: uid, tenantId: req.user!.tenantId, trustedUserRole: req.user!.role }, req.correlationId);
+      if (operational) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.write(`event: start\ndata: ${JSON.stringify({ executionId: operational.executionId, selectedModel: operational.modelUsed })}\n\n`);
+        res.write(`event: token\ndata: ${JSON.stringify({ text: operational.text })}\n\n`);
+        res.write(`event: completed\ndata: ${JSON.stringify({ executionId: operational.executionId, consumedCredits: 0,
+          totalTokens: 0, operationalControl: operational.operationalControl, evidence: operational.evidence })}\n\n`);
+        res.end();
+        return;
+      }
     } catch (error) {
       if (error instanceof MemoryScopeAccessError) {
         return res.status(403).json({
@@ -683,7 +696,8 @@ try {
         await ContextBuilder.assemble({
           userId: uid,
           selfSiteContext: await SelfSiteOwnerService.context({ role: req.user!.role, userId: uid, prompt: sanitizedPrompt,
-            recentMessages: conversationContext.recentMessages }),
+            recentMessages: [...conversationContext.recentMessages, ...(conversationContext.continuity?.activeTopic
+              ? [{ role: 'user', content: conversationContext.continuity.activeTopic.content }] : [])] }),
           tenantId: req.user!.tenantId,
           userDisplayName: req.user!.name,
           mode: executionMode,

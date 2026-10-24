@@ -5,6 +5,8 @@ import {
   LongTermConversationSegment,
 } from './longTermConversationMemoryService.js';
 import { orderConversationMessages } from '../utils/conversationMessageOrdering.js';
+import { buildConversationContinuity, type ConversationContinuity } from './conversationContinuity.js';
+import { decryptPersonalMemory, encryptPersonalMemory } from './memoryCryptoService.js';
 
 const RECENT_MESSAGE_LIMIT = 32;
 const QUERY_LIMIT = 400;
@@ -16,9 +18,11 @@ export interface ConversationContextMessage {
   content: string;
   createdAt?: string | null;
   archivedSegmentId?: string | null;
+  archivedVersion?: number;
 }
 
 export interface ConversationContextSnapshot {
+  continuity?: ConversationContinuity;
   summary: string;
   summarySourceMessageIds: string[];
   recentMessages: ConversationContextMessage[];
@@ -32,12 +36,8 @@ function normalizeMessageContent(value: unknown): string {
   if (typeof value !== 'string') return '';
 
   return value
-    .normalize('NFKC')
     .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim()
-    .slice(0, 4000);
+    .trim();
 }
 
 function importanceScore(message: ConversationContextMessage): number {
@@ -83,6 +83,7 @@ export class ConversationContextService {
     conversationId?: string | null;
     projectId?: string | null;
     prompt?: string;
+    operationalOnly?: boolean;
   }): Promise<ConversationContextSnapshot> {
     if (!adminDb) {
       return {
@@ -97,7 +98,7 @@ export class ConversationContextService {
     }
 
     if (!input.conversationId) {
-      const longTermSegments = await LongTermConversationMemoryService.retrieve({
+      const longTermSegments = input.operationalOnly ? [] : await LongTermConversationMemoryService.retrieve({
         userId: input.userId,
         tenantId: input.tenantId,
         prompt: input.prompt || '',
@@ -160,12 +161,31 @@ export class ConversationContextService {
             typeof data.longTermMemorySegmentId === 'string'
               ? data.longTermMemorySegmentId
               : null,
+          archivedVersion: data.longTermMemoryVersion,
         } as ConversationContextMessage;
       })
       .filter((message) => message.content.length > 0);
 
     const recentMessages = messages.slice(-RECENT_MESSAGE_LIMIT);
     const olderMessages = messages.slice(0, -RECENT_MESSAGE_LIMIT);
+    let continuity = buildConversationContinuity(messages);
+    try {
+      continuity = await adminDb.runTransaction(async transaction => {
+        const latest = await transaction.get(conversationRef);
+        const data = latest.data();
+        if (!latest.exists || data?.userId !== input.userId || (data.tenantId || `user:${data.userId}`) !== input.tenantId) {
+          throw new Error('conversation_continuity_access_denied');
+        }
+        let previous: ConversationContinuity | null = null;
+        if (data.continuityMemory) previous = JSON.parse(decryptPersonalMemory(data.continuityMemory, input.tenantId, input.userId));
+        const state = buildConversationContinuity(messages, previous?.version === 1 ? previous : null);
+        transaction.set(conversationRef, { continuityMemory: encryptPersonalMemory(JSON.stringify(state), input.tenantId, input.userId),
+          continuityUpdatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        return state;
+      });
+    } catch (error) {
+      console.warn('Continuidade persistente indisponivel; usando as mensagens verificadas desta consulta.', error);
+    }
     const previousIds = Array.isArray(conversation.summarySourceMessageIds)
       ? conversation.summarySourceMessageIds.filter(
           (id: unknown): id is string => typeof id === 'string'
@@ -192,25 +212,35 @@ export class ConversationContextService {
     }
 
     try {
-      await LongTermConversationMemoryService.archive({
-        userId: input.userId,
-        tenantId: input.tenantId,
-        conversationId: input.conversationId,
-        conversationTitle:
-          typeof conversation.title === 'string' ? conversation.title : 'Conversa',
-        projectId:
-          typeof conversation.projectId === 'string'
-            ? conversation.projectId
-            : input.projectId,
-        messages: olderMessages,
-      });
+      if (!input.operationalOnly) {
+        await LongTermConversationMemoryService.archive({
+          maximumNewSegments: 8,
+          userId: input.userId,
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+          conversationTitle:
+            typeof conversation.title === 'string' ? conversation.title : 'Conversa',
+          projectId:
+            typeof conversation.projectId === 'string'
+              ? conversation.projectId
+              : input.projectId,
+          messages: olderMessages,
+        });
+        // Migra o historico anterior a janela recente em paginas com cursor.
+        // Nao existe um teto total de 200/400 mensagens preservaveis.
+        if (messageSnap.size >= QUERY_LIMIT || conversation.longTermMemoryBackfillPending) {
+          await LongTermConversationMemoryService.archiveOwnedConversation({
+            userId: input.userId, tenantId: input.tenantId, conversationId: input.conversationId,
+          });
+        }
+      }
     } catch (error) {
       // A conversa recente continua disponível mesmo se a criptografia ou o
       // armazenamento de memória extensa estiver temporariamente indisponível.
       console.warn('Memória extensa não pôde arquivar este lote.', error);
     }
 
-    const longTermSegments = await LongTermConversationMemoryService.retrieve({
+    const longTermSegments = input.operationalOnly ? [] : await LongTermConversationMemoryService.retrieve({
       userId: input.userId,
       tenantId: input.tenantId,
       prompt: input.prompt || '',
@@ -222,6 +252,7 @@ export class ConversationContextService {
     });
 
     return {
+      continuity,
       summary: summaryResult.summary,
       summarySourceMessageIds,
       recentMessages,
