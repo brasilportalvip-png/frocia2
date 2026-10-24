@@ -1,10 +1,14 @@
+import { runnerOutcomePolicy } from '../server/selfEvolution/runnerOutcomePolicy.js';
+import { PreviewFailureRecoveryService } from '../server/selfEvolution/previewFailureRecoveryService.js';
 import { randomUUID } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
 
 async function recordOutcome(outcome: Record<string, unknown>, requiresResume: boolean): Promise<void> {
+  const policy = runnerOutcomePolicy(outcome, requiresResume);
+  if (policy.failed) process.exitCode = 1;
   const json = JSON.stringify({ ...outcome, requiresResume }, null, 2);
   if (process.env.GITHUB_OUTPUT) {
-    await appendFile(process.env.GITHUB_OUTPUT, `requires_resume=${requiresResume}\n`);
+    await appendFile(process.env.GITHUB_OUTPUT, `requires_resume=${requiresResume}\ndaily_complete=${policy.dailyComplete}\n`);
   }
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n## Resultado dos agentes\n\n\`\`\`json\n${json}\n\`\`\`\n`);
@@ -121,6 +125,11 @@ async function main(): Promise<void> {
 
   let candidateId = candidate?.id;
 
+  const previewRecovery = !candidateId ? await PreviewFailureRecoveryService.recoverNext({
+    sourceSha: knowledge.commitSha, runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`, now: new Date(),
+  }) : null;
+  if (previewRecovery?.candidateId) candidateId = previewRecovery.candidateId;
+
   if (!candidateId) {
     candidateId = await WorkerFailureRecoveryService.recoverNext({
       sourceSha: knowledge.commitSha,
@@ -131,6 +140,11 @@ async function main(): Promise<void> {
   }
 
   if (!candidateId) {
+    if (previewRecovery?.unresolved) {
+      await recordOutcome({ status: 'preview_requires_attention', siteAudit, blockedPreviews: previewRecovery.blocked,
+        message: 'Preview pendente sem retomada elegivel: confira limite, intervalo e base do patch. Nao houve regeneracao ou merge.' }, true);
+      return;
+    }
     if ((siteAudit.findings || 0) > 0) {
       console.warn('::warning::Ha falhas reais no site, mas nenhuma tarefa retomavel. Confira candidatos que falharam, rejeicoes e bloqueios.');
       await recordOutcome({ status: 'audit_requires_attention', siteAudit,
@@ -188,7 +202,7 @@ async function main(): Promise<void> {
 
   const moreCandidates = snapshot.docs.some(doc => doc.id !== candidateId && RESUMABLE_STATES.has(String(doc.data().state)));
   await recordOutcome({ candidateId, siteAudit, state: result.state, message: result.message },
-    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state) || result.state === 'tests_failed');
+    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state) || ['tests_failed', 'preview_failed'].includes(result.state));
 
   if (['failed', 'tests_failed', 'ci_failed'].includes(result.state)) {
     process.exitCode = 1;

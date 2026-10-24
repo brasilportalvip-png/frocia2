@@ -39,7 +39,7 @@ export async function planSelfEvolutionRun({ github, context, enabled = '', now 
   });
 
   for (const run of runs) {
-    if (run.id === context.runId || run.head_branch !== branch || run.conclusion !== 'success' ||
+    if (run.head_sha !== context.sha || run.id === context.runId || run.head_branch !== branch || run.conclusion !== 'success' ||
         !['schedule', 'workflow_dispatch'].includes(run.event)) continue;
     const startedAt = new Date(run.created_at);
     if (!Number.isFinite(startedAt.getTime()) || localParts(startedAt).dateKey !== dateKey) continue;
