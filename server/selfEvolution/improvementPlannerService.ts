@@ -65,21 +65,21 @@ export class ImprovementPlannerService {
   static async getCandidates(limit: number = 50): Promise<ImprovementCandidate[]> {
     if (isFirebaseAdminConfigured()) {
       try {
-        const snapshot = await adminDb
-          .collection('self_evolution_candidates')
-          .orderBy('createdAt', 'desc')
-          .limit(limit)
-          .get();
-
-        if (!snapshot.empty) {
-          return snapshot.docs.map((doc) => doc.data() as ImprovementCandidate);
+        const query = adminDb.collection('self_evolution_candidates').orderBy('createdAt', 'desc').limit(limit);
+        const candidates: ImprovementCandidate[] = [];
+        let snapshot = await query.get();
+        while (!snapshot.empty) {
+          candidates.push(...snapshot.docs.map(doc => doc.data() as ImprovementCandidate).filter(item => !item.deletedAt));
+          if (candidates.length >= limit || snapshot.docs.length < limit) break;
+          snapshot = await query.startAfter(snapshot.docs[snapshot.docs.length - 1]).get();
         }
+        return candidates.slice(0, limit);
       } catch (err) {
         console.error('Erro ao buscar candidatos no Firestore:', err);
       }
     }
 
-    return this.inMemoryCandidates.slice(0, limit);
+    return this.inMemoryCandidates.filter(candidate => !candidate.deletedAt).slice(0, limit);
   }
 
   static async getCandidateById(id: string): Promise<ImprovementCandidate | undefined> {

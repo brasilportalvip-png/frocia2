@@ -12,6 +12,7 @@ import { selfEvolutionRouter } from '../server/routes/selfEvolutionRoutes.js';
 import { SelfSiteKnowledgeService } from '../server/selfEvolution/selfSiteKnowledgeService.js';
 import { SelfSiteOwnerService } from '../server/selfEvolution/selfSiteOwnerService.js';
 import { GithubAutomationService } from '../server/selfEvolution/githubAutomationService.js';
+import { CandidateQueueService } from '../server/selfEvolution/candidateQueueService.js';
 
 const app = express(); app.use(express.json()); app.use('/api/admin/self-evolution', selfEvolutionRouter);
 describe('Controle do proprio site reservado ao dono autenticado', () => {
@@ -58,5 +59,21 @@ describe('Controle do proprio site reservado ao dono autenticado', () => {
     const result = await request(app).post('/api/admin/self-evolution/control/enabled').set('Authorization', 'Bearer admin-token').send({ enabled: true });
     expect(result.status).toBe(200);
     expect(SelfSiteOwnerService.setEnabled).toHaveBeenCalledWith('owner', true, expect.any(String));
+  });
+  it('exige autenticação e privilégio administrativo para excluir uma tarefa', async () => {
+    const remove = vi.spyOn(CandidateQueueService, 'remove');
+    const endpoint = '/api/admin/self-evolution/candidates/owner-task';
+    expect((await request(app).delete(endpoint).send({ confirmation: 'owner-task' })).status).toBe(401);
+    expect((await request(app).delete(endpoint).set('Authorization', 'Bearer user-token').send({ confirmation: 'owner-task', role: 'admin' })).status).toBe(403);
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('exige confirmação do mesmo item e usa a identidade autenticada, sem aceitar autor no corpo', async () => {
+    const remove = vi.spyOn(CandidateQueueService, 'remove').mockResolvedValue({ candidateId: 'owner-task', deleted: true, alreadyDeleted: false });
+    const endpoint = '/api/admin/self-evolution/candidates/owner-task';
+    expect((await request(app).delete(endpoint).set('Authorization', 'Bearer admin-token').send({ confirmation: 'other-task' })).status).toBe(400);
+    expect((await request(app).delete(endpoint).set('Authorization', 'Bearer admin-token').send({ confirmation: 'owner-task', actorUid: 'someone-else' })).status).toBe(400);
+    expect(remove).not.toHaveBeenCalled();
+    expect((await request(app).delete(endpoint).set('Authorization', 'Bearer admin-token').send({ confirmation: 'owner-task' })).status).toBe(200);
+    expect(remove).toHaveBeenCalledWith('owner-task', 'owner');
   });
 });
