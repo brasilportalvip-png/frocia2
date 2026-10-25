@@ -137,6 +137,7 @@ export interface KnowledgeDocument {
 }
 
 export interface ImprovementCandidate {
+  ciRetryRequired?: boolean;
   id: string;
   title: string;
   summary: string;

@@ -225,9 +225,11 @@ export class SelfEvolutionOrchestrator {
           if (changes.status === 'unavailable') return { state: candidate.state, message: changes.message };
         }
 
-        if (candidate.state === 'pull_request_opened' && process.env.SELF_EVOLUTION_CI_DISPATCH_REQUIRED === 'true') {
+        if (candidate.state === 'pull_request_opened' && (process.env.SELF_EVOLUTION_CI_DISPATCH_REQUIRED === 'true' || candidate.ciRetryRequired === true)) {
           const dispatch = await GithubAutomationService.dispatchOfficialCI(candidate.branchName || '');
           if (!dispatch.success) return { state: 'pull_request_opened', message: dispatch.message };
+          if (candidate.ciRetryRequired && !(await ImprovementPlannerService.updateCandidateMetadata(candidateId, { ciRetryRequired: false })))
+            throw new Error('CI solicitado, mas o recibo da retomada nao foi persistido.');
           await transition('ci_pending');
           return { state: 'ci_pending', message: dispatch.message };
         }
