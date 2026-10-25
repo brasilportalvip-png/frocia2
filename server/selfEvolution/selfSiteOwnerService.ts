@@ -82,7 +82,7 @@ export function requestsOwnSiteAction(prompt: string, recentMessages: OwnerMessa
   if (!isOwnSiteRequest(prompt, recentMessages) ||
       /\b(?:nao|nunca)\b.{0,30}\b(?:corrij|corrige|corrigir|consert|arrum|repar|resolv|execut|faca|inici|rode|audit|apliq)/.test(text) ||
       /^\s*(?:como|por\s*que|o\s+que)\b/.test(text)) return false;
-  return /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra)\b|\b(?:faca|execute|inicie|rode|aplique)\b.{0,70}\b(?:varredura|auditoria|correcao|correcoes|manutencao)\b|\b(?:quero|pode)\b.{0,30}\b(?:corrigir|consertar|reparar|arrumar)\b/.test(text);
+  return /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra)\b|\b(?:faca|execute|inicie|rode|aplique)\b.{0,70}\b(?:varredura|auditoria|correcao|correcoes|manutencao|autoevolucao)\b|\b(?:quero|pode)\b.{0,30}\b(?:corrigir|consertar|reparar|arrumar)\b/.test(text);
 }
 
 export function requestedOwnSiteToggle(prompt: string, recentMessages: OwnerMessage[] = []): boolean | null {
