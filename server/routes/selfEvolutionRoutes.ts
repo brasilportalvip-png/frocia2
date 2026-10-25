@@ -25,6 +25,7 @@ import {
   CommitteeReview
 } from '../selfEvolution/selfEvolutionTypes.js';
 import { SpecialistCommitteeExecutionService } from '../selfEvolution/specialistCommitteeExecutionService.js';
+import { CandidateQueueService, CandidateQueueError } from '../selfEvolution/candidateQueueService.js';
 import {
   CAPABILITY_CATEGORIES,
   ContinuousCapabilityEvaluationService,
@@ -330,6 +331,20 @@ selfEvolutionRouter.get(
 );
 
 // GET /api/admin/self-evolution/candidates/:id
+selfEvolutionRouter.delete('/candidates/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const params = candidateIdSchema.safeParse(req.params);
+  const body = z.object({ confirmation: z.string().min(1).max(100) }).strict().safeParse(req.body);
+  if (!params.success || !body.success || body.data.confirmation !== params.data.id) {
+    return res.status(400).json({ error: 'Confirme a tarefa exata antes de excluí-la.' });
+  }
+  try {
+    return res.json(await CandidateQueueService.remove(params.data.id, req.user!.uid));
+  } catch (error) {
+    if (error instanceof CandidateQueueError) return res.status(error.status).json({ error: error.message });
+    return res.status(503).json({ error: 'Não foi possível confirmar a exclusão. Atualize a fila antes de repetir.' });
+  }
+});
+
 selfEvolutionRouter.get('/candidates/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const paramVal = candidateIdSchema.safeParse(req.params);
   if (!paramVal.success) {

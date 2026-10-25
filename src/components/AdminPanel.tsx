@@ -1,3 +1,4 @@
+import { committeeNavigation } from '../services/committeeNavigation';
 import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
@@ -113,7 +114,7 @@ export function buildAdminModelViews(
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = () => {
-  const [activeTab, setActiveTab] = useState<'metrics' | 'models' | 'users' | 'audit' | 'selfEvolution'>('metrics');
+  const [activeTab, setActiveTab] = useState<'metrics' | 'models' | 'users' | 'audit' | 'selfEvolution'>(() => committeeNavigation(window.location.href).openAdmin ? 'selfEvolution' : 'metrics');
   const [grantEmail, setGrantEmail] = useState('');
   const [grantAmount, setGrantAmount] = useState(100);
   const [grantReason, setGrantReason] = useState('Bônus/Suporte Administrativo');

@@ -27,7 +27,7 @@ export class SelfEvolutionOrchestrator {
     candidateId: string,
     actor: string = 'system'
   ): Promise<{ state: CandidateState; message: string }> {
-    const candidate = await ImprovementPlannerService.getCandidateById(candidateId);
+    let candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) {
       return { state: 'failed', message: 'Candidato não encontrado.' };
     }
@@ -56,6 +56,12 @@ export class SelfEvolutionOrchestrator {
     };
 
     try {
+      // A exclusão pode vencer a corrida entre a seleção da tarefa e a aquisição do lock.
+      const current = await ImprovementPlannerService.getCandidateById(candidateId);
+      if (!current || current.deletedAt || current.state === 'cancelled') {
+        return { state: 'cancelled', message: 'Tarefa removida ou cancelada; nenhuma etapa foi executada.' };
+      }
+      candidate = current;
       if (candidate.state === 'agent_running') {
         // So chegamos aqui se o lease anterior expirou; uma execucao ativa
         // conservaria o lock. A retomada limitada decide uma nova geracao.

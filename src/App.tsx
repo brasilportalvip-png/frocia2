@@ -1,3 +1,4 @@
+import { committeeNavigation } from './services/committeeNavigation';
 import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
 import React, {
@@ -168,7 +169,7 @@ function upsertResearchProgress(
 export default function App() {
   const { user: authUser, loading, isAuthenticated, isAdmin, profileError, logout, refreshProfile } = useAuth();
 
-  const [navMode, setNavMode] = useState<AppNavigationMode>('studio');
+  const [navMode, setNavMode] = useState<AppNavigationMode>(() => committeeNavigation(window.location.href).openAdmin ? 'admin' : 'studio');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [deviceView, setDeviceView] = useState<DeviceView>('desktop');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.6-flash');

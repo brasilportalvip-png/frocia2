@@ -137,6 +137,9 @@ export interface KnowledgeDocument {
 }
 
 export interface ImprovementCandidate {
+  deletedAt?: string;
+  deletedBy?: string;
+  deletedFromState?: CandidateState;
   ciRetryRequired?: boolean;
   id: string;
   title: string;

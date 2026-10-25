@@ -2,6 +2,9 @@ import { INTELLIGENCE_AGENTS, CREATION_AGENTS } from '../../../shared/advancedAg
 import React, { useState, useEffect } from 'react';
 import { Activity, Shield, AlertTriangle, Zap, CheckCircle, RefreshCw, GitPullRequest, ExternalLink, OctagonAlert, Play, RotateCcw } from 'lucide-react';
 import { auth } from '../../lib/firebase';
+import { committeeLink, committeeNavigation } from '../../services/committeeNavigation';
+import { CommitteeInspector, type CommitteeTarget } from './CommitteeInspector';
+import { CandidateDeleteDialog } from './CandidateDeleteDialog';
 import { INNOVATION_AGENTS } from '../../../server/selfEvolution/innovationAgentCatalog.js';
 
 interface Budget {
@@ -36,29 +39,6 @@ interface StatusResponse {
   timestamp: string;
 }
 
-interface CommitteeReviewView {
-  id: string;
-  role: string;
-  actorUid: string;
-  commitSha: string;
-  verdict: 'approved' | 'changes_required' | 'blocked';
-  summary: string;
-  fileRefs: string[];
-  testRefs: string[];
-  evidenceRefs: string[];
-  risks: string[];
-}
-
-interface CommitteeInspection {
-  simulation?: boolean;
-  candidateId: string;
-  commitSha: string | null;
-  reviews: CommitteeReviewView[];
-  gate: { status: string; approved: boolean; reason: string; missingRoles: string[] };
-  verifierControl?: { status: string; approved: boolean; reason: string; missingRoles: string[] };
-  sideEffects?: { credits: number; aiCalls: number; pullRequests: number; deployments: number };
-}
-
 const ROLE_LABELS: Record<string, string> = {
   product: 'Product Agent', architecture: 'Architecture Agent', ux_ui: 'UX/UI Agent',
   frontend: 'Frontend Agent', backend: 'Backend Agent', data: 'Data Agent',
@@ -78,7 +58,12 @@ export const SelfEvolutionDashboard: React.FC = () => {
     candidateTitle?: string;
   } | null>(null);
   const [rollbackReason, setRollbackReason] = useState('');
-  const [committee, setCommittee] = useState<CommitteeInspection | null>(null);
+  const [committeeTarget, setCommitteeTarget] = useState<CommitteeTarget | null>(() => {
+    const id = committeeNavigation(window.location.href).candidateId;
+    return id ? { id, title: 'Tarefa de autoevolução' } : null;
+  });
+  const [deletionTarget, setDeletionTarget] = useState<Candidate | null>(null);
+  const [notice, setNotice] = useState('');
 
   const getAuthHeader = async (): Promise<Record<string, string>> => {
     try {
@@ -125,39 +110,18 @@ export const SelfEvolutionDashboard: React.FC = () => {
     void fetchDashboardData();
   }, []);
 
-  const runSafeCommitteeSimulation = async () => {
-    setActionLoading('committee-simulation');
-    setError(null);
-    try {
-      const response = await fetch('/api/admin/self-evolution/committee/simulation', {
-        method: 'POST',
-        headers: await getAuthHeader(),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      setCommittee(payload);
-    } catch (err: any) {
-      setError(`Falha na simulação segura do comitê: ${err?.message || err}`);
-    } finally {
-      setActionLoading(null);
-    }
+  const runSafeCommitteeSimulation = () => {
+    setCommitteeTarget({ id: 'simulation', title: 'Simulação segura do comitê', simulation: true });
   };
 
-  const inspectCommittee = async (candidateId: string) => {
-    setActionLoading(`committee-${candidateId}`);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/self-evolution/committee/${candidateId}/reviews`, {
-        headers: await getAuthHeader(),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      setCommittee({ candidateId, ...payload });
-    } catch (err: any) {
-      setError(`Falha ao carregar o comitê: ${err?.message || err}`);
-    } finally {
-      setActionLoading(null);
-    }
+  const inspectCommittee = (candidate: Candidate) => {
+    window.history.replaceState(window.history.state, '', committeeLink(window.location.href, candidate.id));
+    setCommitteeTarget({ id: candidate.id, title: candidate.title });
+  };
+
+  const closeCommittee = () => {
+    if (!committeeTarget?.simulation) window.history.replaceState(window.history.state, '', committeeLink(window.location.href));
+    setCommitteeTarget(null);
   };
 
   const handleAction = async () => {
@@ -395,10 +359,10 @@ export const SelfEvolutionDashboard: React.FC = () => {
                   <button
                     type="button"
                     disabled={actionLoading !== null}
-                    onClick={() => inspectCommittee(cand.id)}
+                    onClick={() => inspectCommittee(cand)}
                     className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white/80 rounded-lg text-xs font-semibold"
                   >
-                                        Ver Comitê
+                    Ver Comitê
                   </button>
 
                   {(cand.state === 'ci_pending' || cand.state === 'ci_passed') && (
@@ -461,6 +425,11 @@ export const SelfEvolutionDashboard: React.FC = () => {
                     </button>
                   )}
 
+                  <button type="button" disabled={actionLoading !== null} onClick={() => setDeletionTarget(cand)}
+                    className="px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-200 text-xs font-semibold">
+                    Excluir
+                  </button>
+
                   <button
                     disabled={actionLoading === cand.id}
                     onClick={() => setConfirmModal({ type: 'rollback', candidateId: cand.id, candidateTitle: cand.title })}
@@ -476,44 +445,17 @@ export const SelfEvolutionDashboard: React.FC = () => {
         )}
       </div>
 
-      {committee && (
-        <section className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.04] p-6 space-y-4" aria-label="Inspeção do Comitê de Agentes">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-black text-white">Comitê de Agentes {committee.simulation ? '— Simulação Segura' : ''}</h3>
-              <p className="text-[11px] text-white/45 font-mono">Commit: {committee.commitSha || 'não informado'}</p>
-            </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-black ${committee.gate.approved ? 'bg-emerald-400/15 text-emerald-300' : 'bg-amber-400/15 text-amber-300'}`}>
-              {committee.gate.status.toUpperCase()}
-            </span>
-          </div>
-          <p className="text-xs text-white/65">{committee.gate.reason}</p>
-          {committee.verifierControl && (
-            <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.05] p-3 text-xs text-emerald-200">
-              Controle independente: sem o verificador, o gate ficou <strong>{committee.verifierControl.status}</strong> — {committee.verifierControl.reason}
-            </div>
-          )}
-          <div className="grid gap-3 lg:grid-cols-2">
-            {committee.reviews.map((review) => (
-              <article key={review.id} className="rounded-xl border border-white/10 bg-black/15 p-4 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <strong className="text-sm text-white">{ROLE_LABELS[review.role] || review.role}</strong>
-                  <span className="text-[10px] font-black text-emerald-300">{review.verdict.toUpperCase()}</span>
-                </div>
-                <p className="text-xs text-white/65">{review.summary}</p>
-                <p className="text-[10px] text-white/40">Identidade: {review.actorUid}</p>
-                <p className="text-[10px] text-white/50">Arquivos: {review.fileRefs.join(', ') || 'nenhum'}</p>
-                <p className="text-[10px] text-white/50">Testes: {review.testRefs.join(', ') || 'nenhum'}</p>
-                <p className="text-[10px] text-white/50">Evidências: {review.evidenceRefs.join(', ') || 'nenhuma'}</p>
-                <p className="text-[10px] text-amber-200/70">Riscos: {review.risks.join(', ') || 'nenhum registrado'}</p>
-              </article>
-            ))}
-          </div>
-          {committee.sideEffects && (
-            <p className="text-[10px] text-white/40">Efeitos: {committee.sideEffects.credits} créditos · {committee.sideEffects.aiCalls} IA · {committee.sideEffects.pullRequests} PR · {committee.sideEffects.deployments} deploy</p>
-          )}
-        </section>
-      )}
+      {notice && <p role="status" className="rounded-lg bg-emerald-400/10 p-3 text-sm text-emerald-200">{notice}</p>}
+      {committeeTarget && <CommitteeInspector key={committeeTarget.id}
+        target={{ ...committeeTarget, title: candidates.find(item => item.id === committeeTarget.id)?.title || committeeTarget.title }}
+        roleLabels={ROLE_LABELS} onClose={closeCommittee} />}
+      {deletionTarget && <CandidateDeleteDialog candidate={deletionTarget} onClose={() => setDeletionTarget(null)}
+        onDeleted={id => {
+          setCandidates(items => items.filter(item => item.id !== id));
+          setStatus(current => current ? { ...current, candidatesCount: Math.max(0, current.candidatesCount - 1) } : current);
+          setDeletionTarget(null);
+          setNotice('Tarefa excluída da fila. Histórico de auditoria preservado.');
+        }} />}
 
       {/* Confirm Modal */}
       {confirmModal && (

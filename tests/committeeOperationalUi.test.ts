@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('comitê operacional e simulação segura', () => {
   const routes = readFileSync(new URL('../server/routes/selfEvolutionRoutes.ts', import.meta.url), 'utf8');
-  const dashboard = readFileSync(new URL('../src/components/self-evolution/SelfEvolutionDashboard.tsx', import.meta.url), 'utf8');
+  const dashboard = readFileSync(new URL('../src/components/self-evolution/SelfEvolutionDashboard.tsx', import.meta.url), 'utf8') + readFileSync(new URL('../src/components/self-evolution/CommitteeInspector.tsx', import.meta.url), 'utf8');
 
   it('oferece simulação sem IA, créditos, PR ou deploy e prova o bloqueio sem verificador', () => {
     expect(routes).toContain("'/committee/simulation'");
