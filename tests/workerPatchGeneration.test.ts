@@ -38,6 +38,22 @@ describe('Geracao completa e validada do patch', () => {
       httpOptions: { timeout: 180000, retryOptions: { attempts: 1 } } });
   });
 
+  it.each([
+    ['gemini-3.1-pro-preview', { thinkingLevel: 'LOW' }],
+    ['gemini-3.8-flash', { thinkingLevel: 'LOW' }],
+    ['gemini-2.5-flash', { thinkingBudget: 4096 }],
+  ])('usa configuração de raciocínio compatível com %s', async (model, thinkingConfig) => {
+    const call = vi.fn(async (_request: any) => response());
+    await generate(call, { model });
+    expect(call.mock.calls[0][0].config.thinkingConfig).toEqual(thinkingConfig);
+  });
+  it('registra causa categorizada do HTTP 400 sem copiar corpo ou credenciais', async () => {
+    const onDiagnostic = vi.fn();
+    const err = await generate(async () => { throw Object.assign(new Error(JSON.stringify({ error: { message: 'response_json_schema is not supported private-api-key' } })), { status: 400 }); }, { onDiagnostic }).catch(e => e);
+    expect(err).toMatchObject({ status: 400, diagnostic: { reason: 'response_schema' }, retryable: false });
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('private-api-key');
+    expect(String(err)).not.toContain('private-api-key');
+  });
   it('confere a serializacao real do SDK Google, com a rede simulada e o texto preservado', async () => {
     const contents = 'const text = "aspas \\\", barra \\\\, acento ação e emoji 🦜";\n';
     const wirePatch = { ...patch, files: [{ path: 'src/App.tsx', content: contents }] };

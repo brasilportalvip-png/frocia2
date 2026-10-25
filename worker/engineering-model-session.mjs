@@ -1,3 +1,4 @@
+import { structuredEngineeringModel } from './generation-contract.mjs';
 const modelId = value => {
   const id = String(value || '').trim().replace(/^models\//, '');
   return /^gemini-[a-z0-9.-]{1,100}$/i.test(id) && !/image|tts|audio|embedding|live|robotics|computer-use/i.test(id) ? id : null;
@@ -8,7 +9,7 @@ export function createEngineeringModelSession({ preferred, fallbacks = '', listM
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   let current = modelId(preferred);
   if (!current) throw new Error('engineering_model_invalid');
-  const configured = [...new Set(String(fallbacks).split(',').map(modelId).filter(Boolean))].slice(0, 4);
+  const configured = [...new Set(String(fallbacks).split(',').map(modelId).filter(id => id && structuredEngineeringModel(id)))].slice(0, 4);
   const failed = new Set(); let available;
   return {
     async next(feedback = null) {
@@ -18,9 +19,9 @@ export function createEngineeringModelSession({ preferred, fallbacks = '', listM
         try {
           const rows = await listModels();
           available = [...new Set(rows.filter(row => Array.isArray(row.supportedActions) && row.supportedActions.includes('generateContent') &&
-            (!row.outputTokenLimit || row.outputTokenLimit >= 65536)).map(row => modelId(row.name)).filter(Boolean))];
+            (!row.outputTokenLimit || row.outputTokenLimit >= 65536)).map(row => modelId(row.name)).filter(id => id && structuredEngineeringModel(id)))];
           available.sort((a, b) => {
-            const rank = id => (/flash/i.test(id) ? 0 : 4) + (/preview|experimental|exp-/i.test(id) ? 2 : 0);
+            const rank = id => (/flash/i.test(id) ? 0 : 4) + (/lite/i.test(id) ? 1 : 0) + (/preview|experimental|exp-/i.test(id) ? 2 : 0);
             return rank(a) - rank(b) || b.localeCompare(a, undefined, { numeric: true });
           });
           onDiagnostic({ event: 'model_catalog', available: available.length });

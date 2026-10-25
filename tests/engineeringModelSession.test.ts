@@ -23,6 +23,10 @@ describe('troca limitada do modelo de engenharia', () => {
     for (const previous of [{ stage: 'generation', summary: 'generator_invalid_json' }, { stage: 'test', summary: 'test failed' }])
       expect(await session.next(previous)).toBe(primary);
   });
+  it('reproduz o catálogo da falha e não escolhe Omni para o contrato JSON', async () => {
+    const session = setup({ listModels: async () => [entry('gemini-omni-1.1-flash'), entry('gemini-3.8-flash'), entry(alternate)] });
+    expect(await session.next(feedback())).toBe('gemini-3.8-flash');
+  });
   it('não escolhe modelos de imagem, voz, sem generateContent ou com saída insuficiente', async () => {
     const session = setup({ listModels: async () => [entry('gemini-image-preview'), entry('gemini-tts-preview'),
       { ...entry('gemini-embedding-2'), supportedActions: ['embedContent'] }, { ...entry('gemini-old-flash'), outputTokenLimit: 8192 }, { ...entry('gemini-small-flash'), outputTokenLimit: 32768 }, entry(alternate)] });
