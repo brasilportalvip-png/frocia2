@@ -43,17 +43,17 @@ export function isOwnSiteChangesQuestion(prompt: string, recentMessages: OwnerMe
 export function isOwnSiteCapabilityQuestion(prompt: string): boolean {
   const text = githubSpeech(prompt);
   return /^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text) ||
-    /\b(?:memoria)\b.{0,35}\b(?:ativa|configurada|funcionando|capacidade|tamanho)\b|\b(?:qual|como esta)\b.{0,50}\bmemoria\b/.test(text) ||
-    /\b(?:voce|vc)\b.{0,35}\b(?:tem|possui|consegue|pode)\b.{0,70}\b(?:github|vercel|commit|push|repositorio)\b/.test(text) ||
-    (ownSite.test(text) && /\b(?:voce|vc)\b.{0,35}\b(?:consegue|pode)\b.{0,70}\b(?:escrever|gravar|alterar)\b/.test(text)) ||
+    /\b(?:memoria)\b[\s\S]{0,35}\b(?:ativa|configurada|funcionando|capacidade|tamanho)\b|\b(?:qual|como esta)\b[\s\S]{0,50}\bmemoria\b/.test(text) ||
+    /\b(?:voce|vc)\b[\s\S]{0,35}\b(?:tem|possui|consegue|pode)\b[\s\S]{0,70}\b(?:github|vercel|commit|push|repositorio)\b/.test(text) ||
+    (ownSite.test(text) && /\b(?:voce|vc)\b[\s\S]{0,35}\b(?:consegue|pode)\b[\s\S]{0,70}\b(?:escrever|gravar|alterar)\b/.test(text)) ||
     /^(?:consegue|pode)\s+(?:fazer\s+)?(?:commit|push)\b/.test(text) ||
-    (/\b(?:qual|quais|como esta)\b.{0,35}\b(?:acesso|permissao|permissoes|integracao)\b/.test(text) &&
+    (/\b(?:qual|quais|como esta)\b[\s\S]{0,35}\b(?:acesso|permissao|permissoes|integracao)\b/.test(text) &&
       (ownSite.test(text) || /\b(?:seu|seus|sua|suas|voce|vc|github|vercel)\b/.test(text)));
 }
 
 export function isOwnSiteAccessFollowUp(prompt: string): boolean {
   const text = normalize(prompt);
-  return /^(?:acabei\b.{0,65}(?:alterac|configur|liber|salv|fazer)|(?:ja )?(?:fiz|configurei|liberei|alterei|salvei)\b|e agora\s*[?!]*$|feito\s*[.!]*$|pronto\s*[.!]*$)/.test(text);
+  return /^(?:acabei\b[\s\S]{0,65}(?:alterac|configur|liber|salv|fazer)|(?:ja )?(?:fiz|configurei|liberei|alterei|salvei)\b|e agora\s*[?!]*$|feito\s*[.!]*$|pronto\s*[.!]*$)/.test(text);
 }
 
 export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
@@ -80,15 +80,15 @@ function commandText(prompt: string): string {
 export function requestsOwnSiteAction(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = commandText(prompt);
   if (!isOwnSiteRequest(prompt, recentMessages) ||
-      /\b(?:nao|nunca)\b.{0,30}\b(?:corrij|corrige|corrigir|consert|arrum|repar|resolv|execut|faca|inici|rode|audit|apliq)/.test(text) ||
+      /\b(?:nao|nunca)\b[\s\S]{0,30}\b(?:corrij|corrige|corrigir|consert|arrum|repar|resolv|execut|faca|inici|rode|audit|apliq)/.test(text) ||
       /^\s*(?:como|por\s*que|o\s+que)\b/.test(text)) return false;
-  return /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra)\b|\b(?:faca|execute|inicie|rode|aplique)\b.{0,70}\b(?:varredura|auditoria|correcao|correcoes|manutencao)\b|\b(?:quero|pode)\b.{0,30}\b(?:corrigir|consertar|reparar|arrumar)\b/.test(text);
+  return /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra)\b|\b(?:faca|execute|inicie|rode|aplique)\b[\s\S]{0,70}\b(?:varredura|auditoria|correcao|correcoes|manutencao)\b|\b(?:quero|pode)\b[\s\S]{0,30}\b(?:corrigir|consertar|reparar|arrumar)\b/.test(text);
 }
 
 export function requestedOwnSiteToggle(prompt: string, recentMessages: OwnerMessage[] = []): boolean | null {
   const text = commandText(prompt);
-  if (!isOwnSiteRequest(prompt, recentMessages) || /\bnao\b.{0,30}\b(?:ative|retome|habilite|desative|pause|pare)/.test(text)) return null;
-  const command = text.match(/\b(desative|pause|pare|ative|retome|habilite)\b.{0,80}\b(?:agentes|autoevolucao|manutencao|autonomia)\b/)?.[1];
+  if (!isOwnSiteRequest(prompt, recentMessages) || /\bnao\b[\s\S]{0,30}\b(?:ative|retome|habilite|desative|pause|pare)/.test(text)) return null;
+  const command = text.match(/\b(desative|pause|pare|ative|retome|habilite)\b[\s\S]{0,80}\b(?:agentes|autoevolucao|manutencao|autonomia)\b/)?.[1];
   return command ? !['desative', 'pause', 'pare'].includes(command) : null;
 }
 
