@@ -146,7 +146,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     if (initialOwnership.exitCode !== 0) throw new Error('sandbox_initial_ownership_failed');
     const catalogClient = new GoogleGenAI({ apiKey: required('GEMINI_API_KEY') });
     const modelSession = createEngineeringModelSession({
-      preferred: process.env.ENGINEERING_MODEL || 'gemini-3.1-pro-preview',
+      preferred: process.env.ENGINEERING_MODEL || 'gemini-3.8-flash',
       fallbacks: process.env.ENGINEERING_FALLBACK_MODELS || '',
       listModels: async () => {
         const rows = [];
