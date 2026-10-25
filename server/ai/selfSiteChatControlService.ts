@@ -101,7 +101,12 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
     paragraphs.push(`${requested ? 'Resultado desta tarefa' : 'Última execução global registrada'}${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
   }
   if (staleOutcome && (taskOutcome.state || taskOutcome.status)) paragraphs.push(`Há um registro anterior desta tarefa: ${safe(taskOutcome.state) || safe(taskOutcome.status)}${safe(taskOutcome.recordedAt) ? ` em ${safe(taskOutcome.recordedAt)}` : ''}. Ele não confirma o resultado do disparo atual.`);
-  if (/^https:\/\/github\.com\/brasilportalvip-png\/frocia2\/actions\/runs\/\d+$/.test(safe(runner.runUrl))) paragraphs.push(`Execução desta tarefa: ${safe(runner.runUrl)}`);
+  if (/^https:\/\/github\.com\/brasilportalvip-png\/frocia2\/actions\/runs\/\d+$/.test(safe(runner.runUrl))) {
+    paragraphs.push(`Execução desta tarefa: ${safe(runner.runUrl)}`);
+  } else {
+    const repo = safe(connection.repository) || 'brasilportalvip-png/frocia2';
+    paragraphs.push(`Você pode acompanhar as execuções de manutenção em: https://github.com/${repo}/actions/workflows/self-evolution-runner.yml`);
+  }
   if (requested && !runner.state && !runner.status) paragraphs.push('Esta tarefa ainda não tem resultado correlacionado; erros de outra tarefa não foram associados a este pedido.');
   if (action.status === 'requested' || action.status === 'queued') paragraphs.push('Este pedido aguarda as etapas de teste, revisao e verificacao da publicacao.');
   return paragraphs.join('\n\n');
@@ -115,7 +120,7 @@ export class SelfSiteChatControlService {
     const potential = /homologa[cç][aã]o|homologar|evid[eê]ncias|registros de execu[cç][aã]o/i.test(params.prompt) || isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
       /\bagentes?\b/i.test(params.prompt) ||
       /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
-      /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
+      /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|inicia|iniciar|rode|rodar|aplique|aplicar|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
     if (!potential) return null;
     const tenantId = params.tenantId || `user:${params.userId}`;
     if (params.projectId) await MemoryService.assertScopeAccess(params.userId, tenantId, 'project', params.projectId);
