@@ -1,3 +1,6 @@
+import { RedactionService } from './redactionService.js';
+import { CommitteeRepairService } from './committeeRepairService.js';
+import type { AutonomousBrowserReport } from './autonomousBrowserValidationService.js';
 import { ImprovementPlannerService } from './improvementPlannerService.js';
 import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import { BudgetService } from './budgetService.js';
@@ -26,7 +29,7 @@ export class SelfEvolutionOrchestrator {
   static async processCandidateLifecycle(
     candidateId: string,
     actor: string = 'system'
-  ): Promise<{ state: CandidateState; message: string }> {
+  ): Promise<{ state: CandidateState; message: string; retryAfterReview?: boolean }> {
     let candidate = await ImprovementPlannerService.getCandidateById(candidateId);
     if (!candidate) {
       return { state: 'failed', message: 'Candidato não encontrado.' };
@@ -306,12 +309,14 @@ export class SelfEvolutionOrchestrator {
           };
         }
 
+        let browserReport: AutonomousBrowserReport | undefined;
         try {
           const report = await AutonomousBrowserValidationService.validate({
             previewUrl: candidate.previewUrl,
             commitSha: candidate.headCommitSha,
             candidateId,
           });
+          browserReport = report;
           await AuditService.logEvent({
             actor: 'autonomous-browser',
             action: 'validate_preview_end_to_end',
@@ -339,7 +344,16 @@ export class SelfEvolutionOrchestrator {
 
         let reviews;
         try {
-          reviews = await SpecialistCommitteeExecutionService.execute(candidate);
+          const ci = await CIGateService.runCIGate(candidate.headCommitSha);
+          if (!ci.passed) { await transition(ci.status === 'pending' ? 'ci_pending' : 'ci_failed');
+            return { state: candidate.state, message: 'CI precisa passar novamente antes da revisão: ' + ci.details }; }
+          const capabilityComparisonPassed = await ContinuousCapabilityEvaluationService.hasPassingComparison(candidate.headCommitSha);
+          if (!browserReport || !capabilityComparisonPassed) return { state: candidate.state, message: 'Evidência de navegador ou capacidades indisponível para revisão.' };
+          reviews = await SpecialistCommitteeExecutionService.execute(candidate, {
+            commitSha: candidate.headCommitSha, ci,
+            browser: { commitSha: browserReport.commitSha, previewUrl: browserReport.previewUrl, passed: browserReport.passed,
+              completedAt: browserReport.completedAt, scenarios: browserReport.scenarios }, capabilityComparisonPassed,
+          });
         } catch (error) {
           await transition('failed');
           await AuditService.logEvent({
@@ -379,10 +393,14 @@ export class SelfEvolutionOrchestrator {
         if (committeeGate.status === 'blocked' ||
           (!committeeGate.approved && candidate.riskLevel !== 'R2' && candidate.riskLevel !== 'R3')) {
           await transition('failed');
-          return {
-            state: 'failed',
-            message: `Comitê não aprovou a mudança: ${committeeGate.reason}`,
-          };
+          const feedback = reviews.filter(review => committeeGate.conflictingRoles.includes(review.role));
+          console.log('[self-evolution-runner] Pareceres que exigem correção:', feedback.map(review => ({ role: review.role,
+            verdict: review.verdict, summary: RedactionService.redactSensitiveData(review.summary), fileRefs: review.fileRefs.map(value => RedactionService.redactSensitiveData(value)), testRefs: review.testRefs.map(value => RedactionService.redactSensitiveData(value)) })));
+          if (await CommitteeRepairService.prepare(candidate, reviews, committeeGate)) {
+            return { state: 'approved_for_work', retryAfterReview: true,
+              message: 'Os pareceres foram encaminhados ao agente para corrigir código e testes. Nova tentativa exige certificação completa.' };
+          }
+          return { state: 'failed', message: 'Comitê não aprovou a mudança: ' + committeeGate.reason + ' Consulte os pareceres acima. A tentativa não foi publicada.' };
         }
 
         // Estado duravel apos verificacao, sem repetir as dez revisoes a cada tentativa.

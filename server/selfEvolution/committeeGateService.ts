@@ -1,3 +1,4 @@
+import { requiredCommitteeRoles } from './committeeReviewPolicy.js';
 import crypto from 'node:crypto';
 import {
   adminDb,
@@ -124,7 +125,8 @@ export class CommitteeGateService {
       byRole.set(review.role, review);
     }
 
-    const missingRoles = COMMITTEE_ROLES.filter(
+    const required = new Set(requiredCommitteeRoles(input.riskLevel));
+    const missingRoles = [...required].filter(
       (role) => !byRole.has(role)
     );
 
@@ -140,11 +142,12 @@ export class CommitteeGateService {
     }
 
     const reviews = COMMITTEE_ROLES.map(
-      (role) => byRole.get(role)!
-    );
+      (role) => byRole.get(role)
+    ).filter((review): review is CommitteeReview => Boolean(review));
+    const advisoryRoles = reviews.filter(review => !required.has(review.role) && review.verdict !== 'approved').map(review => review.role);
     const staleRoles = reviews
       .filter(
-        (review) => review.commitSha !== input.commitSha
+        (review) => required.has(review.role) && review.commitSha !== input.commitSha
       )
       .map((review) => review.role);
     const invalidRoles = reviews
@@ -154,7 +157,7 @@ export class CommitteeGateService {
           review.testRefs.length > 0 ||
           review.risks.length > 0;
 
-        return (
+        return required.has(review.role) && (
           review.summary.trim().length < 10 ||
           review.evidenceRefs.length === 0 ||
           !hasConcreteReference
@@ -163,7 +166,7 @@ export class CommitteeGateService {
       .map((review) => review.role);
     const conflictingRoles = reviews
       .filter(
-        (review) => review.verdict !== 'approved'
+        (review) => review.commitSha === input.commitSha && (review.verdict === 'blocked' || (required.has(review.role) && review.verdict !== 'approved'))
       )
       .map((review) => review.role);
 
@@ -180,7 +183,7 @@ export class CommitteeGateService {
         status: 'blocked',
         approved: false,
         reason:
-          'O comitê contém parecer desatualizado, sem evidência concreta ou contrário à liberação.'
+          'Revisão bloqueada. Pareceres desatualizados: ' + (staleRoles.join(', ') || 'nenhum') + '; evidência insuficiente: ' + (invalidRoles.join(', ') || 'nenhum') + '; correção solicitada por: ' + (conflictingRoles.join(', ') || 'nenhum') + '.'
       };
     }
 
@@ -268,9 +271,8 @@ export class CommitteeGateService {
     return {
       ...emptyResult,
       status: 'approved',
-      approved: true,
-      reason:
-        'Todos os papéis entregaram evidências do mesmo commit com identidades separadas.'
+      approved: true, advisoryRoles,
+      reason: 'Os revisores obrigatórios entregaram evidências do mesmo commit com identidades separadas.' + (advisoryRoles.length ? ' Observações consultivas: ' + advisoryRoles.join(', ') + '.' : '')
     };
   }
 

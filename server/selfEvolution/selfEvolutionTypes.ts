@@ -68,6 +68,7 @@ export interface CommitteeReview {
 }
 
 export interface CommitteeGateResult {
+  advisoryRoles?: CommitteeRole[];
   status: 'approved' | 'blocked' | 'incomplete';
   approved: boolean;
   reason: string;
@@ -137,6 +138,7 @@ export interface KnowledgeDocument {
 }
 
 export interface ImprovementCandidate {
+  committeeRepair?: { dateKey: string; attempt: number; previousCommitSha: string };
   deletedAt?: string;
   deletedBy?: string;
   deletedFromState?: CandidateState;

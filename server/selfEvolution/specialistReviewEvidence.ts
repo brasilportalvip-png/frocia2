@@ -1,6 +1,13 @@
 import type { ImprovementCandidate } from './selfEvolutionTypes.js';
 
 export interface SpecialistCommitEvidence {
+  validation?: {
+    commitSha: string;
+    ci: { status: string; passed: boolean; details: string };
+    browser: { commitSha: string; previewUrl: string; passed: boolean; completedAt: string;
+      scenarios: Array<{ id: string; status: string; traceSha256: string; details: string }> };
+    capabilityComparisonPassed: boolean;
+  };
   status: 'verified' | 'partial' | 'unavailable';
   commitSha: string;
   repository?: string;

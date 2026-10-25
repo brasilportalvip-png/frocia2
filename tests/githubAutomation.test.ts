@@ -436,6 +436,101 @@ describe(
       }
     );
 
+    it('cria uma nova branch para cada correção do comitê sem sobrescrever a anterior e retoma a mesma rodada', async () => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      delete process.env.GITHUB_APP_TOKEN;
+      process.env.GITHUB_OWNER = 'test-owner';
+      process.env.GITHUB_REPO = 'test-repo';
+      process.env.GITHUB_BASE_BRANCH = 'main';
+      const branches = new Map<string, string>();
+      const commits = new Map<string, { sha: string; tree: { sha: string }; parents: { sha: string }[] }>();
+      const pulls = new Map<string, { number: number; html_url: string; head: { sha: string } }>();
+      let treeSequence = 0;
+      let commitSequence = 0;
+      const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        const route = url.pathname.replace('/repos/test-owner/test-repo', '');
+        const method = init?.method || 'GET';
+        if (method === 'GET' && route === '/pulls') {
+          const name = url.searchParams.get('head')?.replace('test-owner:', '') || '';
+          return mockResponse(pulls.has(name) ? [pulls.get(name)] : []);
+        }
+        if (method === 'GET' && route.startsWith('/git/ref/heads/')) {
+          const name = route.slice('/git/ref/heads/'.length);
+          return mockResponse({ object: { sha: name === 'main' ? BASE_COMMIT_SHA : branches.get(name) } });
+        }
+        if (method === 'GET' && route.startsWith('/git/commits/')) {
+          const sha = route.slice('/git/commits/'.length);
+          return mockResponse(sha === BASE_COMMIT_SHA ? { sha, tree: { sha: BASE_TREE_SHA } } : commits.get(sha));
+        }
+        if (method === 'POST' && route === '/git/blobs') return mockResponse({ sha: BLOB_SHA });
+        if (method === 'POST' && route === '/git/trees') {
+          return mockResponse({ sha: (++treeSequence).toString(16).padStart(40, '0') });
+        }
+        if (method === 'POST' && route === '/git/commits') {
+          const sha = (++commitSequence + 100).toString(16).padStart(40, '0');
+          commits.set(sha, { sha, tree: { sha: body.tree }, parents: body.parents.map((parent: string) => ({ sha: parent })) });
+          return mockResponse({ sha });
+        }
+        if (method === 'POST' && route === '/git/refs') {
+          const name = body.ref.replace('refs/heads/', '');
+          if (branches.has(name)) return mockResponse({ message: 'Reference already exists' }, 422);
+          branches.set(name, body.sha);
+          return mockResponse({ ref: body.ref }, 201);
+        }
+        if (method === 'POST' && route === '/pulls') {
+          const number = pulls.size + 42;
+          const pull = { number, html_url: `https://github.com/test-owner/test-repo/pull/${number}`, head: { sha: branches.get(body.head)! } };
+          pulls.set(body.head, pull);
+          return mockResponse(pull, 201);
+        }
+        throw new Error(`Unexpected GitHub operation: ${method} ${route}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const initial = await GithubAutomationService.createBranchAndPR(candidate, patch);
+      expect(initial.success).toBe(true);
+      const firstRepair = {
+        ...candidate,
+        committeeRepair: { dateKey: '2026-10-25', attempt: 1, previousCommitSha: initial.commitSha! },
+      };
+      const correctedPatch = { ...patch, files: [{ ...patch.files![0], content: 'export const MainButton = () => <button />;' }] };
+      const repaired = await GithubAutomationService.createBranchAndPR(firstRepair, correctedPatch);
+      expect(repaired).toMatchObject({ success: true, pullRequestId: 43 });
+      expect(repaired.branchName).not.toBe(initial.branchName);
+      expect(branches.get(initial.branchName!)).toBe(initial.commitSha);
+      expect(await GithubAutomationService.createBranchAndPR({
+        ...firstRepair, branchName: repaired.branchName, pullRequestUrl: repaired.pullRequestUrl,
+      }, correctedPatch)).toMatchObject({ success: true, pullRequestId: 43, commitSha: repaired.commitSha });
+      const second = await GithubAutomationService.createBranchAndPR({
+        ...firstRepair, committeeRepair: { ...firstRepair.committeeRepair, attempt: 2, previousCommitSha: repaired.commitSha! },
+      }, correctedPatch);
+      const nextDay = await GithubAutomationService.createBranchAndPR({
+        ...firstRepair, committeeRepair: { ...firstRepair.committeeRepair, dateKey: '2026-10-26', previousCommitSha: second.commitSha! },
+      }, correctedPatch);
+      expect(second).toMatchObject({ success: true, pullRequestId: 44 });
+      expect(nextDay).toMatchObject({ success: true, pullRequestId: 45 });
+      expect(branches.size).toBe(4);
+      expect(commitSequence).toBe(4);
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+    });
+
+    it.each([
+      { dateKey: '../../main', attempt: 1 },
+      { dateKey: '2026-10-25', attempt: 0 },
+    ])('recusa marcador inválido de correção antes de criar uma branch: %j', async (repair) => {
+      process.env.GITHUB_TOKEN = 'test-token';
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await GithubAutomationService.createBranchAndPR({
+        ...candidate, committeeRepair: { ...repair, previousCommitSha: CREATED_COMMIT_SHA },
+      }, patch);
+      expect(result).toMatchObject({ success: false });
+      expect(result.errorMessage).toContain('marcador');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('merges only the exact commit approved by the committee', async () => {
       process.env.GITHUB_TOKEN = 'test-token';
       process.env.GITHUB_OWNER = 'test-owner';

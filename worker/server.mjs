@@ -1,4 +1,5 @@
 import { artifactManifest, changedPatch, verifyArtifactFiles } from './patch-workspace.mjs';
+import { engineeringTask, generationInput } from './task-evidence.mjs';
 import { createEngineeringModelSession } from './engineering-model-session.mjs';
 import { installPreviewProtection, previewProtectionHeaders } from './preview-protection.mjs';
 import { registerProfessionalFactory } from './professional-factory.mjs';
@@ -89,10 +90,7 @@ async function repositoryContext(body, cwd) {
       if (stat.size <= 500_000) files.push({ path: safe, content: await fs.readFile(path.join(cwd, safe), 'utf8') });
     } catch { /* arquivo binário, removido ou ilegível não entra no contexto */ }
   }
-  const context = buildEngineeringContext(files, {
-    title: body.title, summary: body.summary, hypothesis: body.hypothesis,
-    expectedBehavior: body.expectedBehavior, testPlan: body.testPlan,
-  }, body.probableFiles || [], {
+  const context = buildEngineeringContext(files, engineeringTask(body), body.probableFiles || [], {
     allowRepositoryMaintenance: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true' && body.executionPolicy?.allowRepositoryMaintenance === true,
   });
   context.languageIntelligence = analyzeTypeScriptLanguage(context.sourceFiles, context.queryTerms);
@@ -111,10 +109,7 @@ async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedb
   return generateStructuredPatch({
     generateContent: request => ai.models.generateContent(request),
     model: await modelSession.next(repairFeedback), allowed, attempt, feedback: repairFeedback,
-    input: {
-      task: { title: body.title, summary: body.summary, hypothesis: body.hypothesis, expectedBehavior: body.expectedBehavior, testPlan: body.testPlan },
-      allowedPaths: [...allowed], sourceFiles, engineeringContext,
-    },
+    input: generationInput(body, allowed, sourceFiles, engineeringContext),
     onDiagnostic: diagnostic => console.log('[worker:generation]', JSON.stringify({ candidateId: body.candidateId, attempt, ...diagnostic })),
   });
 }

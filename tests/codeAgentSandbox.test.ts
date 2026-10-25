@@ -5,6 +5,7 @@ import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentServic
 import { REQUIRED_ENGINEERING_COMMANDS } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
 import { WorkerHttpClient } from '../server/selfEvolution/workerHttpClient.js';
+import { engineeringTask, generationInput } from '../worker/task-evidence.mjs';
 
 const candidate = {
   id: 'candidate-sandbox', title: 'Corrigir API', summary: 'Corrige API', evidence: [],
@@ -32,6 +33,11 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
     process.env.SELF_EVOLUTION_WORKER_SIGNING_SECRET = secret;
     vi.spyOn(WorkerHttpClient, 'postJson').mockImplementation(async (_url, init) => {
       const request = JSON.parse(String(init?.body));
+      expect(request.evidence[0]).toContain('TypeError em ChatCentral.tsx:123');
+      expect(request.evidence[1]).toContain('CORREÇÃO SOLICITADA PELO COMITÊ');
+      expect(request.evidence.join(' ')).not.toContain('abcdefghijklmnopqrstuvwxyz');
+      expect(engineeringTask(request).evidence).toEqual(request.evidence);
+      expect(generationInput(request, new Set(['server/fix.ts']), [], {}).task.evidence).toEqual(request.evidence);
       const startedAt = new Date().toISOString();
       const completedAt = startedAt;
       const baseSha = 'a'.repeat(40);
@@ -67,7 +73,10 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
       });
     });
 
-    const result = await new DefaultCodeAgentAdapter().generatePatchAndTest(candidate);
+    const result = await new DefaultCodeAgentAdapter().generatePatchAndTest({ ...candidate, evidence: [
+      'TypeError em ChatCentral.tsx:123; Authorization: Bearer abcdefghijklmnopqrstuvwxyz',
+      'CORREÇÃO SOLICITADA PELO COMITÊ: criar teste de regressão do erro observado.',
+    ] });
     expect(result).toMatchObject({
       success: true, baseSha: 'a'.repeat(40), filesModified: ['server/fix.ts'],
       executionEvidence: { sandboxId: 'sandbox:test-001', rollbackVerified: true },

@@ -162,7 +162,7 @@ async function main(): Promise<void> {
     if ((siteAudit.findings || 0) > 0) {
       console.warn('::warning::Ha falhas reais no site, mas nenhuma tarefa retomavel. Confira candidatos que falharam, rejeicoes e bloqueios.');
       await recordOutcome({ status: 'audit_requires_attention', siteAudit,
-        message: 'Falhas pendentes; a retomada pode estar limitada para evitar cobrancas repetidas. Consulte o ultimo diagnostico do candidato.' }, true);
+        message: 'A auditoria encontrou falhas, mas nenhuma tarefa pôde iniciar. Consulte blockedCandidates para ver o identificador, estado e motivo exatos.', blockedCandidates: siteAudit.blockedCandidates || [] }, true);
       return;
     }
     const discovery = await OperationalAutoDiscoveryService.discoverOne();
@@ -205,10 +205,15 @@ async function main(): Promise<void> {
     note: 'Prova dos acessos desta rodada. Nao comprova correcao nem publicacao; a credencial do chat e verificada separadamente.',
   });
 
-  const result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
+  let result = await SelfEvolutionOrchestrator.processCandidateLifecycle(
     candidateId,
     `external-runner-${randomUUID()}`
   );
+
+  for (let correction = 0; result.retryAfterReview && correction < 2; correction++) {
+    console.log('[self-evolution-runner] Aplicando correções solicitadas pelo comitê:', candidateId);
+    result = await SelfEvolutionOrchestrator.processCandidateLifecycle(candidateId, 'external-review-repair-' + randomUUID());
+  }
 
    console.log('[self-evolution-runner] Resultado:', {
     candidateId,

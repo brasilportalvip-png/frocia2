@@ -1,3 +1,4 @@
+import { requiredCommitteeRoles } from './committeeReviewPolicy.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { buildSpecialistSystemInstruction } from './specialistCapabilityCatalog.js';
 import { fetchSpecialistCommitEvidence, type SpecialistCommitEvidence } from './specialistReviewEvidence.js';
@@ -24,6 +25,14 @@ function cleanList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string').map((item) => item.trim().slice(0, 500)).filter(Boolean).slice(0, 100)
     : [];
+}
+
+function normalizedPreview(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
+  } catch { return null; }
 }
 
 class GeminiSpecialistReviewAdapter implements SpecialistReviewAdapter {
@@ -118,20 +127,35 @@ export class SpecialistCommitteeExecutionService {
     return actors;
   }
 
-  static async execute(candidate: ImprovementCandidate): Promise<CommitteeReview[]> {
+  static async execute(candidate: ImprovementCandidate, validation?: SpecialistCommitEvidence['validation']): Promise<CommitteeReview[]> {
     if (!candidate.headCommitSha || !/^[a-f0-9]{40}$/i.test(candidate.headCommitSha)) {
       throw new Error('specialist_commit_sha_required');
     }
     const actors = this.configuredActors();
-    const evidence = this.adapter instanceof GeminiSpecialistReviewAdapter
+    const commitEvidence = this.adapter instanceof GeminiSpecialistReviewAdapter
       ? await fetchSpecialistCommitEvidence(candidate.headCommitSha) : undefined;
-    const reviews = await Promise.all(COMMITTEE_ROLES.map(async (role) => {
+    if (validation && (validation.commitSha !== candidate.headCommitSha || validation.browser.commitSha !== candidate.headCommitSha ||
+        validation.ci.status !== 'success' || !validation.ci.passed || !validation.browser.passed ||
+        !normalizedPreview(validation.browser.previewUrl) ||
+        normalizedPreview(validation.browser.previewUrl) !== normalizedPreview(candidate.previewUrl) || !validation.capabilityComparisonPassed)) {
+      throw new Error('specialist_validation_evidence_mismatch');
+    }
+    const evidence = commitEvidence ? { ...commitEvidence, ...(validation ? { validation } : {}) } : undefined;
+    const results = await Promise.allSettled(COMMITTEE_ROLES.map(async (role) => {
       const payload = await this.adapter.review(role, candidate, evidence);
       return CommitteeGateService.submitReview({
         candidateId: candidate.id, role, actorUid: actors[role],
         commitSha: candidate.headCommitSha!, ...payload,
       });
     }));
+    const required = new Set(requiredCommitteeRoles(candidate.riskLevel));
+    const reviews: CommitteeReview[] = [];
+    for (const [index, result] of results.entries()) {
+      const role = COMMITTEE_ROLES[index];
+      if (result.status === 'fulfilled') reviews.push(result.value);
+      else if (required.has(role)) throw new Error('specialist_required_review_unavailable:' + role);
+      else console.warn('[specialist-committee] Parecer consultivo indisponível:', role);
+    }
     return reviews;
   }
 }
