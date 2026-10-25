@@ -188,6 +188,7 @@ jobs:
 
       - name: Iniciar worker local
         env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
@@ -210,6 +211,7 @@ jobs:
             -e GEMINI_API_KEY \
             -e SELF_EVOLUTION_WORKER_TOKEN \
             -e SELF_EVOLUTION_WORKER_SIGNING_SECRET \
+            -e VERCEL_AUTOMATION_BYPASS_SECRET \
             -e BROWSER_TEST_LOGIN_URL \
             -e BROWSER_TEST_USER \
             -e BROWSER_TEST_PASSWORD \
@@ -282,6 +284,7 @@ jobs:
           GITHUB_REPO: frocia2
           GITHUB_BASE_BRANCH: main
 
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID || vars.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID || vars.VERCEL_TEAM_ID }}
