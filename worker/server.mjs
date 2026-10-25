@@ -1,3 +1,4 @@
+import { installPreviewProtection, previewProtectionHeaders } from './preview-protection.mjs';
 import { registerProfessionalFactory } from './professional-factory.mjs';
 import crypto from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -250,7 +251,10 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
   try {
     const body = req.body || {}; const target = publicHttps(body.previewUrl);
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext(); const page = await context.newPage();
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const previewSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || '';
+    await installPreviewProtection(context, target, previewSecret);
+    const page = await context.newPage();
     const consoleErrors = []; const failedRequests = [];
     let navigation = []; let navigationCatalog = [];
     const navigationOptions = {
@@ -274,7 +278,7 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     const record = async (id, action, screenshot = true) => {
       const started = Date.now(); let status = 'passed'; let details = 'ok'; let screenshotSha256;
       try { await action(); }
-      catch (error) { status = 'failed'; details = error instanceof Error ? error.message : 'failed'; }
+      catch (error) { status = 'failed'; details = safeDiagnosticText(error instanceof Error ? error.message : 'failed'); }
       if (screenshot) {
         const file = path.join(temp, `${id}.png`); await page.screenshot({ path: file, fullPage: true }); screenshotSha256 = sha(await fs.readFile(file));
       }
@@ -294,7 +298,7 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
     }
     await record('keyboard-accessibility', async () => { await page.keyboard.press('Tab'); const tag = await page.evaluate(() => document.activeElement?.tagName); if (!tag || tag === 'BODY') throw new Error('no-keyboard-focus'); });
     await record('automated-accessibility', async () => { const result = await new AxeBuilder({ page }).analyze(); if (result.violations.some((v) => ['critical', 'serious'].includes(v.impact || ''))) throw new Error(`a11y:${result.violations.length}`); });
-    await record('broken-links', async () => { const links = await page.locator('a[href]').evaluateAll((nodes) => nodes.slice(0, 50).map((node) => node.href)); for (const href of links) { const link = new URL(href); if (link.origin !== new URL(target).origin) continue; const response = await context.request.get(link.toString(), { timeout: 10_000 }); if (response.status() >= 400) throw new Error(`broken:${response.status()}:${href}`); } });
+    await record('broken-links', async () => { const links = await page.locator('a[href]').evaluateAll((nodes) => nodes.slice(0, 50).map((node) => node.href)); for (const href of links) { const link = new URL(href); if (link.origin !== new URL(target).origin) continue; const response = await context.request.get(link.toString(), { timeout: 10_000, maxRedirects: 0, headers: previewProtectionHeaders(link.toString(), target, {}, previewSecret) }); if (response.status() >= 400) throw new Error(`broken:${response.status()}:${href}`); } });
     await record('console-errors', async () => { if (consoleErrors.length) throw new Error(`${consoleErrors.length}-console-errors`); }, false);
     await record('network-errors', async () => { if (failedRequests.length) throw new Error(`${failedRequests.length}-network-errors`); }, false);
     const loginUrl = process.env.BROWSER_TEST_LOGIN_URL; const user = process.env.BROWSER_TEST_USER; const password = process.env.BROWSER_TEST_PASSWORD;
@@ -326,7 +330,7 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
       completedAt: new Date().toISOString(), scenarios, navigation, navigationCatalog, consoleErrors, failedRequests, passed,
     });
   } catch (error) {
-    return sendSigned(res, { error: error instanceof Error ? error.message : 'browser_failed' }, 422);
+    return sendSigned(res, { error: safeDiagnosticText(error instanceof Error ? error.message : 'browser_failed') }, 422);
   } finally {
     if (browser) await browser.close(); await fs.rm(temp, { recursive: true, force: true });
   }

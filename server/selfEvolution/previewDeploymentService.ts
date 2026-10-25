@@ -4,7 +4,7 @@ export interface PreviewDeployResult {
   previewUrl?: string;
   deploymentId?: string;
   smokeTestsPassed?: boolean;
-  diagnostic?: { phase: 'smoke'; httpStatus?: number; failureKind: string; dependencies?: Record<string, boolean> };
+  diagnostic?: { phase: 'smoke'; httpStatus?: number; failureKind: string; dependencies?: Record<string, boolean>; bypassConfigured?: boolean };
   errorMessage?: string;
 }
 
@@ -109,7 +109,9 @@ export class PreviewDeploymentService {
       // Keep health as a release gate; preserve only safe diagnostic fields.
       let diagnostic: PreviewDeployResult['diagnostic'];
       try {
-        const pingRes = await fetch(`${previewUrl}/api/health`, { method: 'GET', signal: AbortSignal.timeout(15_000), redirect: 'error' });
+        const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
+        const pingRes = await fetch(`${previewUrl}/api/health`, { method: 'GET', signal: AbortSignal.timeout(15_000), redirect: 'manual',
+          ...(bypass ? { headers: { 'x-vercel-protection-bypass': bypass } } : {}) });
         if (!pingRes.ok) {
           const dependencies: Record<string, boolean> = {};
           // Never return arbitrary response bodies (tokens, headers or private HTML).
@@ -121,18 +123,21 @@ export class PreviewDeploymentService {
             } catch { console.warn('Preview: resposta de health sem JSON valido.'); }
           }
           diagnostic = { phase: 'smoke', httpStatus: pingRes.status,
-            failureKind: [401, 403].includes(pingRes.status) ? 'access_denied' : pingRes.status === 503 ? 'dependencies_not_ready' : 'http_error',
+            bypassConfigured: Boolean(bypass),
+            failureKind: pingRes.status >= 300 && pingRes.status < 400 ? 'redirect_or_deployment_protection' : [401, 403].includes(pingRes.status) ? 'access_denied' : pingRes.status === 503 ? 'dependencies_not_ready' : 'http_error',
             ...(Object.keys(dependencies).length ? { dependencies } : {}) };
         }
       } catch (error) {
         diagnostic = { phase: 'smoke', failureKind: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout' : 'network_or_redirect_error' };
       }
       const smokeTestsPassed = !diagnostic;
+      const accessHint = diagnostic && ['redirect_or_deployment_protection', 'access_denied'].includes(diagnostic.failureKind)
+        ? ` Credencial de automacao do preview: ${diagnostic.bypassConfigured ? 'configurada, mas acesso nao confirmado; verifique validade e redeploy' : 'ausente; configure VERCEL_AUTOMATION_BYPASS_SECRET do projeto no GitHub Actions'}.` : '';
       const dependencySummary = diagnostic?.dependencies ? ' Dependencias: ' + JSON.stringify(diagnostic.dependencies) + '.' : '';
       return {
         status: smokeTestsPassed ? 'ready' : 'failed', deploymentId: latest.uid, previewUrl, smokeTestsPassed,
         ...(diagnostic ? { diagnostic } : {}),
-        errorMessage: diagnostic ? `Smoke test do preview reprovado: ${diagnostic.failureKind}${diagnostic.httpStatus ? `; HTTP ${diagnostic.httpStatus}` : ''}.${dependencySummary}` : undefined,
+        errorMessage: diagnostic ? `Smoke test do preview reprovado: ${diagnostic.failureKind}${diagnostic.httpStatus ? `; HTTP ${diagnostic.httpStatus}` : ''}.${dependencySummary}${accessHint}` : undefined,
       };
     } catch (err: any) {
       return {
