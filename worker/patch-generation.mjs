@@ -70,7 +70,7 @@ export async function generateStructuredPatch({ generateContent, model, input, a
     });
   } catch (error) {
     const status = Number.isInteger(error?.status) ? error.status : undefined;
-    const temporary = status !== undefined ? status === 408 || status === 429 || status >= 500 :
+    const temporary = status !== undefined ? status === 404 || status === 408 || status === 429 || status >= 500 :
       ['AbortError', 'TimeoutError'].includes(error?.name) || /timeout|timed out|fetch failed|ECONNRESET/i.test(String(error?.message));
     throw new PatchGenerationError('generator_provider_error', { providerStatus: status ?? null }, temporary, status);
   }

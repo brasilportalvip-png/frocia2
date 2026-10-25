@@ -1,3 +1,4 @@
+import { createEngineeringModelSession } from './engineering-model-session.mjs';
 import { installPreviewProtection, previewProtectionHeaders } from './preview-protection.mjs';
 import { registerProfessionalFactory } from './professional-factory.mjs';
 import crypto from 'node:crypto';
@@ -99,7 +100,7 @@ async function repositoryContext(body, cwd) {
   return context;
 }
 
-async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedback = null, attempt = 1) {
+async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedback = null, attempt = 1, modelSession) {
   const ai = new GoogleGenAI({ apiKey: required('GEMINI_API_KEY') });
   const sourceFiles = [];
   for (const relative of allowed) {
@@ -108,7 +109,7 @@ async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedb
   }
   return generateStructuredPatch({
     generateContent: request => ai.models.generateContent(request),
-    model: process.env.ENGINEERING_MODEL || 'gemini-3.1-pro-preview', allowed, attempt, feedback: repairFeedback,
+    model: await modelSession.next(repairFeedback), allowed, attempt, feedback: repairFeedback,
     input: {
       task: { title: body.title, summary: body.summary, hypothesis: body.hypothesis, expectedBehavior: body.expectedBehavior, testPlan: body.testPlan },
       allowedPaths: [...allowed], sourceFiles, engineeringContext,
@@ -143,6 +144,19 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     markStage('ownership');
     const initialOwnership = await run('chown', ['-R', '10001:10001', temp], temp, 30_000);
     if (initialOwnership.exitCode !== 0) throw new Error('sandbox_initial_ownership_failed');
+    const catalogClient = new GoogleGenAI({ apiKey: required('GEMINI_API_KEY') });
+    const modelSession = createEngineeringModelSession({
+      preferred: process.env.ENGINEERING_MODEL || 'gemini-3.1-pro-preview',
+      fallbacks: process.env.ENGINEERING_FALLBACK_MODELS || '',
+      listModels: async () => {
+        const rows = [];
+        const pager = await catalogClient.models.list({ config: { pageSize: 100,
+          httpOptions: { timeout: 10_000, retryOptions: { attempts: 1 } } } });
+        for await (const model of pager) { rows.push(model); if (rows.length >= 100) break; }
+        return rows;
+      },
+      onDiagnostic: diagnostic => console.log('[worker:model]', JSON.stringify({ candidateId: body.candidateId, ...diagnostic })),
+    });
     let outputFiles = [];
     const repairCycle = await executeAutonomousRepairCycle({
       maximumAttempts: Number(process.env.ENGINEERING_MAX_REPAIR_ATTEMPTS || 3),
@@ -152,7 +166,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         const clean = await run('git', ['clean', '-fd'], cwd, 30_000, {}, true);
         if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
       },
-      generate: async ({ feedback, attempt }) => { markStage('generation'); return generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt); },
+      generate: async ({ feedback, attempt }) => { markStage('generation'); return generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt, modelSession); },
       apply: async (patch) => {
         markStage('apply');
         const nextFiles = [];

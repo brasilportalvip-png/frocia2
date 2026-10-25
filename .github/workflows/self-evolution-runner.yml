@@ -129,6 +129,9 @@ jobs:
             storage.googleapis.com:443
             playwright.azureedge.net:443
             generativelanguage.googleapis.com:443
+            *.googleapis.com:443
+            accounts.google.com:443
+            *.gstatic.com:443
             firestore.googleapis.com:443
             oauth2.googleapis.com:443
             identitytoolkit.googleapis.com:443
@@ -139,6 +142,8 @@ jobs:
             fonts.gstatic.com:443
             portalvipbrasil.com.br:443
             api.vercel.com:443
+            vercel.com:443
+            *.vercel.com:443
             *.vercel.app:443
 
       - name: Validar destinos do build e navegador
@@ -188,6 +193,8 @@ jobs:
 
       - name: Iniciar worker local
         env:
+          ENGINEERING_MODEL: ${{ vars.ENGINEERING_MODEL || vars.GEMINI_CODE_MODEL || '' }}
+          ENGINEERING_FALLBACK_MODELS: ${{ vars.ENGINEERING_FALLBACK_MODELS || vars.GEMINI_FALLBACK_MODEL || '' }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
@@ -208,6 +215,8 @@ jobs:
             --memory 4g \
             --cpus 2 \
             -p 127.0.0.1:8080:8080 \
+            -e ENGINEERING_MODEL \
+            -e ENGINEERING_FALLBACK_MODELS \
             -e GEMINI_API_KEY \
             -e SELF_EVOLUTION_WORKER_TOKEN \
             -e SELF_EVOLUTION_WORKER_SIGNING_SECRET \
