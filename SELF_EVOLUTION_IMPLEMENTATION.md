@@ -1,58 +1,46 @@
-# Protótipo de Autoevolução Supervisionada — Desativado e não homologado
+# Autoevolução Froc.IA — implementação e critérios de aceitação
 
-**Data:** 10/08/2026  
-**Status do Sistema:** Desativado por Padrão (`SELF_EVOLUTION_ENABLED=false`)  
-**Repositório Base:** `brasilportalvip-png/frocia2`  
+Atualizado em 25/10/2026. Este documento descreve o código; não certifica por si só uma execução nem a publicação no domínio.
 
----
+## Fluxo
 
-## 1. VISÃO GERAL E ORDEM DE ENGENHARIA
+1. O executor consulta o repositório e audita o site. Uma ocorrência observada leva evidência concreta à fila.
+2. Trabalho ativo é reutilizado. Uma tarefa antiga encerrada não impede investigação nova quando existe pedido manual ou versão nova. O registro anterior é preservado.
+3. O agente recebe resumo, erro observado, referências e pareceres. O worker usa esses dados na seleção de arquivos e na chamada do modelo.
+4. O patch precisa conter alteração real e passar pela certificação isolada. São exigidos branch, PR, CI oficial, comparação de capacidades e navegador no preview.
+5. O comitê recebe diff e resultados de CI, capacidades e navegador vinculados ao mesmo SHA e preview.
+6. Solicitações de mudança dos revisores obrigatórios voltam ao agente, com até duas correções por tarefa/dia. PR e commit anteriores ficam no histórico; cada tentativa exige nova certificação e novo CI.
+7. A publicação automática pode prosseguir quando a configuração permite e as verificações exigidas passam. Após o merge, o executor confirma deployment e testes do domínio. Falha de produção pode solicitar reversão.
 
-O modulo de Autoevolução Supervisionada do Froc.IA 2 foi reestruturado para eliminar simulações, resultados fixos e URLs fabricadas. A persistência de estados, locks, orçamentos e auditorias foi migrada para o Firestore com transações duráveis, com isolamento administrativo e fallback gracioso em memória caso o Firestore não esteja acessível.
+## Revisão por risco
 
-A execução autônoma em produção e deploys diretos na branch `main` permanecem **estritamente proibidos**. Alterações propostas exigem criação de branches isoladas e Pull Requests reais no GitHub, com obrigatoriedade de aprovação humana para qualquer risco R2/R3.
+| Risco | Revisores obrigatórios | Outros pareceres |
+|---|---|---|
+| R0/R1 | Segurança, QA e Verificador Independente | Consultivos; sugestões não impedem a liberação |
+| R2/R3 | Todos os dez papéis | Revisão completa; produção automática depende da configuração explícita |
 
----
+Veto explícito, evidência obrigatória ausente, SHA diferente ou identidade duplicada impede aprovação. Uma solicitação de mudança pode iniciar correção de código e testes; não é convertida em aprovação. Sem modo autônomo habilitado, R2/R3 continuam exigindo aprovação humana.
 
-## 2. MATRIZ DE FUNCIONALIDADES E HOMOLOGAÇÃO
+O caminho de código gerado passa por branch, PR e verificações. Os 85 perfis e os controles do proprietário são preservados.
 
-| Funcionalidade | Implementada | Testada | Integrada | Homologada | Evidência | Pendências |
-| :--- | :---: | :---: | :---: | :---: | :--- | :--- |
-| **Persistência Firestore (Candidates, Audit, Locks, Budget)** | Sim | Sim | Sim | Sim | `server/selfEvolution/*` + `tests/selfEvolutionEngine.test.ts` | Requer subida de credenciais de produção no ambiente de hosting |
-| **Orquestrador e Máquina de Estados Durável** | Sim | Sim | Sim | Não | `selfEvolutionOrchestrator.ts` | Homologação final pendente de PR real no GitHub |
-| **Leases Distribuídos (LockService com TTL)** | Sim | Sim | Sim | Sim | `lockService.ts` | Nenhuma |
-| **Controle Transacional de Orçamento (BudgetService)** | Sim | Sim | Sim | Sim | `budgetService.ts` | Nenhuma |
-| **Auditoria Encadeada com Hash SHA-256** | Sim | Sim | Sim | Sim | `auditService.ts` | Nenhuma |
-| **Sanitização, Redaction e Defesa contra Prompt Injection** | Sim | Sim | Sim | Sim | `redactionService.ts`, `promptInjectionDefense.ts` | Nenhuma |
-| **Rotas Administrativas `/api/admin/self-evolution/*`** | Sim | Sim | Sim | Sim | `selfEvolutionRoutes.ts` + Zod `.strict()` | Nenhuma |
-| **Painel de Governança (`SelfEvolutionDashboard`)** | Sim | Sim | Sim | Sim | `src/components/self-evolution/SelfEvolutionDashboard.tsx` | Nenhuma |
-| **Adaptador do Worker de Código (`CodeAgentService`)** | Sim | Sim | Parcial | Não | Retorna `not_configured` se sem worker/env | Requer configuração de Worker externo ou Runner GitHub |
-| **Automação GitHub (`GithubAutomationService`)** | Sim | Sim | Parcial | Não | Integração via GitHub App / API Octokit | Requer `GITHUB_APP_INSTALLATION_TOKEN` configurado |
-| **Portão CI (`CIGateService`)** | Sim | Sim | Parcial | Não | Consulta GitHub Actions API | Requer GitHub Actions ativado no repositório |
-| **Deploys de Preview (`PreviewDeploymentService`)** | Sim | Sim | Parcial | Não | Verifica Vercel / GitHub Preview Checks | Requer Vercel Integration Token |
-| **Worker isolado (GitHub Actions Workflow)** | Sim | Não | Parcial | Não | `.github/workflows/self-evolution-worker.yml` | Disparo via `workflow_dispatch` em ambiente configurado |
+## Fila
 
----
+Excluir retira uma tarefa da fila, mantendo auditoria e pareceres. O agendamento não reativa uma exclusão na mesma versão. Um novo pedido manual autoriza investigação nova de um defeito que continua presente.
 
-## 3. VARIÁVEIS DE AMBIENTE REQUERIDAS
+O identificador inclui ocorrência, commit e geração da auditoria. Uma assinatura reutiliza trabalho ativo e impede duplicação. O orçamento é verificado e reservado antes da geração; registrar tarefa não cobra um patch.
 
-Para habilitar e integrar o módulo com serviços externos em ambiente de staging/homologação, as seguintes variáveis de ambiente devem ser configuradas via painel de segredos do hosting (Settings / Vercel / Cloud Run):
+Uma fila sem trabalho e sem falhas encerra normalmente. Falha persistente sem execução possível informa identificador, estado e motivo, sem registrar reparo ou publicação inexistentes.
 
-- `SELF_EVOLUTION_ENABLED`
-- `AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED`
-- `GITHUB_OWNER`
-- `GITHUB_REPO`
-- `GITHUB_APP_INSTALLATION_TOKEN`
-- `VERCEL_PROJECT_ID`
-- `VERCEL_AUTH_TOKEN`
-- `GEMINI_API_KEY`
-- `FIREBASE_SERVICE_ACCOUNT_KEY`
+## GitHub e Vercel
 
----
+O workflow aceita token próprio ou GitHub App. Com GITHUB_TOKEN padrão, solicita os workflows oficiais via workflow_dispatch. Uma PR com action_required não substitui a consulta aos resultados oficiais do SHA.
 
-## 4. EXECUÇÃO DE SUITES E TESTES
+Auto-merge nativo exige checks e revisões. O orquestrador também possui merge via API após as verificações. A Vercel publica a main conforme a integração configurada; a confirmação do domínio é separada.
 
-- **Validação de Tipos (TypeScript Linter):** `npm run lint` — **0 erros**.
-- **Testes Unitários e Integração:** `npm test` — **64 testes passando (100% de sucesso)**.
-- **Compilação de Produção:** `npm run build` — **Compilação concluída com sucesso**.
+As configurações efetivas estão em .github/workflows/self-evolution-runner.yml, selfEvolutionPolicyEngine.ts e nos serviços de integração. Chat na Vercel e executor Actions são ambientes distintos.
 
+## Verificação
+
+Comandos: npm run typecheck, npm test, npm run build, npm run validate:production-integrity e node scripts/validate-serverless-runtime.mjs.
+
+Os testes incluem fila após a falha #66, transmissão de evidência ao worker/modelo, pareceres, correção certificada, CI, merge, produção e reversão, com serviços externos simulados. A aceitação definitiva exige uma manutenção real concluída na versão publicada. A referência de fluxo do Claude não instala nem ativa o provedor Claude; o provedor atual permanece configurado.

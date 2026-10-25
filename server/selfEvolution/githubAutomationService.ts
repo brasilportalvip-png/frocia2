@@ -546,8 +546,17 @@ export class GithubAutomationService {
       `${candidate.riskLevel.toLowerCase()}/` +
       `${safeCandidateId}-` +
       `${slug || 'improvement'}`;
-    const scopedBranchName = `${legacyBranchName}-${patch.baseSha?.slice(0, 12) || 'base-missing'}`;
-    const branchName = candidate.pullRequestUrl && [legacyBranchName, scopedBranchName].includes(candidate.branchName || '')
+    const repair = candidate.committeeRepair;
+    if (repair && (!/^\d{4}-\d{2}-\d{2}$/.test(repair.dateKey)
+      || !Number.isSafeInteger(repair.attempt) || repair.attempt < 1)) {
+      return this.createFailure('O marcador de correção após revisão é inválido.');
+    }
+    // Uma correção pode mudar a árvore sem mudar a main. Cada rodada de revisão
+    // precisa de branch própria; repetir a mesma rodada continua idempotente.
+    const repairSuffix = repair ? `-review-${repair.dateKey.replace(/-/g, '')}-${repair.attempt}` : '';
+    const scopedBranchName = `${legacyBranchName}-${patch.baseSha?.slice(0, 12) || 'base-missing'}${repairSuffix}`;
+    const reusableBranches = repair ? [scopedBranchName] : [legacyBranchName, scopedBranchName];
+    const branchName = candidate.pullRequestUrl && reusableBranches.includes(candidate.branchName || '')
       ? candidate.branchName! : scopedBranchName;
 
     if (

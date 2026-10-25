@@ -6,7 +6,7 @@ import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import { RedactionService } from './redactionService.js';
 import { LockService } from './lockService.js';
 import { AuditService } from './auditService.js';
-import type { ImprovementCandidate } from './selfEvolutionTypes.js';
+import { SiteAuditQueueService } from './siteAuditQueueService.js';
 import { REQUIRED_SELF_SITE_VIEWS } from '../../worker/site-navigation-audit.mjs';
 import type { SelfSiteKnowledge } from './selfSiteKnowledgeService.js';
 
@@ -109,12 +109,15 @@ export class ProductionSiteAuditDiscoveryService {
     const data = saved.data();
     const coverageComplete = data?.repositorySha === repositorySha && data?.status === 'complete';
     return { status: 'cached_audit', findings: Number(data?.findingsCount || 0), coverageComplete, requiresResume: !coverageComplete,
+      blockedCandidates: Array.isArray(data?.blockedCandidates) ? data.blockedCandidates as Array<{ candidateId: string; state: string; reason: string }> : [],
       limitations: [...(data?.limitations || []), 'Retomada da entrega usa a auditoria registrada; uma nova varredura pertence ao ciclo diario.'] };
   }
   static async discoverOne(now = new Date(), options: { force?: boolean; knowledge?: SelfSiteKnowledge } = {}): Promise<{
     status: 'created' | 'already_audited' | 'findings_recorded' | 'no_findings' | 'partial' | 'not_configured';
     candidateId?: string;
     findings?: number;
+    candidateIds?: string[];
+    blockedCandidates?: Array<{ candidateId: string; state: string; reason: string }>;
     limitations?: string[];
     requiresResume?: boolean;
     coverageComplete?: boolean;
@@ -144,7 +147,12 @@ export class ProductionSiteAuditDiscoveryService {
       const continuing = !options.force && prior.exists && prior.data()?.repositorySha === commitSha &&
         (prior.data()?.dateKey === day || prior.data()?.status !== 'complete');
       if (continuing && prior.data()?.status === 'complete') {
-        return { status: 'already_audited', findings: prior.data()?.findingsCount || 0,
+        const savedFindings = await ref.collection('generations').doc(prior.data()!.generation).collection('findings').get();
+        const queue = await SiteAuditQueueService.enqueue(savedFindings.docs.map(doc => doc.data() as ProductionFinding), {
+          origin: target.origin, auditId: id, generation: prior.data()!.generation, commitSha, now, manual: false,
+        });
+        return { status: queue.createdCount ? 'created' : 'already_audited', findings: savedFindings.size,
+          candidateIds: queue.candidateIds, candidateId: queue.candidateIds[0], blockedCandidates: queue.blockedCandidates,
           limitations: prior.data()?.limitations || [], requiresResume: false, coverageComplete: true };
       }
       const generation = continuing && typeof prior.data()?.generation === 'string' ? prior.data()!.generation : randomUUID();
@@ -210,58 +218,15 @@ export class ProductionSiteAuditDiscoveryService {
       const partial = urlsPending > 0 || html.status === 'blocked' || html.discovery.robotsBlockedUrls > 0 ||
         browser.scenarios.some(s => s.status === 'external_blocker') || !renderedViewsCovered ||
         Boolean(options.knowledge?.incompleteFiles.length);
-      const candidateIds: string[] = [];
-      // Agrupa ocorrencias repetidas; todos os grupos entram na fila, sem teto de cinco defeitos.
-      const grouped = new Map<string, ProductionFinding[]>();
-      for (const finding of findings) {
-        const key = `${finding.code}|${finding.probableFiles.join('|')}`;
-        grouped.set(key, [...(grouped.get(key) || []), finding]);
-      }
-      for (const [signature, issues] of grouped) {
-        const first = issues[0];
-        const issueHash = createHash('sha256').update(`${target.origin}|${signature}`).digest('hex');
-        const candidateId = `site-${issueHash.slice(0, 32)}-${day}`;
-        const riskLevel = SelfEvolutionPolicyEngine.classifyRisk(first.probableFiles);
-        const candidate: ImprovementCandidate = {
-          id: candidateId, title: `[Auditoria do site] ${first.code}`,
-          summary: `${issues.length} ocorrencia(s) observada(s). ${first.message} A causa raiz ainda precisa ser reproduzida no codigo.`,
-          evidence: [`self_evolution_site_audits/${id}/generations/${generation}`, `self_evolution_repository_index/${commitSha}`,
-            ...issues.slice(0, 8).map(i => `${i.url} | ${i.evidence}`)],
-          frequency: issues.length, affectedUsersCount: 0, severity: first.severity, confidence: 0.9,
-          affectedComponents: ['production-site', first.code], probableFiles: first.probableFiles,
-          hypothesis: `A auditoria observou ${first.code}; investigar o codigo e os dependentes antes de propor a correcao.`,
-          expectedBehavior: 'O cenario observado deve passar no navegador sem introduzir novas falhas.',
-          riskLevel, estimatedCostCredits: 10,
-          testPlan: `Reproduzir ${first.code}, adicionar teste de regressao que falhe antes da correcao e executar lint, testes, build e navegador.`,
-          rollbackStrategy: 'Reverter o PR e restaurar o deployment anterior verificado.',
-          duplicates: [], requiresApproval: riskLevel === 'R2' || riskLevel === 'R3',
-          state: 'detected', createdAt: now.toISOString(), updatedAt: now.toISOString(),
-        };
-        const candidateRef = adminDb.collection('self_evolution_candidates').doc(candidateId);
-        const signatureRef = adminDb.collection('self_evolution_site_issue_signatures').doc(issueHash);
-        const created = await adminDb.runTransaction(async tx => {
-          const previous = await tx.get(signatureRef);
-          const existing = await tx.get(candidateRef);
-          const lastId = previous.data()?.candidateId;
-          if (typeof lastId === 'string' && lastId !== candidateId) {
-            const last = await tx.get(adminDb.collection('self_evolution_candidates').doc(lastId));
-            // Uma correcao aceita que voltou a falhar em outro dia pode ser investigada novamente.
-            // Falhas e rejeicoes existentes continuam visiveis, sem nova cobranca automatica.
-            if (last.exists && last.data()?.state !== 'accepted') return false;
-          }
-          // Um defeito pendente ou que ja falhou nao deve cobrar outro patch a cada agendamento.
-          if (existing.exists) return false;
-          tx.create(candidateRef, candidate);
-          tx.set(signatureRef, { candidateId, issueCode: first.code, detectedAt: now.toISOString(), repositorySha: commitSha });
-          return true;
-        });
-        if (created) candidateIds.push(candidateId);
-      }
+      const queue = await SiteAuditQueueService.enqueue(findings, {
+        origin: target.origin, auditId: id, generation, commitSha, now, manual: options.force === true,
+      });
+      const { candidateIds, blockedCandidates } = queue;
       await ref.set({
         status: partial ? 'partial' : 'complete', targetUrl: target.toString(),
         startedAt: continuing ? prior.data()?.startedAt || html.startedAt : html.startedAt,
         completedAt: browser.completedAt, repositorySha: commitSha, generation, dateKey: day, checkpointParts: parts,
-        findingsCount: findings.length, candidateIds,
+        findingsCount: findings.length, candidateIds, blockedCandidates,
         coverage: { visitedUrls: html.checkpoint?.visitedUrls.length || html.pages.length, pendingUrls: urlsPending,
           viewsObserved: navigation.filter(v => v.status !== 'external_blocker').length, viewsTotal: navigationCatalog.length,
           sourceFiles: options.knowledge?.sourceFilesCount || 0, repositoryFiles: options.knowledge?.filesCount || 0 },
@@ -271,8 +236,8 @@ export class ProductionSiteAuditDiscoveryService {
       await AuditService.logEvent({ actor: 'production-site-auditor', action: 'scan_production_site', resource: id,
         riskLevel: 'R0', result: findings.length || partial ? 'failure' : 'success', deployUrl: target.toString(),
         reason: `${html.pages.length} paginas; ${browser.scenarios.length} cenarios; ${findings.length} falhas; ${candidateIds.length} tarefas. Cobertura ${partial ? 'parcial' : 'publica concluida'}.` });
-      return { status: candidateIds.length ? 'created' : partial ? 'partial' : findings.length ? 'findings_recorded' : 'no_findings',
-        ...(candidateIds.length ? { candidateId: candidateIds[0] } : {}), findings: findings.length, limitations,
+      return { status: queue.createdCount ? 'created' : partial ? 'partial' : findings.length ? 'findings_recorded' : 'no_findings',
+        ...(candidateIds.length ? { candidateId: candidateIds[0] } : {}), findings: findings.length, candidateIds, blockedCandidates, limitations,
         coverageComplete: !partial, requiresResume: partial };
     } catch (error) {
       await ref.set({ status: 'failed', completedAt: new Date().toISOString(),

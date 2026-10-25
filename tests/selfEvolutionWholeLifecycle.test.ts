@@ -154,7 +154,8 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
   it('atravessa patch, PR, dois CIs, preview, dez pareceres, merge e confirmacao do dominio', async () => {
     expect((await step()).state).toBe('ci_pending');
     expect(dispatches).toHaveLength(2);
-    expect((await step()).state).toBe('approved_for_release');
+    const release = await step();
+    expect(release.state, release.message).toBe('approved_for_release');
     expect(reviews).toHaveLength(10);
     expect(merged).toBe(true);
     expect((await step()).state).toBe('monitoring');
@@ -190,7 +191,8 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
   it('solicita rollback se a versao publicada falhar no health', async () => {
     await step(); await step(); published = true; healthFailed = true;
     const rollback = vi.spyOn(RollbackService, 'executeRollback').mockResolvedValue({ status: 'success', success: true, message: 'Reversao solicitada.' });
-    expect((await step()).state).toBe('rolled_back');
+    const rolledBack = await step();
+    expect(rolledBack.state, rolledBack.message).toBe('rolled_back');
     expect(rollback).toHaveBeenCalledOnce(); expect(candidate.state).not.toBe('accepted');
   });
 

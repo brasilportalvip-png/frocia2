@@ -230,6 +230,9 @@ implements ICodeAgentAdapter {
             candidateId: candidate.id,
             title: candidate.title,
             summary: candidate.summary,
+            evidence: (Array.isArray(candidate.evidence) ? candidate.evidence : [])
+              .filter((item): item is string => typeof item === 'string')
+              .slice(-32).map(item => RedactionService.redactSensitiveData(item).slice(0, 16_000)),
             hypothesis: candidate.hypothesis,
             expectedBehavior:
               candidate.expectedBehavior,

@@ -86,4 +86,49 @@ describe('SpecialistCommitteeExecutionService', () => {
           .configuredActors()
     ).toThrow('not_unique');
   });
+  it('uma falha consultiva não impede baixo risco, sem inventar parecer aprovado', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    SpecialistCommitteeExecutionService.setAdapter({ review: async role => {
+      if (role === 'product') throw new Error('provider unavailable');
+      return { verdict: 'approved', summary: 'Análise de código com evidência concreta.', fileRefs: ['src/fix.ts'],
+        testRefs: [], evidenceRefs: ['trace:real'], risks: [] };
+    } });
+    vi.spyOn(CommitteeGateService, 'submitReview').mockImplementation(async input => ({ id: input.role, ...input, createdAt: '', updatedAt: '' }));
+    const reviews = await SpecialistCommitteeExecutionService.execute(candidate);
+    expect(reviews.some(review => review.role === 'product')).toBe(false);
+    expect(CommitteeGateService.evaluateReviews({ candidateId: candidate.id, commitSha: candidate.headCommitSha, riskLevel: 'R1', reviews }).approved).toBe(true);
+  });
+  it('a falta de um verificador obrigatório impede prosseguir', async () => {
+    SpecialistCommitteeExecutionService.setAdapter({ review: async role => {
+      if (role === 'security') throw new Error('provider unavailable');
+      return { verdict: 'approved', summary: 'Análise de código com evidência concreta.', fileRefs: ['src/fix.ts'],
+        testRefs: [], evidenceRefs: ['trace:real'], risks: [] };
+    } });
+    vi.spyOn(CommitteeGateService, 'submitReview').mockImplementation(async input => ({ id: input.role, ...input, createdAt: '', updatedAt: '' }));
+    await expect(SpecialistCommitteeExecutionService.execute(candidate)).rejects.toThrow('specialist_required_review_unavailable:security');
+  });
+  it('não entrega ao comitê evidência de outro commit, preview ou CI contraditório', async () => {
+    const review = vi.fn();
+    SpecialistCommitteeExecutionService.setAdapter({ review });
+    const validated = { commitSha: candidate.headCommitSha, ci: { status: 'success', passed: true, details: 'CI oficial.' },
+      browser: { commitSha: candidate.headCommitSha, previewUrl: 'https://preview.example.com/', passed: true, completedAt: '', scenarios: [] },
+      capabilityComparisonPassed: true };
+    const current = { ...candidate, previewUrl: 'https://preview.example.com/' };
+    for (const validation of [
+      { ...validated, commitSha: 'b'.repeat(40) },
+      { ...validated, browser: { ...validated.browser, previewUrl: 'https://wrong.example.com/' } },
+      { ...validated, ci: { ...validated.ci, status: 'failed' } },
+    ]) await expect(SpecialistCommitteeExecutionService.execute(current, validation)).rejects.toThrow('specialist_validation_evidence_mismatch');
+    expect(review).not.toHaveBeenCalled();
+  });
+  it('aceita a URL canônica do mesmo preview sem confundir a barra final com outro destino', async () => {
+    SpecialistCommitteeExecutionService.setAdapter({ review: async () => ({ verdict: 'approved',
+      summary: 'Análise com evidência concreta do commit.', fileRefs: ['src/fix.ts'], testRefs: [], evidenceRefs: ['trace:real'], risks: [] }) });
+    vi.spyOn(CommitteeGateService, 'submitReview').mockImplementation(async input => ({ id: input.role, ...input, createdAt: '', updatedAt: '' }));
+    expect(await SpecialistCommitteeExecutionService.execute({ ...candidate, previewUrl: 'https://preview.example.com' }, {
+      commitSha: candidate.headCommitSha, ci: { status: 'success', passed: true, details: 'CI aprovado.' },
+      browser: { commitSha: candidate.headCommitSha, previewUrl: 'https://preview.example.com/', passed: true, completedAt: '', scenarios: [] },
+      capabilityComparisonPassed: true,
+    })).toHaveLength(10);
+  });
 });

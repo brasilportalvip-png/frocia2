@@ -234,7 +234,7 @@ export const SelfEvolutionDashboard: React.FC = () => {
           <div className="text-xl font-bold text-rose-400">
             {status?.autonomousProductionDeployAllowed ? 'Permitido' : 'Bloqueado (R3)'}
           </div>
-          <p className="text-[10px] text-white/40">Exige aprovação humana prévia</p>
+          <p className="text-[10px] text-white/40">{status?.autonomousProductionDeployAllowed ? 'Automático após testes, preview e revisão.' : 'Exige aprovação humana prévia.'}</p>
         </div>
 
         <div className="p-5 bg-white/5 border border-white/10 rounded-2xl space-y-2">
