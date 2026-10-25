@@ -1,3 +1,4 @@
+import { artifactManifest } from '../worker/patch-workspace.mjs';
 import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
@@ -84,4 +85,27 @@ describe('EngineeringSandboxEvidenceService', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain('test');
   });
+  it('rejeita certificação de diff vazio e workspaces idênticos', () => {
+    const empty = evidence(nonce); empty.workspaceAfterSha256 = empty.workspaceBeforeSha256;
+    empty.diffSha256 = crypto.createHash('sha256').update('').digest('hex');
+    expect(EngineeringSandboxEvidenceService.verifySignedResponse({ ...signedBody({ executionEvidence: empty }, secret),
+      signingSecret: secret, requestNonce: nonce, candidate, now: new Date('2026-09-17T10:00:03.000Z') }).valid).toBe(false);
+  });
+  it('rejeita alteração do arquivo retornado mesmo com envelope assinado válido', () => {
+    const files = [{ path: 'server/fix.ts', content: 'certified' }];
+    const manifest = { ...evidence(nonce), artifactManifestSha256: artifactManifest(files) };
+    const checked = (returned: typeof files) => EngineeringSandboxEvidenceService.verifySignedResponse({
+      ...signedBody({ files: returned, executionEvidence: manifest }, secret), signingSecret: secret,
+      requestNonce: nonce, candidate, now: new Date('2026-09-17T10:00:03.000Z') });
+    expect(checked(files).valid).toBe(true);
+    expect(checked([{ ...files[0], content: 'not-certified' }]).valid).toBe(false);
+  });
+  it('autentica diagnóstico sem alteração e rejeita outro nonce', () => {
+    const data = { schemaVersion: 'engineering-no-change-v1', status: 'no_change', candidateId: candidate.id,
+      requestNonce: nonce, baseSha: 'a'.repeat(40), reason: 'Nenhuma alteração efetiva encontrada.', issuedAt: new Date().toISOString() };
+    const input = { ...signedBody(data, secret), signingSecret: secret, requestNonce: nonce, candidateId: candidate.id };
+    expect(EngineeringSandboxEvidenceService.verifyNoChange(input)).toMatchObject({ reason: data.reason });
+    expect(EngineeringSandboxEvidenceService.verifyNoChange({ ...input, requestNonce: 'other' })).toBeNull();
+  });
+
 });

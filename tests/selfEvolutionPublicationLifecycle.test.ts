@@ -68,6 +68,7 @@ describe('Retomada do ciclo depois do merge', () => {
     vi.spyOn(BudgetService, 'canExecuteAgentRun').mockResolvedValue(true);
     vi.spyOn(BudgetService, 'consumeBudget').mockResolvedValue(true);
     prepared.patch.mockResolvedValue(newPatch);
+    vi.spyOn(GithubAutomationService, 'inspectEffectivePullRequest').mockResolvedValue({ status: 'changed', message: 'Verified fixture change' });
     const pr = vi.spyOn(GithubAutomationService, 'createBranchAndPR')
       .mockResolvedValueOnce({ status: 'failed', success: false, requiresRegeneration: true, errorMessage: 'A main mudou.' })
       .mockResolvedValue({ status: 'success', success: true, commitSha: 'c'.repeat(40), branchName: 'froc-evolution/r1/new-base', pullRequestUrl: 'https://github.com/owner/site/pull/99' });
@@ -83,6 +84,28 @@ describe('Retomada do ciclo depois do merge', () => {
     expect(save).toHaveBeenCalledWith('publication-test', newPatch);
     expect(pr).toHaveBeenNthCalledWith(2, expect.anything(), newPatch);
     expect(save.mock.invocationCallOrder[0]).toBeLessThan(pr.mock.invocationCallOrder[1]);
+  });
+  it('registra ausência de alteração sem criar novo PR ou certificar correção', async () => {
+    const { patch, pr, save } = staleSetup();
+    patch.mockResolvedValue({ status: 'no_change', success: false, noChangeReason: 'Arquivos idênticos; nenhuma correção comprovada.' } as any);
+    expect(await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).toMatchObject({ state: 'no_change' });
+    expect(save).not.toHaveBeenCalled(); expect(pr).toHaveBeenCalledTimes(1);
+  });
+  it('reclassifica o risco pelo escopo real antes de criar e revisar o PR', async () => {
+    const { newPatch } = staleSetup();
+    newPatch.files = [{ path: 'server/routes/fix.ts', content: 'new' }];
+    await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test');
+    expect(ImprovementPlannerService.updateCandidateMetadata).toHaveBeenCalledWith('publication-test', {
+      probableFiles: ['server/routes/fix.ts'], riskLevel: 'R2', requiresApproval: true,
+    });
+  });
+  it('reconhece PR antigo vazio antes de gastar CI, preview ou geração', async () => {
+    const { candidate, patch } = setup(); candidate.state = 'ci_pending'; candidate.headCommitSha = 'b'.repeat(40);
+    candidate.pullRequestUrl = 'https://github.com/owner/site/pull/96';
+    vi.spyOn(GithubAutomationService, 'inspectEffectivePullRequest').mockResolvedValue({ status: 'empty', message: 'Nenhuma alteração efetiva.' });
+    const ci = vi.spyOn(CIGateService, 'runCIGate');
+    expect((await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).state).toBe('no_change');
+    expect(patch).not.toHaveBeenCalled(); expect(ci).not.toHaveBeenCalled();
   });
   it('conserva a retomada sem gerar codigo quando falta orcamento para atualizar a base', async () => {
     const { patch, pr, save } = staleSetup();

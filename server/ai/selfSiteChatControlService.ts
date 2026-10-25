@@ -40,7 +40,11 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
   const connection = object(control.connection);
   const operations = object(control.operations);
   const integrations = object(operations.lastVerifiedExternalIntegrations);
-  const runner = object(operations.lastRunner);
+  const requested = safe(operations.requestedCandidateId);
+  const taskOutcome = object(operations.taskOutcome);
+  const currentDispatch = safe(object(control.action).dispatchId);
+  const staleOutcome = Boolean(requested && currentDispatch && taskOutcome.dispatchId !== currentDispatch);
+  const runner = requested ? staleOutcome ? {} : taskOutcome : object(operations.lastRunner);
   const paragraphs: string[] = [];
   const changes = object(control.repositoryChanges);
   if (changes.status) {
@@ -94,8 +98,11 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
     paragraphs.push(`Executor externo: escrita no GitHub confirmada na verificacao registrada${safe(integrations.checkedAt) ? ` em ${safe(integrations.checkedAt)}` : ''}.`);
   }
   if (runner.state || runner.status) {
-    paragraphs.push(`Ultima tarefa registrada${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
+    paragraphs.push(`${requested ? 'Resultado desta tarefa' : 'Última execução global registrada'}${safe(runner.recordedAt) ? ` em ${safe(runner.recordedAt)}` : ''}: ${safe(runner.state) || safe(runner.status)}.${safe(runner.message) ? ` ${safe(runner.message)}` : ''}`);
   }
+  if (staleOutcome && (taskOutcome.state || taskOutcome.status)) paragraphs.push(`Há um registro anterior desta tarefa: ${safe(taskOutcome.state) || safe(taskOutcome.status)}${safe(taskOutcome.recordedAt) ? ` em ${safe(taskOutcome.recordedAt)}` : ''}. Ele não confirma o resultado do disparo atual.`);
+  if (/^https:\/\/github\.com\/brasilportalvip-png\/frocia2\/actions\/runs\/\d+$/.test(safe(runner.runUrl))) paragraphs.push(`Execução desta tarefa: ${safe(runner.runUrl)}`);
+  if (requested && !runner.state && !runner.status) paragraphs.push('Esta tarefa ainda não tem resultado correlacionado; erros de outra tarefa não foram associados a este pedido.');
   if (action.status === 'requested' || action.status === 'queued') paragraphs.push('Este pedido aguarda as etapas de teste, revisao e verificacao da publicacao.');
   return paragraphs.join('\n\n');
 }

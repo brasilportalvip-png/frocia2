@@ -1,3 +1,4 @@
+import { artifactManifest } from '../worker/patch-workspace.mjs';
 import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
@@ -54,7 +55,7 @@ describe('DefaultCodeAgentAdapter sandbox contract', () => {
           schemaVersion: 'engineering-sandbox-v1', candidateId: candidate.id,
           requestNonce: request.requestNonce, sandboxId: 'sandbox:test-001', baseSha,
           networkPolicy: 'restricted', workspaceBeforeSha256: '3'.repeat(64),
-          workspaceAfterSha256: '4'.repeat(64), diffSha256: '5'.repeat(64),
+          workspaceAfterSha256: '4'.repeat(64), diffSha256: '5'.repeat(64), artifactManifestSha256: artifactManifest([{ path: 'server/fix.ts', content: 'export const fixed = true;' }]),
           rollbackVerified: true, commands, issuedAt: new Date().toISOString(),
         },
       };

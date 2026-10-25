@@ -49,6 +49,7 @@ export interface EngineeringSandboxEvidence {
   workspaceBeforeSha256: string;
   workspaceAfterSha256: string;
   diffSha256: string;
+  artifactManifestSha256?: string;
   rollbackVerified: boolean;
   commands: EngineeringCommandEvidence[];
   issuedAt: string;
@@ -73,6 +74,19 @@ function secureSignature(rawBody: string, secret: string): string {
 }
 
 export class EngineeringSandboxEvidenceService {
+  static verifyNoChange(input: { rawBody: string; signatureHeader: string | null; signingSecret: string; requestNonce: string; candidateId: string }): { reason: string; baseSha: string } | null {
+    if (input.rawBody.length > 10000) return null;
+    const signature = input.signatureHeader?.match(/^sha256=([a-f0-9]{64})$/i)?.[1];
+    if (!signature || !crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(secureSignature(input.rawBody, input.signingSecret), 'hex'))) return null;
+    try {
+      const data = JSON.parse(input.rawBody);
+      if (data.schemaVersion !== 'engineering-no-change-v1' || data.status !== 'no_change' || data.candidateId !== input.candidateId || data.requestNonce !== input.requestNonce ||
+        !/^[a-f0-9]{40}$/i.test(data.baseSha || '') || !isIsoTimestamp(data.issuedAt) || Math.abs(Date.now() - Date.parse(data.issuedAt)) > 600000 ||
+        typeof data.reason !== 'string' || data.reason.length < 10) return null;
+      return { reason: data.reason.slice(0, 500), baseSha: data.baseSha };
+    } catch { return null; }
+  }
+
   static verifySignedFailure(input: {
     rawBody: string; signatureHeader: string | null; signingSecret: string;
     requestNonce: string; candidateId: string; now?: Date;
@@ -152,11 +166,22 @@ export class EngineeringSandboxEvidenceService {
       !isSha256(evidence.workspaceBeforeSha256) ||
       !isSha256(evidence.workspaceAfterSha256) ||
       !isSha256(evidence.diffSha256) ||
+      evidence.workspaceBeforeSha256 === evidence.workspaceAfterSha256 ||
+      evidence.diffSha256 === crypto.createHash('sha256').update('').digest('hex') ||
       evidence.rollbackVerified !== true ||
       !isIsoTimestamp(evidence.issuedAt) ||
       !Array.isArray(evidence.commands)
     ) {
       return { valid: false, error: 'Atestado estrutural da sandbox está incompleto ou inválido.' };
+    }
+
+    if (evidence.artifactManifestSha256 !== undefined) {
+      if (!isSha256(evidence.artifactManifestSha256)) return { valid: false, error: 'Hash do manifesto certificado invalido.' };
+      const files = payload.files;
+      if (!Array.isArray(files) || files.some(file => typeof file?.path !== 'string' || typeof file?.content !== 'string')) return { valid: false, error: 'Manifesto de arquivos invalido.' };
+      const expectedManifest = crypto.createHash('sha256').update(JSON.stringify([...files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+        .map(file => [file.path, crypto.createHash('sha256').update(file.content).digest('hex')]))).digest('hex');
+      if (expectedManifest !== evidence.artifactManifestSha256) return { valid: false, error: 'Arquivos retornados diferem do manifesto certificado.' };
     }
 
     const now = input.now || new Date();

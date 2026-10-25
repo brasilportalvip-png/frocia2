@@ -2,6 +2,15 @@ name: Froc.IA - Autoevolucao Externa
 
 on:
   workflow_dispatch:
+    inputs:
+      dispatch_id:
+        description: Identificador do disparo pelo chat (opcional)
+        required: false
+        type: string
+      candidate_id:
+        description: Tarefa existente para retomar (opcional)
+        required: false
+        type: string
   schedule:
     # 09h17 de Brasilia; recuperacao e retomada de CI/preview a cada 30 min ate 20h47.
     - cron: '17,47 12-23 * * *'
@@ -267,6 +276,8 @@ jobs:
       - name: Executar ciclo de autoevolucao
         id: cycle
         env:
+          SELF_EVOLUTION_DISPATCH_ID: ${{ inputs.dispatch_id || '' }}
+          SELF_EVOLUTION_REQUESTED_CANDIDATE_ID: ${{ inputs.candidate_id || '' }}
           NODE_ENV: test
           SELF_EVOLUTION_RUNNER_ENABLED: 'true'
           SELF_EVOLUTION_ENABLED: 'true'

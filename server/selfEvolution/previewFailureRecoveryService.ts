@@ -1,5 +1,5 @@
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
-interface Context { sourceSha: string; runId: string; now: Date }
+interface Context { preferredCandidateId?: string; sourceSha: string; runId: string; now: Date }
 export function planPreviewRecovery(candidate: Record<string, any>, baseSha: unknown, context: Context) {
   if (candidate.state !== 'preview_failed' || !candidate.pullRequestUrl || !candidate.branchName ||
       !/^[a-f0-9]{40}$/i.test(candidate.headCommitSha || '') || candidate.productionMergeSha)
@@ -22,6 +22,7 @@ export class PreviewFailureRecoveryService {
     const snapshot = await adminDb.collection('self_evolution_candidates').where('state', '==', 'preview_failed').get();
     const blocked: Array<{ candidateId: string; reason: string }> = [];
     for (const doc of snapshot.docs) {
+      if (context.preferredCandidateId && doc.id !== context.preferredCandidateId) continue;
       const result = await adminDb.runTransaction(async tx => {
         const current = await tx.get(doc.ref);
         const checkpoint = await tx.get(adminDb.collection('self_evolution_patch_checkpoints').doc(doc.id));
@@ -32,6 +33,6 @@ export class PreviewFailureRecoveryService {
       if (result.allowed) return { candidateId: doc.id, unresolved: true, blocked };
       blocked.push({ candidateId: doc.id, reason: result.reason });
     }
-    return { candidateId: undefined as string | undefined, unresolved: snapshot.docs.length > 0, blocked };
+    return { candidateId: undefined as string | undefined, unresolved: blocked.length > 0, blocked };
   }
 }

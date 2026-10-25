@@ -27,6 +27,7 @@ export interface PullRequestResult {
   pullRequestId?: number;
   errorMessage?: string;
   requiresRegeneration?: boolean;
+  noChanges?: boolean;
 }
 
 interface GitHubBlobResponse {
@@ -179,6 +180,23 @@ export class GithubAutomationService {
     }
   }
 
+  static async inspectEffectivePullRequest(url: string, expectedSha: string): Promise<{ status: 'changed' | 'empty' | 'unavailable'; message: string }> {
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png', repo = process.env.GITHUB_REPO || 'frocia2';
+    const match = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/);
+    if (!match || match[1] !== owner || match[2] !== repo || !/^[a-f0-9]{40}$/i.test(expectedSha))
+      return { status: 'unavailable', message: 'PR ou SHA inválido para conferir alterações.' };
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${owner}/${repo}/pulls/${match[3]}`, { headers: this.getHeaders(token) });
+      if (!response.ok) return { status: 'unavailable', message: `Não foi possível conferir alterações do PR: HTTP ${response.status}.` };
+      const pull = await response.json();
+      if (pull.head?.sha !== expectedSha || !Number.isSafeInteger(pull.changed_files) || pull.changed_files < 0)
+        return { status: 'unavailable', message: 'O SHA ou o conjunto de arquivos do PR não foi comprovado.' };
+      return pull.changed_files === 0 ? { status: 'empty', message: 'O PR não contém alterações efetivas. Não foi mesclado ou publicado.' }
+        : { status: 'changed', message: 'O PR contém alterações no SHA esperado.' };
+    } catch { return { status: 'unavailable', message: 'Consulta de alterações do PR indisponível.' }; }
+  }
+
   static async dispatchOfficialCI(branchName: string): Promise<{ success: boolean; message: string }> {
     if (!/^froc-evolution\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
       return { success: false, message: 'Branch de manutencao invalida para solicitar o CI.' };
@@ -252,7 +270,9 @@ export class GithubAutomationService {
     }
   }
 
-  static async dispatchSelfMaintenance(): Promise<MaintenanceDispatchResult> {
+  static async dispatchSelfMaintenance(candidateId?: string, dispatchId?: string): Promise<MaintenanceDispatchResult> {
+    if (dispatchId && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(dispatchId)) return { success: false, message: 'Identificador de disparo inválido.' };
+    if (candidateId && !/^owner-[a-f0-9]{32}$/.test(candidateId)) return { success: false, message: 'Identificador de tarefa inválido.' };
     if (!this.isConfigured()) return { success: false, message: 'Pedido salvo na fila, mas o backend do chat esta sem credencial GitHub para solicitar Actions. Configure o GitHub App ou GITHUB_TOKEN/GITHUB_APP_TOKEN no servidor da Vercel; as secrets do Actions nao sao herdadas pelo chat.' };
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
     const repo = process.env.GITHUB_REPO || 'frocia2';
@@ -265,7 +285,7 @@ export class GithubAutomationService {
       }
       const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml/dispatches`, {
         method: 'POST', headers: this.getHeaders(access.token, true),
-        body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main' }),
+        body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main', ...(candidateId ? { inputs: { candidate_id: candidateId, ...(dispatchId ? { dispatch_id: dispatchId } : {}) } } : {}) }),
       });
       if (response.ok) return { success: true, diagnostic: { ...identity, httpStatus: response.status },
         message: 'Execucao de manutencao solicitada ao GitHub Actions; acompanhe o resultado na fila.' };
@@ -774,6 +794,8 @@ export class GithubAutomationService {
           'GitHub não retornou SHA válido para a nova árvore.'
         );
       }
+
+      if (createdTree.sha === baseTreeSha) return { ...this.createFailure('A árvore gerada é igual à base. Nenhum commit ou PR foi criado.'), noChanges: true };
 
       /*
        * 6. Cria o commit verdadeiro.

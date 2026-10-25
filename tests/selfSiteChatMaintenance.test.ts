@@ -11,7 +11,7 @@ const database = vi.hoisted(() => {
   return { documents, adminDb: {
     collection: (name: string) => ({ doc: (id: string) => doc(name, id) }),
     runTransaction: async (callback: any) => callback({
-      get: (ref: any) => ref.get(), create: (ref: any, value: any) => documents.set(ref.key, value),
+      get: (ref: any) => ref.get(), set: (ref: any, value: any, options?: any) => ref.set(value, options), create: (ref: any, value: any) => documents.set(ref.key, value),
     }),
   } };
 });
@@ -72,12 +72,25 @@ describe('Conversa do dono ligada ao executor de manutencao', () => {
     expect(context).toContain(key.split('/')[1]);
     const dispatch = calls.find(call => call.init.method === 'POST')!;
     expect(dispatch.url).toBe('https://api.github.com/repos/brasilportalvip-png/frocia2/actions/workflows/self-evolution-runner.yml/dispatches');
-    expect(JSON.parse(String(dispatch.init.body))).toEqual({ ref: 'main' });
+    expect(JSON.parse(String(dispatch.init.body))).toEqual({ ref: 'main', inputs: { candidate_id: key.split('/')[1], dispatch_id: expect.stringMatching(/^[a-f0-9-]{36}$/) } });
     const again = await SelfSiteOwnerService.context(input);
     expect(again).toContain('"status":"already_requested"');
     expect(calls.filter(call => call.init.method === 'POST')).toHaveLength(1);
   });
 
+  it('retoma o mesmo pedido falho na versão nova e não dispara duas vezes', async () => {
+    vi.stubEnv('VERCEL_GIT_COMMIT_SHA', 'a'.repeat(40));
+    const prompt = 'Corrija os erros do meu site Froc IA.';
+    const first = await SelfSiteOwnerService.requestRun('owner', prompt);
+    const key = 'self_evolution_candidates/' + first.candidateId;
+    database.documents.set(key, { ...database.documents.get(key), state: 'tests_failed' });
+    vi.stubEnv('VERCEL_GIT_COMMIT_SHA', 'b'.repeat(40));
+    const resumed = await SelfSiteOwnerService.requestRun('owner', prompt);
+    expect(resumed).toMatchObject({ status: 'requested', candidateId: first.candidateId, resumed: true });
+    expect((await SelfSiteOwnerService.requestRun('owner', prompt)).status).toBe('already_requested');
+    expect(calls.filter(call => call.init.method === 'POST')).toHaveLength(2);
+    expect([...database.documents.keys()].filter(key => key.startsWith('self_evolution_candidates/'))).toHaveLength(1);
+  });
   it('conserva o pedido na fila quando o GitHub recusa o dispatch e nao inventa execucao', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 403 })));
     const context = await SelfSiteOwnerService.context({ role: 'admin', userId: 'owner', prompt: 'Corrija meu site Froc IA.' });

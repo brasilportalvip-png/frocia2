@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { ownerDispatchDecision } from './ownerDispatchPolicy.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { SelfSiteKnowledgeService, installedSelfSiteAgentInventory } from './selfSiteKnowledgeService.js';
 import { GithubAutomationService } from './githubAutomationService.js';
@@ -130,7 +131,7 @@ export class SelfSiteOwnerService {
     const id = 'owner-' + createHash('sha256').update(`${userId}|${day}|${clean}`).digest('hex').slice(0, 32);
     const ref = adminDb.collection('self_evolution_owner_requests').doc(id);
     const prior = await ref.get();
-    if (prior.data()?.dispatchConfirmed === true) return { status: 'already_requested', candidateId: id, message: 'Este pedido ja esta registrado; a execucao e acompanhada pela fila dos agentes.' };
+
     if (!prior.exists) {
       const knowledge = await SelfSiteKnowledgeService.latest();
       const mentioned = knowledge?.navigation.filter(v => clean.toLowerCase().includes(v.label.toLowerCase())).map(v => v.file) || [];
@@ -155,11 +156,28 @@ export class SelfSiteOwnerService {
         tx.create(adminDb.collection('self_evolution_candidates').doc(id), candidate);
       });
     }
-    const dispatch = await GithubAutomationService.dispatchSelfMaintenance();
-    await ref.set({ dispatchConfirmed: dispatch.success, dispatchMessage: dispatch.message,
-      dispatchDiagnostic: dispatch.diagnostic || null, updatedAt: new Date().toISOString() }, { merge: true });
-    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, message: dispatch.message,
-      diagnostic: dispatch.diagnostic || null };
+    const version = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || 'unknown';
+    const lease = randomUUID();
+    const decision = await adminDb.runTransaction(async tx => {
+      const request = await tx.get(ref);
+      const candidate = await tx.get(adminDb.collection('self_evolution_candidates').doc(id));
+      const data = request.data();
+      const choice = ownerDispatchDecision(data, candidate.data(), version, Date.now());
+      if (choice.allowed) tx.set(ref, { dispatchLease: lease, dispatchLeaseUntil: Date.now() + 120000,
+        dispatchVersion: version, dispatchAttempts: (data?.dispatchVersion === version ? Number(data?.dispatchAttempts || 0) : 0) + 1,
+        lastDispatchedAt: new Date().toISOString() }, { merge: true });
+      return choice;
+    });
+    if (!decision.allowed) return { status: decision.status, candidateId: id, message: decision.message, dispatchId: (await ref.get()).data()?.dispatchLease || null };
+    const dispatch = await GithubAutomationService.dispatchSelfMaintenance(id, lease);
+    await adminDb.runTransaction(async tx => {
+      const current = await tx.get(ref);
+      if (current.data()?.dispatchLease !== lease) return;
+      tx.set(ref, { dispatchConfirmed: dispatch.success, dispatchMessage: dispatch.message, dispatchLeaseUntil: 0,
+        dispatchDiagnostic: dispatch.diagnostic || null, updatedAt: new Date().toISOString() }, { merge: true });
+    });
+    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, resumed: decision.resumed === true, dispatchId: lease, dispatchVersion: version,
+      message: dispatch.message, diagnostic: dispatch.diagnostic || null };
   }
 
   static async control(input: OwnerControlInput): Promise<Record<string, unknown> | null> {
@@ -208,7 +226,15 @@ export class SelfSiteOwnerService {
         isOwnSiteChangesQuestion(input.prompt, input.recentMessages) ? GithubAutomationService.readRecentRepositoryChanges(changesPrompt) : Promise.resolve(null),
       ]);
       const result = (value: PromiseSettledResult<unknown>) => value.status === 'fulfilled' ? value.value : { status: 'unavailable' };
-      return { status: 'checked', connection: result(connection), operations: result(operations), action, repositoryChanges: result(changes) };
+      const currentOperations = result(operations) as Record<string, unknown>;
+      if (typeof action?.candidateId === 'string') {
+        try {
+          const outcome = await adminDb.collection('self_evolution_candidate_outcomes').doc(action.candidateId).get();
+          currentOperations.taskOutcome = outcome.data() || null;
+          currentOperations.requestedCandidateId = action.candidateId;
+        } catch { currentOperations.taskOutcomeUnavailable = true; }
+      }
+      return { status: 'checked', connection: result(connection), operations: currentOperations, action, repositoryChanges: result(changes) };
     } catch (error) {
       return { status: 'blocked', message: RedactionService.redactSensitiveData(error instanceof Error ? error.message : 'falha de acesso') };
     }

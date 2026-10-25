@@ -1,6 +1,7 @@
 import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 
 interface RecoveryContext {
+  preferredCandidateId?: string;
   sourceSha: string;
   runId: string;
   manual: boolean;
@@ -43,6 +44,7 @@ export class WorkerFailureRecoveryService {
     const snapshot = await adminDb.collection('self_evolution_candidates').where('state', '==', 'tests_failed').get();
     const failed = [...snapshot.docs].sort((a, b) => String(a.data().updatedAt).localeCompare(String(b.data().updatedAt)));
     for (const doc of failed) {
+      if (context.preferredCandidateId && doc.id !== context.preferredCandidateId) continue;
       const recovered = await adminDb.runTransaction(async tx => {
         const current = await tx.get(doc.ref);
         if (!current.exists) return false;

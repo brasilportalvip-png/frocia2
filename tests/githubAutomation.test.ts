@@ -171,6 +171,18 @@ afterEach(() => {
 describe(
   'GitHub Automation with real commit',
   () => {
+    it('não cria commit ou PR quando a árvore resultante é igual à base', async () => {
+      process.env.GITHUB_TOKEN = 'test-token'; process.env.GITHUB_OWNER = 'test-owner'; process.env.GITHUB_REPO = 'test-repo'; process.env.GITHUB_BASE_BRANCH = 'main';
+      const fetchMock = vi.fn().mockResolvedValueOnce(mockResponse([]))
+        .mockResolvedValueOnce(mockResponse({ object: { sha: BASE_COMMIT_SHA } }))
+        .mockResolvedValueOnce(mockResponse({ tree: { sha: BASE_TREE_SHA } }))
+        .mockResolvedValueOnce(mockResponse({ sha: BLOB_SHA }))
+        .mockResolvedValueOnce(mockResponse({ sha: BASE_TREE_SHA }));
+      vi.stubGlobal('fetch', fetchMock);
+      expect(await GithubAutomationService.createBranchAndPR(candidate, patch)).toMatchObject({ success: false, noChanges: true });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/git/commits') || String(call[0]).endsWith('/pulls') && call[1]?.method === 'POST')).toBe(false);
+    });
     it('registra o motivo real do HTTP 403 ao criar PR, sem expor o token do executor', async () => {
       process.env.GITHUB_TOKEN = 'executor-private-token';
       process.env.GITHUB_OWNER = 'test-owner'; process.env.GITHUB_REPO = 'test-repo'; process.env.GITHUB_BASE_BRANCH = 'main';

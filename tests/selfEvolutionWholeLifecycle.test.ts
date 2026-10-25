@@ -1,3 +1,4 @@
+import { artifactManifest } from '../worker/patch-workspace.mjs';
 import crypto from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -64,7 +65,7 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
       const raw = JSON.stringify({ files: [{ path: 'src/fix.ts', content: 'export const fixed = true;\n' }], linesAdded: 1, linesRemoved: 0, baseSha: BASE,
         executionEvidence: { schemaVersion: 'engineering-sandbox-v1', candidateId: input.candidateId, requestNonce: input.requestNonce,
           sandboxId: 'sandbox:whole-lifecycle', baseSha: BASE, networkPolicy: 'restricted', workspaceBeforeSha256: '3'.repeat(64),
-          workspaceAfterSha256: '4'.repeat(64), diffSha256: '5'.repeat(64), rollbackVerified: true, commands, issuedAt: new Date().toISOString() } });
+          workspaceAfterSha256: '4'.repeat(64), diffSha256: '5'.repeat(64), artifactManifestSha256: artifactManifest([{ path: 'src/fix.ts', content: 'export const fixed = true;\n' }]), rollbackVerified: true, commands, issuedAt: new Date().toISOString() } });
       res.setHeader('x-frocia-worker-signature', 'sha256=' + crypto.createHmac('sha256', invalidSignature ? 'wrong-secret' : SECRET).update(raw).digest('hex'));
       res.end(raw);
     });
@@ -105,6 +106,8 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
       }
       if (url.hostname === 'api.github.com') {
         if (url.pathname.endsWith('/dispatches')) { dispatches.push(url.pathname); return new Response(null, { status: 204 }); }
+        if (url.pathname.endsWith('/actions/runs')) return Response.json({ workflow_runs: [{ id: 400, path: '.github/workflows/ci.yml', head_sha: HEAD, event: 'workflow_dispatch', status: 'completed', conclusion: 'success' }] });
+        if (url.pathname.endsWith('/actions/runs/400/jobs')) return Response.json({ jobs: [{ name: 'Build & Verify', status: 'completed', conclusion: 'success' }], total_count: 1 });
         if (url.pathname.endsWith('/check-runs')) {
           const sha = url.pathname.split('/').at(-2)!;
           return Response.json({ check_runs: [
@@ -115,7 +118,7 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
         if (url.pathname.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: BASE } });
         if (url.pathname.includes('/git/ref/heads/froc-evolution/')) return Response.json({ object: { sha: HEAD } });
         if (url.pathname.includes('/git/commits/') && method === 'GET') return Response.json({ tree: { sha: TREE }, parents: [{ sha: BASE }] });
-        if (url.pathname.endsWith('/git/blobs') || url.pathname.endsWith('/git/trees')) return Response.json({ sha: TREE });
+        if (url.pathname.endsWith('/git/blobs') || url.pathname.endsWith('/git/trees')) return Response.json({ sha: 'e'.repeat(40) });
         if (url.pathname.endsWith('/git/commits')) return Response.json({ sha: HEAD });
         if (url.pathname.endsWith('/git/refs')) { const status = branchCreated ? 422 : 201; branchCreated = true; return Response.json({}, { status }); }
         if (url.pathname.endsWith('/pulls') && method === 'GET') return Response.json(prCreated ? [{ number: 1, html_url: 'https://github.com/owner/site/pull/1', head: { sha: HEAD } }] : []);
@@ -125,7 +128,7 @@ describe('Ciclo integrado com worker HTTP e APIs externas simuladas', () => {
         }
         if (url.pathname.endsWith('/pulls/1/merge')) { merged = true; return Response.json({ merged: true, sha: MERGE }); }
         if (url.pathname.endsWith('/pulls/1')) return Response.json({ state: merged ? 'closed' : 'open', merged,
-          head: { sha: HEAD }, base: { sha: BASE }, merge_commit_sha: merged ? MERGE : undefined });
+          head: { sha: HEAD }, changed_files: 1, base: { sha: BASE }, merge_commit_sha: merged ? MERGE : undefined });
       }
       if (url.hostname === 'api.vercel.com') {
         if (url.pathname === '/v6/deployments') return Response.json({ deployments: [{ uid: 'dpl_preview', state: 'READY', meta: { githubCommitSha: HEAD } }] });
