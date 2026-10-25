@@ -124,11 +124,20 @@ export class SelfEvolutionOrchestrator {
         await transition('agent_running');
         generatedThisExecution = true;
         const patch = await CodeAgentService.generatePatchAndTest(candidate);
+        if (patch.status === 'no_change') {
+          await transition('no_change');
+          return { message: patch.noChangeReason || 'Nenhuma alteração efetiva. Não foi criada ou publicada uma correção.' };
+        }
         if (!patch.success) {
           await transition('tests_failed');
           return { message: patch.errorMessage || 'O worker não conseguiu gerar e testar o patch.' };
         }
 
+        const realFiles = patch.files.map(file => file.path);
+        const riskLevel = SelfEvolutionPolicyEngine.classifyRisk(realFiles);
+        if (!(await ImprovementPlannerService.updateCandidateMetadata(candidateId, { probableFiles: realFiles, riskLevel, requiresApproval: riskLevel === 'R2' || riskLevel === 'R3' })))
+          throw new Error('Não foi possível persistir o escopo real do patch.');
+        candidate.probableFiles = realFiles; candidate.riskLevel = riskLevel; candidate.requiresApproval = riskLevel === 'R2' || riskLevel === 'R3';
         await CertifiedPatchCheckpointService.save(candidateId, patch);
         await transition('tests_passed');
         await AuditService.logEvent({
@@ -173,6 +182,10 @@ export class SelfEvolutionOrchestrator {
           await transition('patch_created');
           pr = await GithubAutomationService.createBranchAndPR(candidate, patch);
         }
+        if (pr.noChanges) {
+          await transition('no_change');
+          return { state: 'no_change', message: pr.errorMessage || 'Nenhuma alteração efetiva; nenhum PR criado.' };
+        }
         if (!pr.success || !pr.commitSha || !pr.branchName || !pr.pullRequestUrl) {
           if (pr.requiresRegeneration) {
             await transition('approved_for_work');
@@ -204,6 +217,12 @@ export class SelfEvolutionOrchestrator {
             state: candidate.state,
             message: 'SHA do Pull Request ausente. Não é seguro retomar o CI.',
           };
+        }
+
+        if (candidate.pullRequestUrl) {
+          const changes = await GithubAutomationService.inspectEffectivePullRequest(candidate.pullRequestUrl, candidate.headCommitSha);
+          if (changes.status === 'empty') { await transition('no_change'); return { state: 'no_change', message: changes.message }; }
+          if (changes.status === 'unavailable') return { state: candidate.state, message: changes.message };
         }
 
         if (candidate.state === 'pull_request_opened' && process.env.SELF_EVOLUTION_CI_DISPATCH_REQUIRED === 'true') {

@@ -16,7 +16,8 @@ async function recordOutcome(outcome: Record<string, unknown>, requiresResume: b
   console.log('[self-evolution-runner] Resumo:', json);
   const { adminDb, isFirebaseAdminConfigured } = await import('../server/lib/firebaseAdmin.js');
   if (isFirebaseAdminConfigured()) {
-    const record = { ...outcome, requiresResume, recordedAt: new Date().toISOString(),
+    const record = { ...outcome, requiresResume, dispatchId: process.env.SELF_EVOLUTION_DISPATCH_ID || null, runId: process.env.GITHUB_RUN_ID || null, runAttempt: process.env.GITHUB_RUN_ATTEMPT || '1',
+      commitSha: process.env.GITHUB_SHA || null, runUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${process.env.GITHUB_REPOSITORY || 'brasilportalvip-png/frocia2'}/actions/runs/${process.env.GITHUB_RUN_ID}` : null, recordedAt: new Date().toISOString(),
       autonomousProductionDeployEnabled: process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED === 'true',
       fullRepositoryAccessEnabled: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true' };
     await adminDb.collection('self_evolution_config').doc('last_runner_outcome').set(record);
@@ -111,6 +112,13 @@ async function main(): Promise<void> {
     console.warn('::warning::A auditoria do site foi parcial. Consulte as limitacoes; isto nao comprova ausencia de erros.');
   }
 
+  const requestedId = process.env.SELF_EVOLUTION_REQUESTED_CANDIDATE_ID?.trim();
+  if (requestedId && !/^owner-[a-f0-9]{32}$/.test(requestedId)) throw new Error('Identificador da tarefa solicitada inválido.');
+  if (requestedId) {
+    const requested = await adminDb.collection('self_evolution_candidates').doc(requestedId).get();
+    if (!requested.exists) throw new Error('Tarefa solicitada não encontrada; nenhuma outra foi executada em seu lugar.');
+    if (requested.data()?.state === 'ci_failed') await requested.ref.update({ state: 'ci_pending' });
+  }
   const snapshot = await adminDb
     .collection('self_evolution_candidates')
     .where('state', 'in', [...RESUMABLE_STATES])
@@ -118,7 +126,7 @@ async function main(): Promise<void> {
 
   const candidate = snapshot.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((item) => RESUMABLE_STATES.has(String(item.state)))
+    .filter((item) => (!requestedId || item.id === requestedId) && RESUMABLE_STATES.has(String(item.state)))
     .sort((a, b) =>
       String(a.createdAt).localeCompare(String(b.createdAt))
     )[0];
@@ -126,13 +134,13 @@ async function main(): Promise<void> {
   let candidateId = candidate?.id;
 
   const previewRecovery = !candidateId ? await PreviewFailureRecoveryService.recoverNext({
-    sourceSha: knowledge.commitSha, runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`, now: new Date(),
+    preferredCandidateId: requestedId, sourceSha: knowledge.commitSha, runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`, now: new Date(),
   }) : null;
   if (previewRecovery?.candidateId) candidateId = previewRecovery.candidateId;
 
   if (!candidateId) {
     candidateId = await WorkerFailureRecoveryService.recoverNext({
-      sourceSha: knowledge.commitSha,
+      preferredCandidateId: requestedId, sourceSha: knowledge.commitSha,
       runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,
       manual: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch', now: new Date(),
     });
@@ -140,6 +148,10 @@ async function main(): Promise<void> {
   }
 
   if (!candidateId) {
+    if (requestedId) {
+      await recordOutcome({ candidateId: requestedId, status: 'requested_task_blocked', message: 'A tarefa solicitada não está elegível para retomada ou atingiu o limite. Nenhuma outra tarefa foi executada.', blockedPreviews: previewRecovery?.blocked || [] }, true);
+      return;
+    }
     if (previewRecovery?.unresolved) {
       await recordOutcome({ status: 'preview_requires_attention', siteAudit, blockedPreviews: previewRecovery.blocked,
         message: 'Preview pendente sem retomada elegivel: confira limite, intervalo e base do patch. Nao houve regeneracao ou merge.' }, true);
@@ -202,7 +214,7 @@ async function main(): Promise<void> {
 
   const moreCandidates = snapshot.docs.some(doc => doc.id !== candidateId && RESUMABLE_STATES.has(String(doc.data().state)));
   await recordOutcome({ candidateId, siteAudit, state: result.state, message: result.message },
-    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state) || ['tests_failed', 'preview_failed'].includes(result.state));
+    Boolean(siteAudit.requiresResume) || moreCandidates || RESUMABLE_STATES.has(result.state) || ['tests_failed', 'preview_failed'].includes(result.state) || (result.state === 'no_change' && (siteAudit.findings || 0) > 0));
 
   if (['failed', 'tests_failed', 'ci_failed'].includes(result.state)) {
     process.exitCode = 1;

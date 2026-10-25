@@ -13,6 +13,10 @@ const generate = (generateContent: any, extra: Record<string, unknown> = {}) =>
 describe('Geracao completa e validada do patch', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+  it('aceita diagnóstico explícito sem inventar um arquivo alterado', async () => {
+    const result = await generate(async () => response(JSON.stringify({ files: [], commitMessage: '', noChangeReason: 'A investigação não justificou uma mudança nestes arquivos.' })));
+    expect(result).toMatchObject({ files: [], noChangeReason: expect.stringContaining('não justificou') });
+  });
   it('reproduz a string JSON sem fechamento e recupera por geracao nova, antes de aplicar arquivos', async () => {
     const malformed = '{\n "files": [\n {\n "path": "src/App.tsx",\n "content": "' + 'x'.repeat(9200);
     expect(() => JSON.parse(malformed)).toThrow(/Unterminated string/);
@@ -34,7 +38,7 @@ describe('Geracao completa e validada do patch', () => {
     const f = vi.fn(async (_request: any) => response());
     expect(await generate(f)).toEqual(patch);
     expect(f.mock.calls[0][0].config).toMatchObject({ responseMimeType: 'application/json', candidateCount: 1,
-      responseJsonSchema: { required: ['files', 'commitMessage'], properties: { files: { minItems: 1, maxItems: 25 } } },
+      responseJsonSchema: { required: ['files', 'commitMessage'], properties: { files: { minItems: 0, maxItems: 25 } } },
       httpOptions: { timeout: 180000, retryOptions: { attempts: 1 } } });
   });
 

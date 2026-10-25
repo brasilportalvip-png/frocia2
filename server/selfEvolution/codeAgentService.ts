@@ -53,8 +53,10 @@ export interface PatchResult {
     | 'configured'
     | 'not_configured'
     | 'failed'
-    | 'success';
+    | 'success'
+    | 'no_change';
   success: boolean;
+  noChangeReason?: string;
   filesModified: string[];
   files: GeneratedFileChange[];
   linesAdded: number;
@@ -270,6 +272,9 @@ implements ICodeAgentAdapter {
         );
       }
 
+      const noChange = EngineeringSandboxEvidenceService.verifyNoChange({ rawBody, signatureHeader: response.headers.get('x-frocia-worker-signature'), signingSecret, requestNonce, candidateId: candidate.id });
+      if (noChange) return { ...createFailureResult('Nenhuma alteração efetiva.'), status: 'no_change', noChangeReason: RedactionService.redactSensitiveData(noChange.reason), baseSha: noChange.baseSha };
+
       const verification =
         EngineeringSandboxEvidenceService.verifySignedResponse({
           rawBody,
@@ -284,6 +289,7 @@ implements ICodeAgentAdapter {
         );
       }
 
+      if (!verification.evidence.artifactManifestSha256) return createFailureResult('Worker sem manifesto completo de arquivos; recertifique com a versão atual.');
       const data = JSON.parse(rawBody) as {
         files?: unknown;
         linesAdded?: unknown;

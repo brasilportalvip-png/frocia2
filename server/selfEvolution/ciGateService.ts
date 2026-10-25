@@ -97,115 +97,38 @@ export class CIGateService {
       };
     }
 
-        try {
-      const token =
-        await this.resolveAccessToken(
-          owner,
-          repo
-        );
-
-      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${refOrSha}/check-runs`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'FrocIA-SelfEvolution',
-        },
-        signal: AbortSignal.timeout(20_000),
-      });
-
-      if (!response.ok) {
-        return {
-          status: 'failed',
-          passed: false,
-          typecheckPassed: false,
-          unitTestsPassed: false,
-          securityAuditPassed: false,
-          details: `Falha ao consultar check-runs no GitHub: HTTP ${response.status}`,
-        };
-      }
-
+    const result = (status: CIGateResult['status'], details: string): CIGateResult => ({
+      status, passed: status === 'success', typecheckPassed: status === 'success', unitTestsPassed: status === 'success', securityAuditPassed: status === 'success', details,
+    });
+    try {
+      const token = await this.resolveAccessToken(owner, repo);
+      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'FrocIA-SelfEvolution' };
+      const root = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      const response = await fetch(`${root}/actions/runs?head_sha=${refOrSha}&per_page=100`, { headers, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) return result('failed', `Falha ao consultar workflows oficiais: HTTP ${response.status}.`);
       const data = await response.json();
-      const checkRuns = data.check_runs || [];
-
-      if (checkRuns.length === 0) {
-        return {
-          status: 'pending',
-          passed: false,
-          typecheckPassed: false,
-          unitTestsPassed: false,
-          securityAuditPassed: false,
-          details: 'Nenhuma verificação do GitHub Actions foi iniciada para este commit ainda.',
-        };
-      }
-
-      let typecheckPassed = false;
-      let unitTestsPassed = false;
-      let securityAuditPassed = false;
-      let allCompleted = true;
-
-      for (const run of checkRuns) {
-        if (run.status !== 'completed') {
-          allCompleted = false;
-        }
-        const name = (run.name || '').toLowerCase();
-        const conclusion = run.conclusion;
-        const trustedGithubActions =
-          run.app?.slug === 'github-actions' || run.app?.name === 'GitHub Actions';
-
-        // O workflow oficial executa typecheck, todas as suites e auditoria
-        // dentro de um único job agregado chamado "Build & Verify".
-        if (trustedGithubActions && name === 'build & verify' && conclusion === 'success') {
-          typecheckPassed = true;
-          unitTestsPassed = true;
-          securityAuditPassed = true;
-          continue;
-        }
-
-        if (!trustedGithubActions) continue;
-
-        if (name.includes('lint') || name.includes('typecheck')) {
-          if (conclusion === 'success') typecheckPassed = true;
-        }
-        if (name.includes('test') || name.includes('vitest')) {
-          if (conclusion === 'success') unitTestsPassed = true;
-        }
-        if (name.includes('audit') || name.includes('security')) {
-          if (conclusion === 'success') securityAuditPassed = true;
-        }
-      }
-
-      if (!allCompleted) {
-        return {
-          status: 'pending',
-          passed: false,
-          typecheckPassed,
-          unitTestsPassed,
-          securityAuditPassed,
-          details: 'Verificações do CI do GitHub Actions ainda em andamento.',
-        };
-      }
-
-      const passed = typecheckPassed && unitTestsPassed && securityAuditPassed;
-
-      return {
-        status: passed ? 'success' : 'failed',
-        passed,
-        typecheckPassed,
-        unitTestsPassed,
-        securityAuditPassed,
-        details: passed
-          ? 'Todas as verificações obrigatórias de CI (lint, testes, segurança) foram concluídas com sucesso.'
-          : 'Uma ou mais verificações de CI (lint, testes, segurança) falharam ou não foram aprovadas.',
-      };
-    } catch (err: any) {
-      return {
-        status: 'failed',
-        passed: false,
-        typecheckPassed: false,
-        unitTestsPassed: false,
-        securityAuditPassed: false,
-        details: `Erro na consulta do CI Gate: ${err?.message || err}`,
-      };
+      const runs = (Array.isArray(data.workflow_runs) ? data.workflow_runs : []).filter(run => run.head_sha === refOrSha &&
+        String(run.path || '').split('@')[0] === '.github/workflows/ci.yml' && ['workflow_dispatch', 'pull_request', 'push'].includes(run.event));
+      // The explicit official dispatch is the supported path for bot-generated PRs.
+      // A separate PR approval request must not hide its result or replace it.
+      const eligible = runs.filter(run => run.conclusion !== 'action_required');
+      const latest = (eligible.length ? eligible : runs).sort((a, b) => Number(b.id) - Number(a.id))[0];
+      if (!latest) return result('pending', 'Nenhuma execução do workflow oficial ci.yml comprovada para este SHA.');
+      if (latest.conclusion === 'action_required') return result('pending', 'O workflow oficial aguarda aprovação no GitHub; nenhum dispatch alternativo foi comprovado.');
+      if (latest.status !== 'completed') return result('pending', 'O workflow oficial ainda está em andamento.');
+      if (latest.conclusion !== 'success') return result('failed', `O workflow oficial terminou com ${String(latest.conclusion || 'resultado ausente')}.`);
+      if (!Number.isSafeInteger(latest.id) || latest.id <= 0) return result('failed', 'Identificador de execução oficial inválido.');
+      const jobsResponse = await fetch(`${root}/actions/runs/${latest.id}/jobs?filter=latest&per_page=100`, { headers, signal: AbortSignal.timeout(20000) });
+      if (!jobsResponse.ok) return result('failed', `Não foi possível conferir os jobs oficiais: HTTP ${jobsResponse.status}.`);
+      const jobsData = await jobsResponse.json();
+      const jobs = Array.isArray(jobsData.jobs) ? jobsData.jobs : [];
+      if (!jobs.length || jobsData.total_count > jobs.length) return result('pending', 'Lista de jobs oficiais ausente ou incompleta.');
+      if (jobs.some(job => job.status !== 'completed')) return result('pending', 'Jobs do workflow oficial ainda em andamento.');
+      if (jobs.some(job => job.conclusion !== 'success')) return result('failed', 'Existe job oficial reprovado, cancelado ou sem aprovação; um sucesso não o substitui.');
+      if (!jobs.some(job => job.name === 'Build & Verify')) return result('failed', 'O job obrigatório Build & Verify não foi comprovado no workflow oficial.');
+      return result('success', `CI oficial comprovado para o SHA: execução ${latest.id}; todos os jobs aprovados.`);
+    } catch {
+      return result('failed', 'Falha de comunicação ao conferir o workflow oficial de CI.');
     }
   }
 }

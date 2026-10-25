@@ -1,3 +1,4 @@
+import { artifactManifest, changedPatch, verifyArtifactFiles } from './patch-workspace.mjs';
 import { createEngineeringModelSession } from './engineering-model-session.mjs';
 import { installPreviewProtection, previewProtectionHeaders } from './preview-protection.mjs';
 import { registerProfessionalFactory } from './professional-factory.mjs';
@@ -166,7 +167,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         const clean = await run('git', ['clean', '-fd'], cwd, 30_000, {}, true);
         if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
       },
-      generate: async ({ feedback, attempt }) => { markStage('generation'); return generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt, modelSession); },
+      generate: async ({ feedback, attempt }) => { markStage('generation'); return changedPatch(cwd, await generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt, modelSession)); },
       apply: async (patch) => {
         markStage('apply');
         const nextFiles = [];
@@ -180,6 +181,8 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         outputFiles = nextFiles;
         const ownership = await run('chown', ['-R', '10001:10001', cwd], temp, 30_000);
         if (ownership.exitCode !== 0) throw new Error('sandbox_ownership_failed');
+        const indexed = await run('git', ['add', '--intent-to-add', '--', ...nextFiles.map(file => file.path)], cwd, 30_000, {}, true);
+        if (indexed.exitCode !== 0) throw new Error('patch_index_failed');
       },
       certify: async () => {
         markStage('certification');
@@ -195,6 +198,10 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
           attemptCommands.push(await mustRun('production-integrity', 'npm', ['run', 'validate:production-integrity'], 'npm run validate:production-integrity', cwd));
           attemptCommands.push(await mustRun('build', 'npm', ['run', 'build'], 'npm run build', cwd));
           attemptCommands.push(await mustRun('diff-check', 'git', ['diff', '--check'], 'git diff --check', cwd));
+          await verifyArtifactFiles(cwd, outputFiles);
+          const changed = await run('git', ['diff', '--name-only', '-z'], cwd, 30_000, {}, true);
+          if (changed.exitCode !== 0 || changed.stdout.toString().split('\0').filter(Boolean).some(file => !outputFiles.some(output => output.path === file)))
+            throw new Error('unreported_changes_during_certification');
           commands.splice(0, commands.length, ...attemptCommands);
           return { passed: true, evidenceRefs: attemptCommands.map((item) => `${item.id}:${item.stdoutSha256}`) };
         } catch (error) {
@@ -205,6 +212,8 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
       },
     });
     repairCycleReport = repairCycle;
+    if (repairCycle.noChange) return sendSigned(res, { schemaVersion: 'engineering-no-change-v1', candidateId: body.candidateId, requestNonce: body.requestNonce,
+      baseSha, status: 'no_change', reason: repairCycle.reason, issuedAt: new Date().toISOString() });
     if (!repairCycle.passed || !repairCycle.patch) throw new Error('autonomous_repair_exhausted');
     const generated = repairCycle.patch;
     if (!REQUIRED_COMMANDS.every((id) => commands.some((command) => command.id === id))) throw new Error('required_commands_missing');
@@ -213,6 +222,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
     const after = await workspaceDigest(cwd, true);
     const stats = await run('git', ['diff', '--numstat'], cwd, 30_000, {}, true);
     if (diff.exitCode !== 0 || stats.exitCode !== 0) throw new Error('git_diff_failed');
+    if (!diff.stdout.length || after === before) throw new Error('empty_patch_not_certifiable');
     let linesAdded = 0; let linesRemoved = 0;
     for (const line of stats.stdout.toString().split('\n')) {
       const [added, removed] = line.split('\t');
@@ -240,7 +250,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         schemaVersion: 'engineering-sandbox-v1', candidateId: body.candidateId,
         requestNonce: body.requestNonce, sandboxId: process.env.SANDBOX_INSTANCE_ID || `container:${crypto.randomUUID()}`,
         baseSha, networkPolicy: 'restricted', workspaceBeforeSha256: before,
-        workspaceAfterSha256: after, diffSha256: sha(diff.stdout), rollbackVerified,
+        workspaceAfterSha256: after, diffSha256: sha(diff.stdout), artifactManifestSha256: artifactManifest(outputFiles), rollbackVerified,
         commands, issuedAt: new Date().toISOString(),
       },
     });

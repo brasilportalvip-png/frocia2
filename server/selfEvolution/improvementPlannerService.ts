@@ -122,15 +122,15 @@ export class ImprovementPlannerService {
 
   static async updateCandidateMetadata(
     id: string,
-    metadata: Pick<
+    metadata: Partial<Pick<
       ImprovementCandidate,
       | 'branchName'
       | 'headCommitSha'
       | 'pullRequestUrl'
       | 'previewUrl'
       | 'productionMergeSha'
-      | 'productionDeploymentId'
-    >
+      | 'productionDeploymentId' | 'probableFiles' | 'riskLevel' | 'requiresApproval'
+    >>
   ): Promise<boolean> {
     const cleaned = Object.fromEntries(
       Object.entries(metadata).filter(

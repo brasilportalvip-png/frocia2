@@ -31,6 +31,11 @@ export async function executeAutonomousRepairCycle(options) {
       if (error?.retryable !== true) break;
       continue;
     }
+    if (patch?.files?.length === 0 && typeof patch.noChangeReason === 'string') {
+      await options.restoreBaseline();
+      return { schemaVersion: 'autonomous-repair-cycle-v1', passed: false, noChange: true, reason: patch.noChangeReason,
+        selectedAttempt: null, attempts, patch: null, digest: crypto.createHash('sha256').update(JSON.stringify(attempts)).digest('hex') };
+    }
     const patchDigest = crypto.createHash('sha256').update(JSON.stringify(patch)).digest('hex');
     await options.apply(patch);
     const result = await options.certify({ attempt, patchDigest });

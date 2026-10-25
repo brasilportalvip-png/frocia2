@@ -1,4 +1,5 @@
 export type CandidateState =
+  | 'no_change'
   | 'detected'
   | 'triaged'
   | 'duplicate'
