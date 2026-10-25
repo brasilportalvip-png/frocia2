@@ -82,4 +82,12 @@ describe('Falhas reais do site alimentam os agentes', () => {
     report.consoleErrors = ['TypeError tardio ao abrir uma vista'];
     expect(collectProductionFindings(html(), report).map(f => f.code)).toEqual(['BROWSER_console-errors']);
   });
+  it('preserva o erro exato quando o cenario informa apenas a contagem, mascarando segredos', () => {
+    const report = browser([{ id: 'console-errors', status: 'failed', details: '1-console-errors', durationMs: 1, traceSha256: 'b'.repeat(64) }]);
+    report.consoleErrors = ['TypeError: cannot read property at ChatCentral.tsx:123; Authorization: Bearer abcdefghijklmnopqrstuvwxyz'];
+    const findings = collectProductionFindings(html(), report);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].evidence).toContain('TypeError: cannot read property at ChatCentral.tsx:123');
+    expect(findings[0].evidence).not.toContain('abcdefghijklmnopqrstuvwxyz');
+  });
 });

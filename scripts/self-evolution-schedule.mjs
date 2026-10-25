@@ -1,3 +1,4 @@
+import { continuationFromEvent } from './self-evolution-events.mjs';
 const TIME_ZONE = 'America/Sao_Paulo';
 const WORKFLOW_FILE = 'self-evolution-runner.yml';
 const localClock = new Intl.DateTimeFormat('en-CA', {
@@ -23,6 +24,11 @@ export async function planSelfEvolutionRun({ github, context, enabled = '', now 
   // Preserva a possibilidade de testar manualmente, mesmo com o automatico pausado.
   if (context.eventName === 'workflow_dispatch') return result(true, 'manual');
   if (enabled === 'false') return result(false, 'runner_disabled');
+  if (['workflow_run', 'status'].includes(context.eventName)) {
+    const continuation = continuationFromEvent(context);
+    return { ...result(continuation.accepted, continuation.accepted ? 'automatic_continuation' : 'unrelated_event'),
+      resumeOnly: true, resumeSha: continuation.resumeSha };
+  }
   if (context.eventName !== 'schedule') throw new Error('Gatilho de autoevolucao nao reconhecido.');
   if (minutes < 9 * 60 + 17) return result(false, 'before_daily_window');
 
@@ -31,16 +37,15 @@ export async function planSelfEvolutionRun({ github, context, enabled = '', now 
     ...context.repo,
     workflow_id: WORKFLOW_FILE,
     branch,
-    status: 'success',
     // Janela ampla; a decisao final usa o dia de Brasilia, inclusive perto da meia-noite UTC.
     created: `>=${new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString()}`,
     per_page: 100,
     request: { timeout: 15_000 },
   });
 
-  for (const run of runs) {
-    if (run.head_sha !== context.sha || run.id === context.runId || run.head_branch !== branch || run.conclusion !== 'success' ||
-        !['schedule', 'workflow_dispatch'].includes(run.event)) continue;
+  for (const run of [...runs].sort((a, b) => Number(b.id) - Number(a.id))) {
+    if (run.head_sha !== context.sha || run.id === context.runId || run.head_branch !== branch ||
+        !['schedule', 'workflow_dispatch', 'workflow_run', 'status'].includes(run.event)) continue;
     const startedAt = new Date(run.created_at);
     if (!Number.isFinite(startedAt.getTime()) || localParts(startedAt).dateKey !== dateKey) continue;
 
@@ -48,6 +53,8 @@ export async function planSelfEvolutionRun({ github, context, enabled = '', now 
       ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
       request: { timeout: 15_000 },
     });
+    const execution = jobs.find(job => job.name === 'execute' && job.conclusion !== 'skipped');
+    if (!execution) continue;
     // Um workflow verde somente com a verificacao, ou com execute ignorado,
     // nao comprova que o ciclo dos agentes executou.
     if (jobs.some((job) => job.name === 'execute' && job.conclusion === 'success' &&
@@ -55,6 +62,9 @@ export async function planSelfEvolutionRun({ github, context, enabled = '', now 
       const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
       return result(false, 'already_completed', url);
     }
+    // Only the latest execution can settle the day. An older green marker must
+    // not hide a later task waiting for CI or a failed delivery.
+    return result(true, 'missing_daily_run');
   }
 
   return result(true, 'missing_daily_run');

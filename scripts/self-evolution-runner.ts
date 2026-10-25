@@ -1,4 +1,6 @@
 import { runnerOutcomePolicy } from '../server/selfEvolution/runnerOutcomePolicy.js';
+import { RESUMABLE_STATES, selectRunnerCandidate, type RunnerCandidate } from '../server/selfEvolution/runnerContinuationPolicy.js';
+import { CIFailureRecoveryService, planCIFailureRecovery } from '../server/selfEvolution/ciFailureRecoveryService.js';
 import { PreviewFailureRecoveryService } from '../server/selfEvolution/previewFailureRecoveryService.js';
 import { randomUUID } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
@@ -16,31 +18,18 @@ async function recordOutcome(outcome: Record<string, unknown>, requiresResume: b
   console.log('[self-evolution-runner] Resumo:', json);
   const { adminDb, isFirebaseAdminConfigured } = await import('../server/lib/firebaseAdmin.js');
   if (isFirebaseAdminConfigured()) {
-    const record = { ...outcome, requiresResume, dispatchId: process.env.SELF_EVOLUTION_DISPATCH_ID || null, runId: process.env.GITHUB_RUN_ID || null, runAttempt: process.env.GITHUB_RUN_ATTEMPT || '1',
+    const ownerRequest = typeof outcome.candidateId === 'string' && /^owner-[a-f0-9]{32}$/.test(outcome.candidateId)
+      ? await adminDb.collection('self_evolution_owner_requests').doc(outcome.candidateId).get() : null;
+    const correlatedDispatchId = process.env.SELF_EVOLUTION_DISPATCH_ID || ownerRequest?.data()?.dispatchLease || null;
+    const record = { ...outcome, requiresResume, runId: process.env.GITHUB_RUN_ID || null, runAttempt: process.env.GITHUB_RUN_ATTEMPT || '1',
       commitSha: process.env.GITHUB_SHA || null, runUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${process.env.GITHUB_REPOSITORY || 'brasilportalvip-png/frocia2'}/actions/runs/${process.env.GITHUB_RUN_ID}` : null, recordedAt: new Date().toISOString(),
+      dispatchId: correlatedDispatchId, triggerEvent: process.env.GITHUB_EVENT_NAME || null,
       autonomousProductionDeployEnabled: process.env.AUTONOMOUS_PRODUCTION_DEPLOY_ENABLED === 'true',
       fullRepositoryAccessEnabled: process.env.SELF_EVOLUTION_FULL_REPOSITORY_ACCESS === 'true' };
     await adminDb.collection('self_evolution_config').doc('last_runner_outcome').set(record);
     if (typeof outcome.candidateId === 'string') await adminDb.collection('self_evolution_candidate_outcomes').doc(outcome.candidateId).set(record);
   }
 }
-
-const RESUMABLE_STATES = new Set([
-  'detected',
-  'triaged',
-  'awaiting_work_approval',
-  'approved_for_work',
-  'agent_running',
-  'tests_passed',
-  'patch_created',
-  'pull_request_opened',
-  'ci_pending',
-  'ci_passed',
-  'preview_deployed',
-  'awaiting_release_approval',
-  'approved_for_release',
-  'monitoring',
-]);
 
 async function main(): Promise<void> {
   if (!process.argv.includes('--run')) {
@@ -99,8 +88,12 @@ async function main(): Promise<void> {
     routes: knowledge.routes.length, views: knowledge.navigation.length, agents: knowledge.agents.length,
     incompleteFiles: knowledge.incompleteFiles,
   });
-  // A auditoria real precede a fila e as novidades externas, mesmo com tarefas pendentes.
-  const siteAudit = await ProductionSiteAuditDiscoveryService.discoverOne(new Date(), {
+  const resumeOnly = process.env.SELF_EVOLUTION_RESUME_ONLY === 'true';
+  const resumeSha = process.env.SELF_EVOLUTION_RESUME_SHA?.trim();
+  if (resumeOnly && !/^[a-f0-9]{40}$/i.test(resumeSha || '')) throw new Error('Retomada automatica sem SHA completo.');
+  // Discovery stays in the daily/manual cycle. CI/deployment events can only
+  // complete an existing delivery; they never create or pay for another patch.
+  const siteAudit = resumeOnly ? await ProductionSiteAuditDiscoveryService.summaryForContinuation(knowledge.commitSha) : await ProductionSiteAuditDiscoveryService.discoverOne(new Date(), {
     force: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
     knowledge,
   });
@@ -117,28 +110,37 @@ async function main(): Promise<void> {
   if (requestedId) {
     const requested = await adminDb.collection('self_evolution_candidates').doc(requestedId).get();
     if (!requested.exists) throw new Error('Tarefa solicitada não encontrada; nenhuma outra foi executada em seu lugar.');
-    if (requested.data()?.state === 'ci_failed') await requested.ref.update({ state: 'ci_pending' });
   }
   const snapshot = await adminDb
     .collection('self_evolution_candidates')
     .where('state', 'in', [...RESUMABLE_STATES])
     .get();
 
-  const candidate = snapshot.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((item) => (!requestedId || item.id === requestedId) && RESUMABLE_STATES.has(String(item.state)))
-    .sort((a, b) =>
-      String(a.createdAt).localeCompare(String(b.createdAt))
-    )[0];
+  const recoveryContext = { runId: (process.env.GITHUB_RUN_ID || randomUUID()) + ':' + (process.env.GITHUB_RUN_ATTEMPT || '1'), now: new Date() };
+  const eligible = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as RunnerCandidate)
+    .filter(item => item.state !== 'ci_failed' || requestedId === item.id || resumeSha === item.headCommitSha || planCIFailureRecovery(item, recoveryContext));
+  const candidate = selectRunnerCandidate(eligible, {
+    requestedId, resumeOnly, resumeSha,
+  });
 
   let candidateId = candidate?.id;
 
-  const previewRecovery = !candidateId ? await PreviewFailureRecoveryService.recoverNext({
+  if (candidate?.state === 'ci_failed' && !(await CIFailureRecoveryService.recover(candidate.id, recoveryContext))) {
+    await recordOutcome({ candidateId: candidate.id, status: 'ci_retry_blocked', message: 'CI reprovado; intervalo ou limite de retomadas atingido. A tarefa foi preservada.' }, true);
+    return;
+  }
+
+  if (resumeOnly && !candidateId) {
+    console.log('[self-evolution-runner] Nenhuma entrega pendente corresponde ao evento; nenhuma outra tarefa foi executada.');
+    return;
+  }
+
+  const previewRecovery = !resumeOnly && !candidateId ? await PreviewFailureRecoveryService.recoverNext({
     preferredCandidateId: requestedId, sourceSha: knowledge.commitSha, runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`, now: new Date(),
   }) : null;
   if (previewRecovery?.candidateId) candidateId = previewRecovery.candidateId;
 
-  if (!candidateId) {
+  if (!resumeOnly && !candidateId) {
     candidateId = await WorkerFailureRecoveryService.recoverNext({
       preferredCandidateId: requestedId, sourceSha: knowledge.commitSha,
       runId: `${process.env.GITHUB_RUN_ID || randomUUID()}:${process.env.GITHUB_RUN_ATTEMPT || '1'}`,
@@ -179,6 +181,8 @@ async function main(): Promise<void> {
       candidateId = innovation.candidateId;
     }
   }
+
+  await adminDb.collection('self_evolution_candidates').doc(candidateId).update({ lastLifecycleAttemptAt: new Date().toISOString() });
 
   // Confirmar as integracoes antes de cobrar a geracao de um patch.
   const githubAccess = await GithubAutomationService.verifyRepositoryAccess();

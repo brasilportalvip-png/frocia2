@@ -129,7 +129,7 @@ export class ImprovementPlannerService {
       | 'pullRequestUrl'
       | 'previewUrl'
       | 'productionMergeSha'
-      | 'productionDeploymentId' | 'probableFiles' | 'riskLevel' | 'requiresApproval'
+      | 'productionDeploymentId' | 'probableFiles' | 'riskLevel' | 'requiresApproval' | 'ciRetryRequired'
     >>
   ): Promise<boolean> {
     const cleaned = Object.fromEntries(

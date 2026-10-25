@@ -58,6 +58,16 @@ describe('Retomada do ciclo depois do merge', () => {
     expect((await SelfEvolutionOrchestrator.processCandidateLifecycle('publication-test')).state).toBe('approved_for_work');
     expect(patch).not.toHaveBeenCalled();
   });
+  it('dispara de fato a retentativa do CI mesmo quando o primeiro CI usou um GitHub App', async () => {
+    const { candidate, patch } = setup();
+    candidate.state = 'pull_request_opened'; candidate.branchName = 'froc-evolution/r2/retry'; candidate.headCommitSha = 'b'.repeat(40); candidate.ciRetryRequired = true;
+    vi.stubEnv('SELF_EVOLUTION_CI_DISPATCH_REQUIRED', 'false');
+    const dispatch = vi.spyOn(GithubAutomationService, 'dispatchOfficialCI').mockResolvedValue({ success: true, message: 'Retentativa solicitada.' });
+    expect((await SelfEvolutionOrchestrator.processCandidateLifecycle(candidate.id)).state).toBe('ci_pending');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(ImprovementPlannerService.updateCandidateMetadata).toHaveBeenCalledWith(candidate.id, { ciRetryRequired: false });
+    expect(patch).not.toHaveBeenCalled();
+  });
 
   function staleSetup() {
     const prepared = setup(); prepared.candidate.state = 'patch_created';

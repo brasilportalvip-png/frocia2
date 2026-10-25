@@ -70,10 +70,12 @@ export function collectProductionFindings(html: SiteAuditReport, browser: Autono
   }
   for (const scenario of browser.scenarios) {
     if (scenario.status !== 'failed') continue;
+    const diagnosticEvents = scenario.id === 'console-errors' ? browser.consoleErrors : scenario.id === 'network-errors' ? browser.failedRequests : [];
+    const diagnostic = diagnosticEvents.slice(0, 4).map(clean).join(' | ');
     findings.push({
       code: `BROWSER_${scenario.id}`, severity: 'high', url: html.origin + '/',
       message: `Falha reproduzida no navegador: ${scenario.id}.`,
-      evidence: `${clean(scenario.details)}; trace SHA256 ${scenario.traceSha256}`,
+      evidence: `${clean(scenario.details)}${diagnostic ? '; mensagens: ' + diagnostic : ''}; trace SHA256 ${scenario.traceSha256}`,
       probableFiles: ['src/App.tsx', 'src/components/ChatCentral.tsx'],
     });
   }
@@ -98,6 +100,17 @@ export function collectProductionFindings(html: SiteAuditReport, browser: Autono
 }
 
 export class ProductionSiteAuditDiscoveryService {
+  static async summaryForContinuation(repositorySha: string) {
+    const configuredUrl = process.env.SELF_EVOLUTION_TARGET_URL?.trim();
+    if (!configuredUrl || !isFirebaseAdminConfigured()) throw new Error('Auditoria persistente indisponivel para retomada.');
+    const target = new URL(configuredUrl);
+    const id = 'site-' + createHash('sha256').update(target.origin).digest('hex').slice(0, 16);
+    const saved = await adminDb.collection('self_evolution_site_audits').doc(id).get();
+    const data = saved.data();
+    const coverageComplete = data?.repositorySha === repositorySha && data?.status === 'complete';
+    return { status: 'cached_audit', findings: Number(data?.findingsCount || 0), coverageComplete, requiresResume: !coverageComplete,
+      limitations: [...(data?.limitations || []), 'Retomada da entrega usa a auditoria registrada; uma nova varredura pertence ao ciclo diario.'] };
+  }
   static async discoverOne(now = new Date(), options: { force?: boolean; knowledge?: SelfSiteKnowledge } = {}): Promise<{
     status: 'created' | 'already_audited' | 'findings_recorded' | 'no_findings' | 'partial' | 'not_configured';
     candidateId?: string;

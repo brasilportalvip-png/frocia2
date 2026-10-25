@@ -1,6 +1,10 @@
 name: Froc.IA - Autoevolucao Externa
 
 on:
+  workflow_run:
+    workflows: ['Froc.IA CI/CD Pipeline', 'Capability Regression Evidence']
+    types: [completed]
+  status:
   workflow_dispatch:
     inputs:
       dispatch_id:
@@ -20,10 +24,6 @@ permissions:
   pull-requests: write
   actions: write
 
-concurrency:
-  group: frocia-self-evolution-external
-  cancel-in-progress: false
-
 jobs:
   check-schedule:
     runs-on: ubuntu-22.04
@@ -33,10 +33,13 @@ jobs:
       actions: read
     outputs:
       should_run: ${{ steps.schedule.outputs.should_run }}
+      resume_only: ${{ steps.schedule.outputs.resume_only }}
+      resume_sha: ${{ steps.schedule.outputs.resume_sha }}
     steps:
       - name: Baixar verificacao do agendamento
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Restringir rede da verificacao
@@ -65,6 +68,8 @@ jobs:
               github, context, enabled: process.env.SELF_EVOLUTION_RUNNER_ENABLED,
             });
             core.setOutput('should_run', String(decision.shouldRun));
+            core.setOutput('resume_only', String(decision.resumeOnly === true));
+            core.setOutput('resume_sha', decision.resumeSha || '');
             core.info(`[self-evolution-schedule] ${decision.dateKey}: ${decision.reason}`);
             if (decision.reason === 'runner_disabled') {
               core.warning('Agendamento bloqueado: SELF_EVOLUTION_RUNNER_ENABLED=false nas variaveis do repositorio.');
@@ -75,6 +80,8 @@ jobs:
               before_daily_window: 'Aguardando 09h17 de Brasilia; um evento antigo chegou atrasado.',
               already_completed: 'O ciclo de hoje ja executou com sucesso; worker e modelos nao serao chamados novamente.',
               missing_daily_run: 'Nenhuma execucao concluida hoje; iniciando o ciclo automatico ou sua recuperacao.',
+              automatic_continuation: 'Retomada automatica do commit cujo CI ou deployment terminou.',
+              unrelated_event: 'Evento sem origem oficial ou sem relacao com a manutencao; executor nao iniciado.',
             };
             core.summary
               .addHeading('Agendamento dos agentes')
@@ -95,6 +102,9 @@ jobs:
     if: ${{ needs.check-schedule.outputs.should_run == 'true' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    concurrency:
+      group: frocia-self-evolution-external
+      cancel-in-progress: false
 
     steps:
       - name: Conferir acesso seguro ao GitHub
@@ -109,6 +119,7 @@ jobs:
       - name: Baixar codigo
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Restringir conexoes externas
@@ -278,6 +289,8 @@ jobs:
         env:
           SELF_EVOLUTION_DISPATCH_ID: ${{ inputs.dispatch_id || '' }}
           SELF_EVOLUTION_REQUESTED_CANDIDATE_ID: ${{ inputs.candidate_id || '' }}
+          SELF_EVOLUTION_RESUME_ONLY: ${{ needs.check-schedule.outputs.resume_only }}
+          SELF_EVOLUTION_RESUME_SHA: ${{ needs.check-schedule.outputs.resume_sha }}
           NODE_ENV: test
           SELF_EVOLUTION_RUNNER_ENABLED: 'true'
           SELF_EVOLUTION_ENABLED: 'true'

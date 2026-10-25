@@ -129,4 +129,16 @@ describe('Recuperacao do agendamento dos agentes', () => {
     const github = api([successfulRun()], { 18: [{ name: 'execute', conclusion: 'success' }] });
     await expect(planSelfEvolutionRun({ github, context, now: NOW })).resolves.toMatchObject({ shouldRun: true });
   });
+  it('um marcador antigo nao bloqueia uma tarefa posterior que ainda espera CI', async () => {
+    const github = api([successfulRun(), successfulRun({ id: 21 })], {
+      18: [completedJob()], 21: [{ name: 'execute', conclusion: 'success', steps: [{ name: 'Rodada diaria finalizada', conclusion: 'skipped' }] }],
+    });
+    expect(await planSelfEvolutionRun({ github, context, now: NOW })).toMatchObject({ shouldRun: true });
+  });
+  it('uma falha posterior nao fica escondida pelo marcador antigo', async () => {
+    const github = api([successfulRun(), successfulRun({ id: 22, conclusion: 'failure' })], {
+      18: [completedJob()], 22: [{ name: 'execute', conclusion: 'failure' }],
+    });
+    expect(await planSelfEvolutionRun({ github, context, now: NOW })).toMatchObject({ shouldRun: true });
+  });
 });
