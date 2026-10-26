@@ -11,7 +11,7 @@ echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo ERRO: Node.js 22 ou superior nao foi encontrado.
+  echo ERRO: Node.js 24 LTS nao foi encontrado.
   echo Baixe em: https://nodejs.org/
   start "" "https://nodejs.org/"
   pause
@@ -19,8 +19,8 @@ if errorlevel 1 (
 )
 
 for /f "tokens=1 delims=." %%V in ('node -p "process.versions.node"') do set "NODE_MAJOR=%%V"
-if %NODE_MAJOR% LSS 22 (
-  echo ERRO: Node.js 22 ou superior e obrigatorio.
+if not "%NODE_MAJOR%"=="24" (
+  echo ERRO: Node.js 24 LTS e obrigatorio.
   node --version
   pause
   exit /b 1
