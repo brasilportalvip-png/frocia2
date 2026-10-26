@@ -18,9 +18,9 @@ describe('Hardening final de produção', () => {
     expect(routes).toContain("executionEndpoint: '/api/admin/ai/evaluations/run'");
   });
 
-  it('mantém CI no Node 22 e auditoria sem mascarar falhas', () => {
+  it('mantém CI no Node 24 e auditoria sem mascarar falhas', () => {
     const ci = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
-    expect(ci).toContain("node-version: '22'");
+    expect(ci).toContain("node-version: '24.22.1'");
     expect(ci).toContain('npm audit --omit=dev --audit-level=moderate');
     expect(ci).not.toContain('|| true');
   });

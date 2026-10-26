@@ -37,12 +37,12 @@ jobs:
           node -e "const url = new URL(process.env.TARGET_URL); if (url.protocol !== 'https:' || ['localhost', '127.0.0.1'].includes(url.hostname)) process.exit(1)"
 
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Node.js 22 LTS
-        uses: actions/setup-node@v4
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22.12.0'
+          node-version: '24.22.1'
           cache: npm
 
       - name: Install Dependencies
@@ -58,7 +58,7 @@ jobs:
 
       - name: Upload Playwright evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: deployed-smoke-${{ inputs.environment }}-${{ github.sha }}
           path: |

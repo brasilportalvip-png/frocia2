@@ -49,6 +49,15 @@ describe('Falhas reais do site alimentam os agentes', () => {
     expect(findings[0].evidence).toContain('b'.repeat(64));
   });
 
+  it('preserva defeitos reais de uma página estática mesmo com um script de analytics', () => {
+    const source = page({ signals: { likelyClientRendered: false, scripts: 1 } as SiteAuditPage['signals'] });
+    const codes = ['H1_COUNT', 'THIN_CONTENT', 'IMAGE_ALT_MISSING'];
+    source.issues = codes.map(code => ({ ...source.issues[0], code,
+      evidence: '<body><p>Olá</p><img src="foto.png"><script>console.log("analytics")</script></body>' }));
+    expect(collectProductionFindings(html({ pages: [source] }), browser()).map(finding => finding.code).sort())
+      .toEqual([...codes].sort());
+  });
+
   it('encaminha paginas internas quebradas e erros 5xx sem transformar 401/403 em bugs', () => {
     const failures = [401, 403, 404, 500].map(status => ({
       status, code: `http_${status}`, url: `https://froc.example.com/pagina-${status}`, message: `HTTP ${status}`,
