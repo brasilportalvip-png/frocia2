@@ -123,6 +123,23 @@ describe('Sitemap, Robots, SEO Técnico e Integridade de Arquivos (Complemento P
     expect(parsed[0].target.package_name).toBe('br.com.portalvipbrasil.frocia');
   });
 
+  it('25. index.html deve conter conteúdo textual suficiente (>= 100 palavras) e exatamente um h1 para evitar THIN_CONTENT e H1_COUNT', () => {
+    const content = fs.readFileSync(indexHtmlPath, 'utf-8');
+    const h1Matches = content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi) || [];
+    expect(h1Matches).toHaveLength(1);
+
+    const bodyMatch = content.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+    expect(bodyMatch).toBeTruthy();
+    const bodyContent = bodyMatch![1]
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const wordCount = bodyContent.split(/\s+/).filter(Boolean).length;
+    expect(wordCount).toBeGreaterThanOrEqual(100);
+  });
+
   it('15 & 16. Servidor Express deve responder HTTP 200 e MIME correto para sitemap.xml, robots.txt, sitemap-index.xml e assetlinks.json', async () => {
     const app = await createApp();
     const server = http.createServer(app);
