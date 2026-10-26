@@ -4,6 +4,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+.serverless-runtime-*/
 .DS_Store
 *.log
 .env*

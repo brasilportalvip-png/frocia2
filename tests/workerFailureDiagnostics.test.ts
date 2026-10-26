@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SelfEvolutionPolicyEngine } from '../server/selfEvolution/selfEvolutionPolicyEngine.js';
-import { commandDiagnosticExcerpt, workerFailurePayload } from '../worker/worker-failure.mjs';
+import { commandDiagnosticExcerpt, compilerDiagnosticLines, workerFailurePayload } from '../worker/worker-failure.mjs';
 import { EngineeringSandboxEvidenceService } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
 import type { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
@@ -20,6 +20,17 @@ function verify(payload: unknown) {
 const candidate = { id: body.candidateId, title: 'Falha real', probableFiles: ['src/App.tsx'] } as ImprovementCandidate;
 
 describe('Diagnostico autenticado do HTTP 422', () => {
+  it('envia erros de TypeScript distintos alem do primeiro trecho, com limite e sem segredos', () => {
+    vi.stubEnv('GEMINI_API_KEY', 'compiler-secret-value');
+    const errors = Array.from({ length: 30 }, (_, index) => `tests/test${index}.test.ts(1,1): error TS2554: compiler-secret-value ${'x'.repeat(1200)}`);
+    const diagnostic = compilerDiagnosticLines(`npm run typecheck\n${errors.join('\n')}\n${errors[0]}`, '');
+    expect(diagnostic).toHaveLength(20);
+    expect(diagnostic[0]).toContain('tests/test0.test.ts(1,1): error TS2554');
+    expect(diagnostic[19]).toContain('tests/test19.test.ts');
+    expect(diagnostic.every(line => line.length <= 1000)).toBe(true);
+    expect(JSON.stringify(diagnostic)).not.toContain('compiler-secret-value');
+  });
+
   beforeEach(() => { vi.spyOn(SelfEvolutionPolicyEngine, 'isSelfEvolutionEnabledPersisted').mockResolvedValue(true); });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
