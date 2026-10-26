@@ -651,19 +651,12 @@ selfEvolutionRouter.post(
     }
 
     try {
-      await adminDb
-        .collection('self_evolution_config')
-        .doc('system')
-        .set(
-          {
-            SELF_EVOLUTION_ENABLED: false,
-            stoppedBy: req.user!.uid,
-            stoppedAt:
-              new Date().toISOString(),
-            reason
-          },
-          { merge: true }
-        );
+      const receipt = await SelfSiteOwnerService.setEnabled(req.user!.uid, false, reason);
+      if (receipt.status === 'blocked') return res.status(503).json({ success: false, error: receipt.message });
+      await AuditService.logEvent({ actor: req.user!.uid, action: 'emergency_stop', resource: 'self_evolution_system',
+        newState: { SELF_EVOLUTION_ENABLED: false }, riskLevel: 'R3', result: 'success', reason,
+        correlationId: (req as any).correlationId });
+      return res.json({ success: true, ...receipt });
     } catch (error) {
       console.error(
         'Erro ao salvar estado de parada de emergência no Firestore:',
@@ -681,31 +674,5 @@ selfEvolutionRouter.post(
       });
     }
 
-    SelfEvolutionPolicyEngine.setSystemEnabled(
-      false
-    );
-
-    await AuditService.logEvent({
-      actor: req.user!.uid,
-      action: 'emergency_stop',
-      resource: 'self_evolution_system',
-      previousState: {
-        SELF_EVOLUTION_ENABLED: true
-      },
-      newState: {
-        SELF_EVOLUTION_ENABLED: false
-      },
-      riskLevel: 'R3',
-      result: 'success',
-      reason,
-      correlationId:
-        (req as any).correlationId
-    });
-
-    return res.json({
-      success: true,
-      message:
-        'Parada de emergência persistida no Firestore e aplicada globalmente.'
-    });
   }
 );

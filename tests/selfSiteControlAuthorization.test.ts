@@ -60,6 +60,15 @@ describe('Controle do proprio site reservado ao dono autenticado', () => {
     expect(result.status).toBe(200);
     expect(SelfSiteOwnerService.setEnabled).toHaveBeenCalledWith('owner', true, expect.any(String));
   });
+  it('reserva o liga/desliga ao administrador e recusa valores ambíguos', async () => {
+    const endpoint = '/api/admin/self-evolution/control/enabled';
+    expect((await request(app).post(endpoint).send({ enabled: false })).status).toBe(401);
+    expect((await request(app).post(endpoint).set('Authorization', 'Bearer user-token').send({ enabled: false, role: 'admin' })).status).toBe(403);
+    expect((await request(app).post(endpoint).set('Authorization', 'Bearer admin-token').send({ enabled: 'false' })).status).toBe(400);
+    expect(SelfSiteOwnerService.setEnabled).not.toHaveBeenCalled();
+    expect((await request(app).post(endpoint).set('Authorization', 'Bearer admin-token').send({ enabled: false, userId: 'forged' })).status).toBe(200);
+    expect(SelfSiteOwnerService.setEnabled).toHaveBeenCalledWith('owner', false, expect.any(String));
+  });
   it('exige autenticação e privilégio administrativo para excluir uma tarefa', async () => {
     const remove = vi.spyOn(CandidateQueueService, 'remove');
     const endpoint = '/api/admin/self-evolution/candidates/owner-task';

@@ -5,6 +5,7 @@ import { auth } from '../../lib/firebase';
 import { committeeLink, committeeNavigation } from '../../services/committeeNavigation';
 import { CommitteeInspector, type CommitteeTarget } from './CommitteeInspector';
 import { CandidateDeleteDialog } from './CandidateDeleteDialog';
+import { AutomationControl } from './AutomationControl';
 import { INNOVATION_AGENTS } from '../../../server/selfEvolution/innovationAgentCatalog.js';
 
 interface Budget {
@@ -208,6 +209,9 @@ export const SelfEvolutionDashboard: React.FC = () => {
           <span>{error}</span>
         </div>
       )}
+
+      <AutomationControl enabled={loading || error ? null : status?.enabled ?? null}
+        getAuthHeader={getAuthHeader} onChanged={fetchDashboardData} />
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

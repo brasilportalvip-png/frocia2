@@ -86,6 +86,17 @@ export interface MaintenanceDispatchResult {
   diagnostic?: Record<string, unknown>;
 }
 
+export interface MaintenanceWorkflowControl {
+  success: boolean;
+  enabled: boolean;
+  workflowState: string;
+  checkedAt: string;
+  workflowUrl: string;
+  cancellationRequested: number[];
+  cancellationIncomplete: boolean;
+  message: string;
+}
+
 export interface RepositoryChangesReceipt {
   status: 'checked' | 'unavailable'; repository: string; branch: string; fetchedAt: string;
   period: string; since?: string; until: string; complete: boolean; message?: string;
@@ -93,6 +104,69 @@ export interface RepositoryChangesReceipt {
 }
 
 export class GithubAutomationService {
+  /** Controla somente a autoevolução; não altera CI, deploy ou outros workflows. */
+  static async setMaintenanceWorkflowEnabled(enabled: boolean): Promise<MaintenanceWorkflowControl> {
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const base = `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const workflow = `${base}/actions/workflows/self-evolution-runner.yml`;
+    const result: MaintenanceWorkflowControl = {
+      success: false, enabled, workflowState: 'unknown', checkedAt: new Date().toISOString(),
+      workflowUrl: `https://github.com/${owner}/${repo}/actions/workflows/self-evolution-runner.yml`,
+      cancellationRequested: [], cancellationIncomplete: false, message: '',
+    };
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      const request = (url: string, method = 'GET') => this.githubFetch(url, {
+        method, headers: this.getHeaders(access.token, method !== 'GET'),
+      }, 10_000);
+      const response = await request(`${workflow}/${enabled ? 'enable' : 'disable'}`, 'PUT');
+      if (!response.ok) {
+        result.message = formatGithubFailure('GitHub não confirmou o controle do agendamento', await inspectGithubFailure(response, [access.token]));
+        return result;
+      }
+      const confirmation = await request(workflow);
+      const state = confirmation.ok ? (await confirmation.json() as { state?: string }).state : undefined;
+      result.workflowState = state || 'unknown';
+      result.success = enabled ? state === 'active' : Boolean(state?.startsWith('disabled_'));
+      result.message = result.success
+        ? enabled ? 'Agendamento diário habilitado no GitHub. Ligar não inicia uma rodada imediatamente.' : 'Agendamento da autoevolução desabilitado no GitHub.'
+        : 'A mudança foi solicitada, mas o estado do workflow não pôde ser confirmado.';
+      if (enabled) return result;
+
+      // Desabilitar o workflow evita novos disparos, mas não cancela os já existentes.
+      const pending = await Promise.allSettled(['in_progress', 'queued', 'pending', 'waiting', 'requested'].map(async status => {
+        const response = await request(`${workflow}/runs?status=${status}&per_page=100`);
+        if (!response.ok) throw new Error('workflow_runs_unavailable');
+        return await response.json() as { total_count: number; workflow_runs: Array<{ id: number; status: string }> };
+      }));
+      const ids = new Set<number>();
+      for (const item of pending) {
+        if (item.status !== 'fulfilled') { result.cancellationIncomplete = true; continue; }
+        if (item.value.total_count > 100 || !Array.isArray(item.value.workflow_runs)) result.cancellationIncomplete = true;
+        for (const run of item.value.workflow_runs || []) {
+          if (Number.isSafeInteger(run.id) && run.id > 0 && run.status !== 'completed') ids.add(run.id);
+        }
+      }
+      const cancellations = await Promise.allSettled([...ids].map(async id => {
+        const response = await request(`${base}/actions/runs/${id}/cancel`, 'POST');
+        if (response.status === 202) { result.cancellationRequested.push(id); return; }
+        // Uma execução pode acabar entre a listagem e o cancelamento.
+        if (response.status === 409) {
+          const current = await request(`${base}/actions/runs/${id}`);
+          if (current.ok && (await current.json() as { status?: string }).status === 'completed') return;
+        }
+        throw new Error('workflow_cancel_unconfirmed');
+      }));
+      if (cancellations.some(item => item.status === 'rejected')) result.cancellationIncomplete = true;
+      if (result.cancellationRequested.length) result.message += ' Cancelamento das execuções existentes solicitado.';
+      if (result.cancellationIncomplete) result.message += ' Não foi possível confirmar o cancelamento de todas as execuções; consulte o GitHub.';
+      return result;
+    } catch {
+      return { ...result, cancellationIncomplete: !enabled, message: 'Não foi possível confirmar o controle do workflow no GitHub. A pausa salva no aplicativo continua válida.' };
+    }
+  }
+
   /** Leitura autenticada do repositorio configurado; nao dispara agentes ou modifica arquivos. */
   static async readRecentRepositoryChanges(prompt: string, now = new Date()): Promise<RepositoryChangesReceipt> {
     const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
