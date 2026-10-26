@@ -42,7 +42,7 @@ Reutilizar o GitHub App existente na configuração de Actions:
 
 - Variável ou secret FROC_GITHUB_APP_ID: ID do App existente.
 - Secret FROC_GITHUB_APP_PRIVATE_KEY: a mesma chave privada já autorizada para esse App, inserida pelo proprietário no painel protegido do GitHub.
-- FROC_GITHUB_APP_SLUG é opcional para identificação.
+- FROC_GITHUB_APP_SLUG deve ser configurado como variável ou secret com o valor `froc-ia`. A rodada #93 demonstrou que a versão publicada exige esse campo, além do ID e da chave privada. A orientação anterior de que ele era opcional estava incorreta.
 - Alternativamente, SELF_EVOLUTION_GITHUB_TOKEN aceita um token próprio adequado ao repositório.
 
 O App precisa de Actions, Contents e Pull requests com escrita. Alterar arquivos de workflow exige a permissão específica de Workflows. Esta atualização não muda permissões, não cria chaves e não transfere segredos da Vercel. Não cole chaves no chat. Um token de instalação temporário sozinho expira; a combinação App ID/chave permite gerar tokens temporários a cada execução.

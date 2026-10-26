@@ -14,9 +14,10 @@ import AxeBuilder from '@axe-core/playwright';
 import { buildEngineeringContext } from './engineering-context.mjs';
 import { analyzeTypeScriptLanguage } from './typescript-language-engine.mjs';
 import { executeAutonomousRepairCycle } from './autonomous-repair-cycle.mjs';
+import { buildPatchRepairContext } from './patch-repair-context.mjs';
 import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 import { authenticateSelfSite } from './site-session-audit.mjs';
-import { safeDiagnosticText, commandDiagnosticExcerpt, workerFailurePayload } from './worker-failure.mjs';
+import { safeDiagnosticText, commandDiagnosticExcerpt, compilerDiagnosticLines, workerFailurePayload } from './worker-failure.mjs';
 import { run } from './sandbox-process.mjs';
 import { generateStructuredPatch, safeRepoPath } from './patch-generation.mjs';
 
@@ -63,6 +64,7 @@ async function mustRun(id, command, args, display, cwd, timeout = 10 * 60_000) {
     const error = new Error(`command_failed:${id}`); error.evidence = evidence;
     error.stderrTail = commandDiagnosticExcerpt(result.stderr.toString());
     error.stdoutTail = commandDiagnosticExcerpt(result.stdout.toString());
+    error.compilerDiagnostics = compilerDiagnosticLines(result.stdout.toString(), result.stderr.toString());
     console.error('[worker:command-failure]', JSON.stringify({ id, exitCode: result.exitCode,
       stdout: error.stdoutTail, stderr: error.stderrTail }));
     throw error;
@@ -99,7 +101,7 @@ async function repositoryContext(body, cwd) {
   return context;
 }
 
-async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedback = null, attempt = 1, modelSession) {
+async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedback = null, attempt = 1, modelSession, previousPatch = null) {
   const ai = new GoogleGenAI({ apiKey: required('GEMINI_API_KEY') });
   const sourceFiles = [];
   for (const relative of allowed) {
@@ -109,7 +111,8 @@ async function generatePatch(body, cwd, allowed, engineeringContext, repairFeedb
   return generateStructuredPatch({
     generateContent: request => ai.models.generateContent(request),
     model: await modelSession.next(repairFeedback), allowed, attempt, feedback: repairFeedback,
-    input: generationInput(body, allowed, sourceFiles, engineeringContext),
+    input: { ...generationInput(body, allowed, sourceFiles, engineeringContext),
+      repairContext: await buildPatchRepairContext(cwd, previousPatch) },
     onDiagnostic: diagnostic => console.log('[worker:generation]', JSON.stringify({ candidateId: body.candidateId, attempt, ...diagnostic })),
   });
 }
@@ -162,7 +165,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         const clean = await run('git', ['clean', '-fd'], cwd, 30_000, {}, true);
         if (reset.exitCode !== 0 || clean.exitCode !== 0) throw new Error('repair_baseline_restore_failed');
       },
-      generate: async ({ feedback, attempt }) => { markStage('generation'); return changedPatch(cwd, await generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt, modelSession)); },
+      generate: async ({ feedback, attempt, previousPatch }) => { markStage('generation'); return changedPatch(cwd, await generatePatch(body, cwd, allowed, engineeringContext, feedback, attempt, modelSession, previousPatch)); },
       apply: async (patch) => {
         markStage('apply');
         const nextFiles = [];
@@ -202,7 +205,7 @@ app.post('/api/worker/patch', authenticate, async (req, res) => {
         } catch (error) {
           const evidence = error?.evidence;
           commands.splice(0, commands.length, ...attemptCommands, ...(evidence ? [evidence] : []));
-          return { passed: false, failure: { stage: evidence?.id || 'certification', exitCode: evidence?.exitCode || 1, stdoutSha256: evidence?.stdoutSha256, stderrSha256: evidence?.stderrSha256, summary: error instanceof Error ? error.message : 'certification_failed', stderrTail: error?.stderrTail, stdoutTail: error?.stdoutTail } };
+          return { passed: false, failure: { stage: evidence?.id || 'certification', exitCode: evidence?.exitCode || 1, stdoutSha256: evidence?.stdoutSha256, stderrSha256: evidence?.stderrSha256, summary: error instanceof Error ? error.message : 'certification_failed', stderrTail: error?.stderrTail, stdoutTail: error?.stdoutTail, compilerDiagnostics: error?.compilerDiagnostics } };
         }
       },
     });

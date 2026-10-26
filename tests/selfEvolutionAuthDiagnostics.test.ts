@@ -9,10 +9,15 @@ describe('Diagnóstico da credencial que o executor realmente seleciona', () => 
   it.each([
     [{ GITHUB_TOKEN: 'private-pat', SELF_EVOLUTION_CI_DISPATCH_REQUIRED: 'false' }, 'configured_token'],
     [{ GITHUB_APP_TOKEN: 'private-app-token' }, 'github_app_token'],
-    [{ GITHUB_APP_ID: 'app-id', GITHUB_APP_PRIVATE_KEY: 'private-app-key' }, 'github_app'],
+    [{ GITHUB_APP_ID: 'app-id', GITHUB_APP_PRIVATE_KEY: 'private-app-key', GITHUB_APP_SLUG: 'app-slug' }, 'github_app'],
     [{ GITHUB_APP_ID: 'app-id' }, 'not_configured'],
   ])('classifica presença e prioridade sem realizar autenticação externa: %s', (environment, source) => {
     expect(describeSelfEvolutionAuth(environment).source).toBe(source);
+  });
+  it('reproduz a falta do slug da rodada 93 sem apresentar a configuracao como pronta', () => {
+    expect(describeSelfEvolutionAuth({ GITHUB_APP_ID: '12345', GITHUB_APP_PRIVATE_KEY: 'fixture-key' }))
+      .toMatchObject({ source: 'not_configured', appSlugConfigured: false, missingAppFields: ['GITHUB_APP_SLUG'],
+        message: expect.stringContaining('GITHUB_APP_SLUG') });
   });
   it('não imprime valores, não cobra e não chama redes ou provedores', () => {
     const fetch = vi.spyOn(globalThis, 'fetch');

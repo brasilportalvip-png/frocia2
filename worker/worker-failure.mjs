@@ -13,6 +13,16 @@ export function safeDiagnosticText(value, limit = 1800) {
   return redact(value).replace(/[\r\n]+/g, ' ').slice(-limit);
 }
 
+export function safeSourceText(value, limit) {
+  return redact(value).slice(0, limit);
+}
+
+export function compilerDiagnosticLines(stdout, stderr) {
+  const text = redact(`${stdout || ''}\n${stderr || ''}`).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  return [...new Set(text.split(/\r?\n/).filter(line => /error TS\d+:/i.test(line)))]
+    .slice(0, 20).map(line => line.slice(0, 1000));
+}
+
 export function commandDiagnosticExcerpt(value) {
   const text = redact(value).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
   const lines = text.split(/\r?\n/);

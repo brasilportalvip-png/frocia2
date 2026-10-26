@@ -3,6 +3,49 @@ import { describe, expect, it, vi } from 'vitest';
 import { executeAutonomousRepairCycle } from '../worker/autonomous-repair-cycle.mjs';
 
 describe('autonomous repair cycle', () => {
+  it('recusa um reparo que elimina os testes reprovados para obter certificacao', async () => {
+    const rejected = { files: [{ path: 'tests/seo.test.ts', content: 'failing regression' }], commitMessage: 'fix: seo' };
+    const dropped = { files: [{ path: 'index.html', content: 'product only' }], commitMessage: 'fix: seo' };
+    const fixed = { files: [{ path: 'tests/seo.test.ts', content: 'repaired regression' }], commitMessage: 'fix: seo' };
+    const apply = vi.fn(async () => undefined);
+    const certify = vi.fn().mockResolvedValueOnce({ passed: false, failure: { stage: 'typecheck' } }).mockResolvedValueOnce({ passed: true });
+    const result = await executeAutonomousRepairCycle({ maximumAttempts: 3, restoreBaseline: async () => undefined,
+      apply, certify, generate: async ({ attempt, feedback, previousPatch }) => {
+        if (attempt === 1) return rejected;
+        if (attempt === 2) return dropped;
+        expect(feedback.summary).toContain('regression_test_removed');
+        expect(previousPatch).toEqual(rejected);
+        return fixed;
+      },
+    });
+    expect(result).toMatchObject({ passed: true, selectedAttempt: 3 });
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply).not.toHaveBeenCalledWith(dropped);
+    expect(certify).toHaveBeenCalledTimes(2);
+  });
+
+  it('leva o patch reprovado ao reparo mesmo depois de limpar a sandbox', async () => {
+    const rejected = { files: [{ path: 'tests/seo.test.ts', content: 'invalid candidate test' }], commitMessage: 'fix: seo' };
+    const fixed = { files: [{ path: 'tests/seo.test.ts', content: 'valid candidate test' }], commitMessage: 'fix: seo' };
+    let workspace: typeof rejected | null = null;
+    const result = await executeAutonomousRepairCycle({ maximumAttempts: 3,
+      restoreBaseline: async () => { workspace = null; },
+      generate: async ({ attempt, previousPatch, feedback }) => {
+        expect(workspace).toBeNull();
+        if (attempt === 1) return rejected;
+        expect(previousPatch).toEqual(rejected);
+        expect(feedback.stdoutTail).toContain('TS2554');
+        expect(feedback.compilerDiagnostics).toEqual(['tests/seo.test.ts(15,8): error TS2554']);
+        return fixed;
+      },
+      apply: async patch => { workspace = patch; },
+      certify: async ({ attempt }) => attempt === 1
+        ? { passed: false, failure: { stage: 'typecheck', stdoutTail: 'tests/seo.test.ts(15,8): error TS2554: Expected 1 arguments, but got 2.', compilerDiagnostics: ['tests/seo.test.ts(15,8): error TS2554'] } }
+        : { passed: true },
+    });
+    expect(result).toMatchObject({ passed: true, selectedAttempt: 2, patch: fixed });
+  });
+
   it('restaura o Git com o mesmo usuário isolado proprietário da sandbox', () => {
     const worker = readFileSync(new URL('../worker/server.mjs', import.meta.url), 'utf8');
     const ownership = worker.indexOf("const initialOwnership = await run('chown'");
