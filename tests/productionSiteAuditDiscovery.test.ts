@@ -11,7 +11,7 @@ function browser(scenarios: AutonomousBrowserReport['scenarios'] = []): Autonomo
 }
 function page(overrides: Partial<SiteAuditPage> = {}): SiteAuditPage {
   return {
-    contentHash: 'a'.repeat(64), signals: { likelyClientRendered: false },
+    contentHash: 'a'.repeat(64), signals: { likelyClientRendered: false, scripts: 0 },
     issues: [{ code: 'META_DESCRIPTION_MISSING', severity: 'medium', category: 'seo',
       url: 'https://froc.example.com/', message: 'Meta description ausente.', evidence: 'description nao encontrada' }],
     ...overrides,
@@ -28,13 +28,26 @@ describe('Falhas reais do site alimentam os agentes', () => {
 
   it('nao inventa defeito de H1 ou conteudo a partir do HTML vazio de uma SPA', () => {
     const original = page();
-    const spa = page({ signals: { likelyClientRendered: true } as SiteAuditPage['signals'],
+    const spa = page({ signals: { likelyClientRendered: true, scripts: 1 } as SiteAuditPage['signals'],
       issues: [
         { ...original.issues[0], code: 'H1_COUNT', category: 'accessibility' },
         { ...original.issues[0], code: 'THIN_CONTENT', category: 'content' },
         original.issues[0],
       ] });
     expect(collectProductionFindings(html({ pages: [spa] }), browser()).map(f => f.code))
+      .toEqual(['META_DESCRIPTION_MISSING']);
+  });
+
+  it('filtra THIN_CONTENT quando a pagina tem scripts clientes mesmo se likelyClientRendered for falso', () => {
+    const original = page();
+    const clientHtml = page({
+      signals: { likelyClientRendered: false, scripts: 2 } as SiteAuditPage['signals'],
+      issues: [
+        { ...original.issues[0], code: 'THIN_CONTENT', category: 'content' },
+        original.issues[0],
+      ],
+    });
+    expect(collectProductionFindings(html({ pages: [clientHtml] }), browser()).map(f => f.code))
       .toEqual(['META_DESCRIPTION_MISSING']);
   });
 

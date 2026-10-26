@@ -38,8 +38,8 @@ export function collectProductionFindings(html: SiteAuditReport, browser: Autono
   for (const page of html.pages) {
     for (const item of page.issues) {
       if (item.severity === 'info') continue;
-      // A ausencia de DOM no HTML inicial de uma SPA nao comprova defeito visual.
-      if (page.signals.likelyClientRendered && ['H1_COUNT', 'THIN_CONTENT', 'IMAGE_ALT_MISSING'].includes(item.code)) continue;
+      // A ausencia de DOM no HTML estatico inicial de uma SPA com scripts clientes nao comprova defeito visual ou escassez de conteudo.
+      if ((page.signals.likelyClientRendered || page.signals.scripts > 0) && ['H1_COUNT', 'THIN_CONTENT', 'IMAGE_ALT_MISSING'].includes(item.code)) continue;
       const url = safeUrl(item.url, html.origin);
       if (!url) continue;
       findings.push({
