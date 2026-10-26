@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SelfEvolutionPolicyEngine } from '../server/selfEvolution/selfEvolutionPolicyEngine.js';
 import { commandDiagnosticExcerpt, workerFailurePayload } from '../worker/worker-failure.mjs';
 import { EngineeringSandboxEvidenceService } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
@@ -19,6 +20,7 @@ function verify(payload: unknown) {
 const candidate = { id: body.candidateId, title: 'Falha real', probableFiles: ['src/App.tsx'] } as ImprovementCandidate;
 
 describe('Diagnostico autenticado do HTTP 422', () => {
+  beforeEach(() => { vi.spyOn(SelfEvolutionPolicyEngine, 'isSelfEvolutionEnabledPersisted').mockResolvedValue(true); });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it('preserva a etapa de geracao e o erro do provedor sem declarar um teste reprovado', () => {

@@ -4,6 +4,7 @@ import { buildSpecialistSystemInstruction } from './specialistCapabilityCatalog.
 import { fetchSpecialistCommitEvidence, type SpecialistCommitEvidence } from './specialistReviewEvidence.js';
 import { CommitteeGateService } from './committeeGateService.js';
 import { env } from '../config/env.js';
+import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 import {
   COMMITTEE_ROLES, CommitteeReview, CommitteeRole, CommitteeVerdict, ImprovementCandidate,
 } from './selfEvolutionTypes.js';
@@ -35,8 +36,9 @@ function normalizedPreview(value: unknown): string | null {
   } catch { return null; }
 }
 
-class GeminiSpecialistReviewAdapter implements SpecialistReviewAdapter {
+export class GeminiSpecialistReviewAdapter implements SpecialistReviewAdapter {
   async review(role: CommitteeRole, candidate: ImprovementCandidate, evidence?: SpecialistCommitEvidence): Promise<SpecialistReviewPayload> {
+    if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) throw new Error('self_evolution_paused');
     const response = await GeminiProvider.generate({
       model:
   role === 'independent_verifier'

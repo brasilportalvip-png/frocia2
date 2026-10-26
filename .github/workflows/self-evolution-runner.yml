@@ -108,6 +108,7 @@ jobs:
 
     steps:
       - name: Conferir acesso seguro ao GitHub
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail

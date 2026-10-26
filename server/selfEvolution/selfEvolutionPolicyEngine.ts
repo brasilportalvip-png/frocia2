@@ -79,7 +79,7 @@ export class SelfEvolutionPolicyEngine {
   }
 
   static setSystemEnabled(
-    enabled: boolean
+    enabled: boolean | null
   ): void {
     this.systemEnabledOverride = enabled;
   }
@@ -112,7 +112,7 @@ export class SelfEvolutionPolicyEngine {
     }
 
     if (!isFirebaseAdminConfigured()) {
-      return enabledByEnvironment;
+      return false;
     }
 
     try {
@@ -126,7 +126,6 @@ export class SelfEvolutionPolicyEngine {
         snapshot.data()
           ?.SELF_EVOLUTION_ENABLED === false
       ) {
-        this.systemEnabledOverride = false;
         return false;
       }
 

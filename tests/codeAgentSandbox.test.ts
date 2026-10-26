@@ -1,6 +1,7 @@
 import { artifactManifest } from '../worker/patch-workspace.mjs';
 import crypto from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SelfEvolutionPolicyEngine } from '../server/selfEvolution/selfEvolutionPolicyEngine.js';
 import { DefaultCodeAgentAdapter } from '../server/selfEvolution/codeAgentService.js';
 import { REQUIRED_ENGINEERING_COMMANDS } from '../server/selfEvolution/engineeringSandboxEvidenceService.js';
 import { ImprovementCandidate } from '../server/selfEvolution/selfEvolutionTypes.js';
@@ -18,6 +19,7 @@ const candidate = {
 } satisfies ImprovementCandidate;
 
 describe('DefaultCodeAgentAdapter sandbox contract', () => {
+  beforeEach(() => { vi.spyOn(SelfEvolutionPolicyEngine, 'isSelfEvolutionEnabledPersisted').mockResolvedValue(true); });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

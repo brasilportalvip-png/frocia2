@@ -8,6 +8,7 @@ import {
 } from './engineeringSandboxEvidenceService.js';
 import { RedactionService } from './redactionService.js';
 import { WorkerHttpClient } from './workerHttpClient.js';
+import { SelfEvolutionPolicyEngine } from './selfEvolutionPolicyEngine.js';
 
 const MAX_GENERATED_FILES = 25;
 const MAX_FILE_CONTENT_BYTES = 1_000_000;
@@ -217,6 +218,9 @@ implements ICodeAgentAdapter {
     const timeoutMs = workerTimeoutMs();
 
     try {
+      if (!(await SelfEvolutionPolicyEngine.isSelfEvolutionEnabledPersisted())) {
+        return createFailureResult('A autoevolução está desligada. Nenhum pedido foi enviado ao gerador.');
+      }
       const response = await WorkerHttpClient.postJson(
         `${workerUrl}/api/worker/patch`,
         {

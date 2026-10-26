@@ -9,6 +9,7 @@ import type { ImprovementCandidate } from './selfEvolutionTypes.js';
 import { AuditService } from './auditService.js';
 import { AgentValidationService, agentValidationIntent } from './agentValidationService.js';
 import { env } from '../config/env.js';
+import { LockService } from './lockService.js';
 
 type OwnerMessage = { role: string; content: string };
 export type OwnerControlInput = { role?: string; userId: string; prompt: string; recentMessages?: OwnerMessage[] };
@@ -96,12 +97,35 @@ export function requestedOwnSiteToggle(prompt: string, recentMessages: OwnerMess
 export class SelfSiteOwnerService {
   static async setEnabled(userId: string, enabled: boolean, reason: string): Promise<Record<string, unknown>> {
     if (!isFirebaseAdminConfigured()) return { status: 'blocked', message: 'Nao foi possivel persistir o controle global.' };
-    await adminDb.collection('self_evolution_config').doc('system').set({ SELF_EVOLUTION_ENABLED: enabled,
-      changedBy: userId, changedAt: new Date().toISOString(), reason: RedactionService.redactSensitiveData(reason).slice(0, 500) }, { merge: true });
-    SelfEvolutionPolicyEngine.setSystemEnabled(enabled);
-    await AuditService.logEvent({ actor: userId, action: enabled ? 'owner_resume_maintenance' : 'owner_pause_maintenance',
-      resource: 'self_evolution_system', riskLevel: 'R3', result: 'success', reason: reason.slice(0, 500) });
-    return { status: enabled ? 'enabled' : 'paused', message: enabled ? 'Parada persistente removida pelo administrador. O executor ainda confere credenciais, orcamento e testes.' : 'Parada persistente da manutencao registrada pelo administrador.' };
+    const leaseOwner = randomUUID();
+    if (!(await LockService.acquireLock('self-evolution-control', leaseOwner, 120_000))) {
+      return { status: 'blocked', message: 'Há outra alteração do controle em andamento. Atualize o painel antes de repetir.' };
+    }
+    const system = adminDb.collection('self_evolution_config').doc('system');
+    const change = { changedBy: userId, changedAt: new Date().toISOString(),
+      reason: RedactionService.redactSensitiveData(reason).slice(0, 500) };
+    try {
+      // Primeiro pausa o aplicativo. Só reativa depois da confirmação do GitHub.
+      await system.set({ SELF_EVOLUTION_ENABLED: false, ...change }, { merge: true });
+      SelfEvolutionPolicyEngine.setSystemEnabled(null);
+      const workflowControl = await GithubAutomationService.setMaintenanceWorkflowEnabled(enabled);
+      const confirmedEnabled = enabled && workflowControl.success;
+      await system.set({ SELF_EVOLUTION_ENABLED: confirmedEnabled, workflowControl, ...change }, { merge: true });
+      await AuditService.logEvent({ actor: userId, action: enabled ? 'owner_resume_maintenance' : 'owner_pause_maintenance',
+        resource: 'self_evolution_system', riskLevel: 'R3', result: enabled && !confirmedEnabled ? 'rejected' : 'success',
+        reason: change.reason });
+      return { status: confirmedEnabled ? 'enabled' : enabled ? 'blocked' : 'paused', enabled: confirmedEnabled,
+        workflowControl, message: workflowControl.message };
+    } catch (error) {
+      SelfEvolutionPolicyEngine.setSystemEnabled(false);
+      await system.set({ SELF_EVOLUTION_ENABLED: false, ...change }, { merge: true }).catch(() => {
+        console.error('Não foi possível confirmar a pausa no banco; esta instância permanece pausada.');
+      });
+      if (enabled) await GithubAutomationService.setMaintenanceWorkflowEnabled(false);
+      throw error;
+    } finally {
+      await LockService.releaseLock('self-evolution-control', leaseOwner);
+    }
   }
 
   static async operationalSnapshot(): Promise<Record<string, unknown>> {
