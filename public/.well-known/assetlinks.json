@@ -7,7 +7,9 @@
       "namespace": "android_app",
       "package_name": "br.com.portalvipbrasil.frocia",
       "sha256_cert_fingerprints": [
-        "B4:83:C0:45:EC:92:2B:F6:3E:0D:06:6B:2D:E9:99:85:1C:65:8B:80:21:46:3E:AB:09:BA:CF:BD:6C:24:17:25"
+        "B4:83:C0:45:EC:92:2B:F6:3E:0D:06:6B:2D:E9:99:85:1C:65:8B:80:21:46:3E:AB:09:BA:CF:BD:6C:24:17:25",
+        "84:09:A5:AC:C5:08:14:84:13:D0:2B:8A:E6:85:57:83:B3:F7:55:F8:FD:35:F0:42:46:76:72:09:C7:CE:A0:1F",
+        "3D:7C:D4:B8:C6:CC:3F:5B:21:92:C2:45:1D:E7:42:D1:92:18:C8:75:D6:B1:5F:54:C1:9D:1B:4E:4B:8C:50:46"
       ]
     }
   }
