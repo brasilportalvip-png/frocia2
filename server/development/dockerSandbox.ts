@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DevelopmentError, LIMITS, type SourceFiles, safePath, secretPath, sourceManifest, writeArchive } from './archive.js';
 import { fixedDownload } from './publicGithub.js';
 import type { CommandReceipt, ValidationReceipt } from './agent.js';
+import { RedactionService } from '../selfEvolution/redactionService.js';
 
 const MAX_LOG = 2 * 1024 * 1024;
 export async function processCommand(command: string, args: string[], cwd: string, signal?: AbortSignal, input?: string | Uint8Array, timeout: number = LIMITS.commandMs) {
@@ -35,6 +36,28 @@ export async function processCommand(command: string, args: string[], cwd: strin
       startedAt, durationMs: Date.now() - started, stdoutSha256: createHash('sha256').update(stdout).digest('hex'),
       stderrSha256: createHash('sha256').update(stderr).digest('hex'), stdout, stderr }); });
   });
+}
+export async function copyDevelopmentDirectory(directory: string, destination: '/workspace' | '/cache', container: string,
+  temporary: string, signal: AbortSignal, execute: typeof processCommand = processCommand) {
+  const archive = path.join(temporary, `transfer-${randomUUID()}.tar`);
+  const failed = (phase: string, result: CommandReceipt) => {
+    const detail = RedactionService.redactSensitiveData(result.stderr || result.stdout).trim().slice(0, 1500);
+    return new DevelopmentError('sandbox_copy_failed', `Falha ao ${phase} ${destination} (exit ${result.exitCode}).${detail ? ` ${detail}` : ''}`);
+  };
+  try {
+    if (signal.aborted) throw new DevelopmentError('job_cancelled', 'Execução cancelada.');
+    const packed = await execute('tar', ['--format=posix', '--numeric-owner', '--owner=10001', '--group=10001', '-C', directory, '-cf', archive, '.'], temporary, signal);
+    if (packed.exitCode !== 0) throw failed('preparar', packed);
+    if (signal.aborted) throw new DevelopmentError('job_cancelled', 'Execução cancelada.');
+    // docker cp cannot reliably access tmpfs mounts. Extract inside the running
+    // container, as the project user, without daemon-side chown or rootfs writes.
+    const copied = await execute('docker', ['exec', '-i', '--user', '10001:10001', container,
+      'tar', '--extract', '--file=-', `--directory=${destination}`, '--no-same-owner', '--same-permissions'],
+    temporary, signal, await fs.readFile(archive));
+    if (copied.exitCode !== 0) throw failed('transferir para', copied);
+  } finally {
+    await fs.rm(archive, { force: true });
+  }
 }
 async function materialize(root: string, files: SourceFiles) {
   for (const [name, file] of files) {
@@ -111,16 +134,8 @@ export class DockerProjectSandbox {
         throw new DevelopmentError('sandbox_isolation_not_confirmed', 'As restrições efetivas do container não foram confirmadas.');
       }
       await checked(['start', name]);
-      const copyOwned = async (directory: string, destination: string) => {
-        const tar = path.join(temporary, destination.slice(1) + '.tar');
-        const packed = await processCommand('tar', ['--format=posix', '--numeric-owner', '--owner=10001', '--group=10001', '-C', directory, '-cf', tar, '.'], temporary, this.signal);
-        if (packed.exitCode !== 0) throw new DevelopmentError('sandbox_copy_failed', 'Não foi possível preparar os arquivos isolados.');
-        const copied = await processCommand('docker', ['cp', '--archive', '-', name + ':' + destination + '/'], temporary, this.signal, await fs.readFile(tar));
-        await fs.rm(tar);
-        if (copied.exitCode !== 0) throw new DevelopmentError('sandbox_copy_failed', 'Não foi possível transferir os arquivos ao container.');
-      };
-      await copyOwned(source, '/workspace');
-      if (cache) await copyOwned(cache, '/cache');
+      await copyDevelopmentDirectory(source, '/workspace', name, temporary, this.signal);
+      if (cache) await copyDevelopmentDirectory(cache, '/cache', name, temporary, this.signal);
       const original = [...executableFiles.keys()];
       if (pkg) for (const args of [['ci'], ['run', 'typecheck'], ['test'], ['run', 'build']]) {
         const result = await processCommand('docker', ['exec', '--user', '10001:10001', '-w', '/workspace', name, 'npm', ...args], temporary, this.signal);

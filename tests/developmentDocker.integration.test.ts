@@ -8,6 +8,8 @@ function project(script: string): SourceFiles {
     ['package.json', file(JSON.stringify({ name: 'isolated-proof', version: '1.0.0', scripts: { typecheck: 'node --check proof.cjs', test: 'node proof.cjs', build: 'node -e "require(\'fs\').mkdirSync(\'dist\',{recursive:true});require(\'fs\').writeFileSync(\'dist/index.html\',\'<main>Isolated</main>\')"' } }))],
     ['package-lock.json', file(JSON.stringify({ name: 'isolated-proof', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'isolated-proof', version: '1.0.0' } } }))],
     ['proof.cjs', file(script)], ['.env', file('PRIVATE_PROJECT_SECRET=not-mounted-in-the-container')],
+    ['assets/binário.dat', { bytes: Buffer.from([0, 255, 128, 13, 10, 0, 42]), mode: 0o644 }],
+    ['tools/proof.sh', { bytes: Buffer.from('#!/bin/sh\nprintf transfer-ok'), mode: 0o755 }],
   ]);
 }
 describe.skipIf(!enabled)('Isolamento real do executor central (Docker necessário)', () => {
@@ -22,6 +24,10 @@ describe.skipIf(!enabled)('Isolamento real do executor central (Docker necessár
       assert.equal(process.env.GEMINI_API_KEY,undefined);
       assert.equal(fs.existsSync('/var/run/docker.sock'),false);
       assert.equal(fs.existsSync('/workspace/.env'),false);
+      assert.equal(fs.statSync('/workspace/proof.cjs').uid,10001);
+      assert.equal(fs.statSync('/cache').uid,10001);
+      assert.deepEqual([...fs.readFileSync('/workspace/assets/binário.dat')],[0,255,128,13,10,0,42]);
+      assert.equal(require('node:child_process').execFileSync('/workspace/tools/proof.sh',{encoding:'utf8'}),'transfer-ok');
       assert.throws(()=>fs.writeFileSync('/opt/froc/escape','bad'));
       fs.writeFileSync('/tmp/project-private-marker','project-one');
       (async()=>{let blocked=false;try{await fetch('https://example.com',{signal:AbortSignal.timeout(1500)});}catch{blocked=true;}assert.equal(blocked,true);console.log('network-and-secrets-blocked');})().catch(()=>process.exit(1));
