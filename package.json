@@ -79,7 +79,7 @@
     "jwks-rsa": {
       "jose": "5.10.0"
     },
-    "qs": "6.16.0",
+    "qs": "6.17.0",
     "@fastify/busboy": "3.2.2",
     "@grpc/grpc-js": "1.14.5",
     "brace-expansion": "2.1.7",
