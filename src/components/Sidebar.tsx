@@ -1,4 +1,5 @@
 import { GithubConnectionPanel } from './GithubConnectionPanel';
+import { openDevelopmentWorkspace, uploadProjectZip } from '../services/development';
 import type { CreationDelivery, ProjectGithubTarget } from '../services/requestIntent';
 import { useAuth } from '../context/AuthContext';
 import React, {
@@ -327,6 +328,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const processNativeFiles = (files: File[]) => {
+    const projectZip = files.find(file => /\.zip$/i.test(file.name));
+    if (projectZip) {
+      if (files.length !== 1) { setToolNotice('Envie o ZIP completo sozinho para importar o projeto.'); return; }
+      void uploadProjectZip(projectZip, setToolNotice).then(workspace => { setToolNotice(null); openDevelopmentWorkspace(workspace.id, prompt); })
+        .catch(error => setToolNotice(error.message)); return;
+    }
     const newFiles: UploadedFile[] = files.map(
       (file, index) => {
         const normalizedName = file.name.toLowerCase();

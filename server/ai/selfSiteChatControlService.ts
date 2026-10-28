@@ -15,9 +15,9 @@ const safe = (value: unknown) => typeof value === 'string' ? RedactionService.re
 
 export function formatSelfSiteControlReceipt(control: Record<string, unknown>, prompt = ''): string {
   if (control.status === 'blocked') return safe(control.message) || 'Nao foi possivel confirmar o controle administrativo nesta sessao.';
-  if (control.agentValidation) return formatAgentValidation(object(control.agentValidation));
+  if (control.agentValidation && !control.action) return formatAgentValidation(object(control.agentValidation));
   const inventory = object(control.agentInventory);
-  if (inventory.source === 'running_server_catalog') {
+  if (inventory.source === 'running_server_catalog' && !control.action) {
     const agents = Array.isArray(inventory.agents) ? inventory.agents.map(object) : [];
     const total = agents.length;
     const groups = ['review', 'innovation', 'intelligence', 'creation'].map(kind => agents.filter(agent => agent.kind === kind).length);
@@ -59,7 +59,7 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
     if (commits.length && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[a-f0-9]{40}$/i.test(safe(commits[0].url))) paragraphs.push(`Commit mais recente consultado: ${safe(commits[0].url)}`);
     return paragraphs.join('\n\n');
   }
-  if (/mem[oó]ria/i.test(prompt)) {
+  if (!action.status && /mem[oó]ria/i.test(prompt)) {
     const memory = object(operations.memory);
     paragraphs.push(memory.encryptedArchiveConfigured === true
       ? 'A criptografia do arquivo extenso esta configurada neste servidor. O historico pode crescer sem um teto total de mensagens no codigo; a recuperacao usa trechos relevantes e a continuidade da conversa. O arquivamento antigo e retomado em lotes.'
@@ -78,6 +78,7 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
   if (action.status) {
     paragraphs.push(states[String(action.status)] || 'Consultei o recibo do pedido.');
     if (safe(action.candidateId)) paragraphs.push(`Tarefa: ${safe(action.candidateId)}.`);
+    if (safe(action.dispatchId)) paragraphs.push(`Recibo de dispatch: ${safe(action.dispatchId)}. A aceitação do dispatch não comprova que o job já executou.`);
     if (safe(action.message)) paragraphs.push(safe(action.message));
     const dispatch = object(action.dispatch);
     if (safe(dispatch.message)) paragraphs.push(safe(dispatch.message));
@@ -111,11 +112,11 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
  * sem gerar uma resposta com o modelo nem reservar creditos de conversa. */
 export class SelfSiteChatControlService {
   static async respond(params: ExecutionParams, correlationId: string) {
-    if (params.attachments?.length) return null;
+    // An attachment is evidence, never an instruction. An explicit order in the user's own text still applies.
     const potential = /homologa[cç][aã]o|homologar|evid[eê]ncias|registros de execu[cç][aã]o/i.test(params.prompt) || isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
       /\bagentes?\b/i.test(params.prompt) ||
       /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
-      /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
+      /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|implemente|registre|engenharia|autoevolução|autoevolucao|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);
     if (!potential) return null;
     const tenantId = params.tenantId || `user:${params.userId}`;
     if (params.projectId) await MemoryService.assertScopeAccess(params.userId, tenantId, 'project', params.projectId);

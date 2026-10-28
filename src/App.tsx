@@ -1,6 +1,9 @@
 import { githubCallbackFromHref, removeGithubCallback } from './services/githubConnection';
 import type { CreationDelivery } from './services/requestIntent';
 import { GithubConnectionPanel } from './components/GithubConnectionPanel';
+import { DevelopmentPanel } from './components/DevelopmentPanel';
+import { openDevelopmentWorkspace } from './services/development';
+import { hasEngineeringOrder, explicitOwnTarget } from '../shared/engineeringIntent';
 import { committeeNavigation } from './services/committeeNavigation';
 import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
@@ -187,6 +190,7 @@ export default function App() {
     setCreationDelivery(delivery);
   }, []);
   const [professionalBuildId, setProfessionalBuildId] = useState<string | null>(null);
+  const [developmentWorkspace, setDevelopmentWorkspace] = useState<{ id: string; instruction: string } | null>(null);
   const [isProjectConfigurationOpen, setIsProjectConfigurationOpen] = useState(false);
   const [activeSite, setActiveSite] = useState<GeneratedSite | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -1083,6 +1087,8 @@ const handleGeneralChat = async (
           }
           if (event === 'completed') {
             consumedCredits = Number(payload?.consumedCredits || 0);
+            const development = payload?.operationalControl?.development;
+            if (typeof development?.workspaceId === 'string') openDevelopmentWorkspace(development.workspaceId, development.pendingInstruction || prompt);
           }
           if (event === 'error' || event === 'cancelled') {
             streamError = new Error(
@@ -1245,9 +1251,19 @@ const handleGeneralChat = async (
         setSavedSites(previous => [project, ...previous.filter(item => item.id !== project.id)]);
       }).catch(e => setErrorMsg(e.message));
     };
+    const workspaceImported = (event: Event) => {
+      const { workspaceId, instruction = '' } = (event as CustomEvent).detail || {};
+      if (typeof workspaceId !== 'string') return;
+      setDevelopmentWorkspace({ id: workspaceId, instruction });
+      void apiClient<{ project: GeneratedSite }>('/api/projects/' + encodeURIComponent(workspaceId)).then(({ project }) => {
+        setActiveSite(project); setNavMode('studio');
+        setSavedSites(previous => [project, ...previous.filter(item => item.id !== project.id)]);
+      }).catch(e => setErrorMsg(e.message));
+    };
     window.addEventListener('froc:request-login', login);
     window.addEventListener('froc:github-project', imported);
-    return () => { window.removeEventListener('froc:request-login', login); window.removeEventListener('froc:github-project', imported); };
+    window.addEventListener('froc:development-workspace', workspaceImported);
+    return () => { window.removeEventListener('froc:request-login', login); window.removeEventListener('froc:github-project', imported); window.removeEventListener('froc:development-workspace', workspaceImported); };
   }, [githubCallback]);
 
   const handleNewSite = () => {
@@ -1255,6 +1271,12 @@ const handleGeneralChat = async (
     setProfessionalBuildId(null);
     setChatMessages([]);
     setErrorMsg(null);
+  };
+  const openProjectTools = () => {
+    if (!activeSite) return;
+    if (activeSite.workspaceId) openDevelopmentWorkspace(activeSite.workspaceId);
+    else if (activeSite.professionalBuildId) setProfessionalBuildId(activeSite.professionalBuildId);
+    else setIsProjectConfigurationOpen(true);
   };
 
   const handleDeleteSite = async (siteId: string) => {
@@ -1336,14 +1358,10 @@ const handleGeneralChat = async (
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
-      {activeSite?.id && !activeSite.id.startsWith('local-') && (
-        <div className="flex justify-end border-b border-white/10 bg-slate-950 px-4 py-1">
-          <button type="button" onClick={() => activeSite.professionalBuildId ? setProfessionalBuildId(activeSite.professionalBuildId) : setIsProjectConfigurationOpen(true)} className="rounded-lg px-3 py-2 text-xs text-violet-200 hover:bg-white/5">Variáveis e entrega do projeto</button>
-        </div>
-      )}
       {professionalBuildId && activeSite?.id && (
         <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{const updated={...activeSite,professionalBuildId:id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(id);}} onReady={(url,title)=>{const updated={...activeSite,title,productionUrl:url};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));void refreshProfile();}}/>
       )}
+      {developmentWorkspace && <DevelopmentPanel key={developmentWorkspace.id} workspaceId={developmentWorkspace.id} initialInstruction={developmentWorkspace.instruction} onClose={() => setDevelopmentWorkspace(null)} />}
       {isProjectConfigurationOpen && activeSite?.id && (
         <ProjectConfigurationPanel key={activeSite.id} projectId={activeSite.id} title={activeSite.title} initialTab={activeSite.sourceKind === 'github' ? 'github' : undefined} onClose={() => setIsProjectConfigurationOpen(false)} />
       )}
@@ -1480,6 +1498,8 @@ const handleGeneralChat = async (
 
 
              onSendMessage={async (text, mode, files = []) => {
+  if (hasEngineeringOrder(text) && explicitOwnTarget(text)) return await handleGeneralChat(text, 'Programação', files);
+  if (activeSite?.sourceKind === 'workspace' && mode !== 'Imagem' && mode !== 'Vídeo') return await handleGeneralChat(text, 'Programação', files);
   if (mode === 'Criador de projetos') {
     if (activeSite?.sourceKind === 'github') { setErrorMsg('Este é um projeto existente conectado ao GitHub. A criação de um projeto novo não será aplicada sobre ele. Use Novo projeto para começar outro site.'); return false; }
     return await handleGenerateSite(
@@ -1777,6 +1797,7 @@ const handleGeneralChat = async (
                     isGenerating={isGenerating}
                     onOpenFullscreen={() => setIsFullscreen(true)}
                     onRefresh={refreshFrame}
+                    onOpenProjectSettings={openProjectTools}
                   />
                 )}
 
@@ -1796,6 +1817,7 @@ const handleGeneralChat = async (
                         isGenerating={isGenerating}
                         onOpenFullscreen={() => setIsFullscreen(true)}
                         onRefresh={refreshFrame}
+                    onOpenProjectSettings={openProjectTools}
                       />
                     </div>
                     <div className="w-1/2">

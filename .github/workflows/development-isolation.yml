@@ -1,0 +1,49 @@
+name: Desenvolvimento - isolamento e projeto real
+on:
+  pull_request:
+    paths:
+      - 'server/development/**'
+      - 'worker/Dockerfile.development'
+      - 'worker/development-files.mjs'
+      - 'scripts/project-development-acceptance.ts'
+      - 'tests/development*'
+      - '.github/workflows/development-isolation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.1'
+      - run: npm ci --ignore-scripts
+      - run: docker build -f worker/Dockerfile.development -t frocia-development:local worker
+      - name: Provar isolamento e comandos reais
+        env:
+          RUN_DEVELOPMENT_DOCKER_TESTS: '1'
+        run: npm test -- tests/developmentDocker.integration.test.ts --maxWorkers=2 --testTimeout=180000
+      - name: Marketing Engine - bytes, alteração, testes e prévia
+        run: node --import tsx scripts/project-development-acceptance.ts
+      - name: Instalar navegador de teste
+        run: npx playwright install --with-deps chromium --only-shell
+      - name: Verificar prévia em iframe opaco
+        run: node scripts/project-preview-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: project-development-acceptance
+          path: |
+            development-acceptance/acceptance.json
+            development-acceptance/events.jsonl
+            development-acceptance/commands.json
+            development-acceptance/validation-attempts.jsonl
+            development-acceptance/browser-smoke.json
+            development-acceptance/preview.html
+            development-acceptance/marketing-atualizado.zip
+          if-no-files-found: warn

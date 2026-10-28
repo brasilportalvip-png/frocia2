@@ -329,6 +329,14 @@ export class GithubAutomationService {
         return { success: false, diagnostic: { ...identity, code: 'chat_actions_write_missing' },
           message: `A solicitacao permanece na fila: a instalacao ${access.installationId} do App ${access.appSlug || access.appId || 'configurado'} concede Actions:${access.permissions?.actions || 'sem acesso'}. Iniciar o workflow exige Actions:write nesta instalacao.` };
       }
+      const workflowResponse = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/self-evolution-runner.yml`, {
+        headers: this.getHeaders(access.token),
+      });
+      if (!workflowResponse.ok) return { success: false, diagnostic: { ...identity, code: 'maintenance_workflow_unavailable', httpStatus: workflowResponse.status },
+        message: `Pedido persistido; não foi possível consultar o workflow de manutenção (HTTP ${workflowResponse.status}). Nenhum dispatch confirmado.` };
+      const workflow = await workflowResponse.json() as { state?: string };
+      if (workflow.state !== 'active') return { success: false, diagnostic: { ...identity, code: 'maintenance_workflow_disabled', workflowState: workflow.state || 'unknown' },
+        message: `Pedido persistido; o workflow está ${workflow.state || 'em estado desconhecido'}. Reative a manutenção pelo botão mestre para permitir o dispatch.` };
       const response = await this.githubFetch(`${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/professional-factory.yml/dispatches`, {
         method: 'POST', headers: this.getHeaders(access.token, true),
         body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main' }),
@@ -342,6 +350,27 @@ export class GithubAutomationService {
       return { success: false, ...(error instanceof GithubAppError ? { diagnostic: { code: error.code, ...error.diagnostic } } : {}),
         message: `A solicitacao permanece na fila: ${safeGithubText(error instanceof Error ? error.message : 'falha de comunicacao com GitHub')}` };
     }
+  }
+
+  /** One platform workflow services all public/ZIP projects. Never dispatch in a customer's repository. */
+  static async dispatchDevelopmentJob(jobId: string) {
+    if (!/^devjob-[a-f0-9]{40}$/.test(jobId)) return { success: false, message: 'Identificador de execução inválido.' };
+    const owner = process.env.GITHUB_OWNER || 'brasilportalvip-png';
+    const repo = process.env.GITHUB_REPO || 'frocia2';
+    const workflowUrl = `${GITHUB_API_URL}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/workflows/project-development.yml`;
+    try {
+      const access = await this.resolveCredential(owner, repo);
+      if (access.source === 'github_app' && access.permissions?.actions !== 'write') return { success: false,
+        message: 'Projeto preservado. O executor central precisa de Actions:write no GitHub App da plataforma.' };
+      const response = await this.githubFetch(workflowUrl, { headers: this.getHeaders(access.token) });
+      if (!response.ok) return { success: false, message: `Executor central indisponível (HTTP ${response.status}). O pedido foi preservado.` };
+      const workflow = await response.json() as { state?: string };
+      if (workflow.state !== 'active') return { success: false, message: 'O workflow central de desenvolvimento está desabilitado. Nenhum job foi iniciado.' };
+      const dispatch = await this.githubFetch(workflowUrl + '/dispatches', { method: 'POST', headers: this.getHeaders(access.token, true),
+        body: JSON.stringify({ ref: process.env.GITHUB_BASE_BRANCH || 'main', inputs: { job_id: jobId } }) });
+      return { success: dispatch.status === 204, httpStatus: dispatch.status,
+        message: dispatch.status === 204 ? 'GitHub aceitou o dispatch. Aguardando recibo do job.' : `Dispatch recusado (HTTP ${dispatch.status}). Pedido preservado para retomada.` };
+    } catch { return { success: false, message: 'Executor central não acessível com a credencial da plataforma. Projeto e pedido preservados.' }; }
   }
 
   static async dispatchSelfMaintenance(candidateId?: string, dispatchId?: string): Promise<MaintenanceDispatchResult> {
