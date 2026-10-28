@@ -45,18 +45,28 @@ export async function portablePreview(archive: Uint8Array) {
   const scripts = [...html.matchAll(/<script\b([^>]*?)src=["']([^"']+)["']([^>]*)>\s*<\/script>/gi)];
   for (const script of scripts) {
     const key = locate(script[2]), code = await bundle(key);
-    html = html.replace(script[0], `<script>${code.replace(/<\/script/gi, '<\\/script')}</script>`);
+    const attributes = script[1] + ' ' + script[3];
+    const module = /\btype\s*=\s*["']module["']/i.test(attributes);
+    const deferred = !module && /\bdefer\b/i.test(attributes);
+    const escaped = code.replace(/<\/script/gi, '<\\/script');
+    const content = deferred ? `(()=>{const run=()=>{${escaped}\n};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',run,{once:true});else run();})();` : escaped;
+    // A replacement callback preserves literal $&, $` and $' in bundled code.
+    // Module scripts must also retain deferred parsing: React needs its root DOM.
+    html = html.replace(script[0], () => `<script${module ? ' type="module"' : ''}>${content}</script>`);
   }
   const styles = [...html.matchAll(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi)];
   for (const style of styles) {
     const href = style[0].match(/href=["']([^"']+)["']/i)?.[1]; if (!href) continue;
-    const css = await bundle(locate(href), true); html = html.replace(style[0], `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`);
+    const css = await bundle(locate(href), true); html = html.replace(style[0], () => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`);
   }
   html = html.replace(/<link\b[^>]*rel=["'](?:modulepreload|preload)["'][^>]*>/gi, '');
   html = html.replace(/\b(src|poster|href)=["'](\/(?!\/)[^"']+)["']/gi, (full, attribute, value) => {
     try { return `${attribute}="${dataUri(locate(value))}"`; } catch { return full; }
   });
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'">`;
+  // Opaque frames cannot use service workers. Make feature detection truthful
+  // instead of exposing a Navigator getter that throws before a PWA can render.
+  const capabilities = `<script>(()=>{try{void navigator.serviceWorker;}catch{for(let current=navigator;current;current=Object.getPrototypeOf(current)){if(Object.prototype.hasOwnProperty.call(current,'serviceWorker')){Reflect.deleteProperty(current,'serviceWorker');break;}}}})();</script>`;
   const isolation = `<script>(()=>{const virtual=window.__FROC_PREVIEW_LOCATION__={pathname:'/',search:'',hash:''};const entries=['/'];let position=0;const set=url=>{const parsed=new URL(String(url||'/'),'https://preview.invalid');if(parsed.origin!=='https://preview.invalid')throw new Error('Preview navigation blocked');virtual.pathname=parsed.pathname;virtual.search=parsed.search;virtual.hash=parsed.hash;};history.pushState=(state,unused,url)=>{set(url);entries.splice(++position);entries.push(virtual.pathname+virtual.search+virtual.hash);};history.replaceState=(state,unused,url)=>{set(url);entries[position]=virtual.pathname+virtual.search+virtual.hash;};history.go=delta=>{position=Math.max(0,Math.min(entries.length-1,position+(Number(delta)||0)));set(entries[position]);dispatchEvent(new PopStateEvent('popstate'));};history.back=()=>history.go(-1);history.forward=()=>history.go(1);for(const key of ['localStorage','sessionStorage']){try{window[key].getItem('preview-check');}catch{const values=new Map;Object.defineProperty(window,key,{value:{getItem:k=>values.get(String(k))??null,setItem:(k,v)=>values.set(String(k),String(v)),removeItem:k=>values.delete(String(k)),clear:()=>values.clear(),key:i=>[...values.keys()][i]??null,get length(){return values.size;}}});}}})();</script>`;
-  return html.replace(/<head([^>]*)>/i, `<head$1>${csp}${isolation}`);
+  return html.replace(/<head([^>]*)>/i, (_full, attributes) => `<head${attributes}>${csp}${capabilities}${isolation}`);
 }

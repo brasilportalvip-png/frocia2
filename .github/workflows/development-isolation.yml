@@ -6,6 +6,7 @@ on:
       - 'worker/Dockerfile.development'
       - 'worker/development-files.mjs'
       - 'scripts/project-development-acceptance.ts'
+      - 'scripts/project-preview-smoke.mjs'
       - 'tests/development*'
       - '.github/workflows/development-isolation.yml'
   workflow_dispatch:
