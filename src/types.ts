@@ -3,6 +3,8 @@ export type DeviceView = 'desktop' | 'tablet' | 'mobile';
 export type AppNavigationMode = 'landing' | 'studio' | 'dashboard' | 'pricing' | 'integrations' | 'admin';
 
 export interface GeneratedSite {
+  sourceKind?: 'github';
+  githubRepositoryFullName?: string;
   professionalBuildId?: string;
   productionUrl?: string;
   id: string;

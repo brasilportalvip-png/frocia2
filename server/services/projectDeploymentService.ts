@@ -325,11 +325,9 @@ export class ProjectDeploymentService {
   static async publishToGitHub(
     input: GitHubPublishInput
   ): Promise<GitHubPublishResult> {
-    const repoName = normalizeRepositoryName(
-      input.repoName
-    );
+    const repoName = input.allowExistingRepository ? input.repoName.trim() : normalizeRepositoryName(input.repoName);
 
-    if (!repoName) {
+    if (!/^[A-Za-z0-9_.-]{1,100}$/.test(repoName) || ['.', '..'].includes(repoName)) {
       throw new DeploymentProviderError(
         'invalid_repository_name',
         'O nome do repositório não é válido.',

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiClient } from "../services/apiClient";
 import { ProjectMaintenancePanel } from './ProjectMaintenancePanel';
+import { GithubProjectPanel } from './GithubProjectPanel';
 import {
   INTELLIGENCE_AGENTS,
   CREATION_AGENTS,
@@ -22,6 +23,7 @@ interface Props {
   onSaved?(): void;
   requiredVariables?: Omit<Variable, "configured" | "value">[];
   suggestedSiteUrl?: string;
+  initialTab?: 'github';
 }
 
 export function ProjectConfigurationPanel({
@@ -31,9 +33,10 @@ export function ProjectConfigurationPanel({
   requiredVariables = [],
   suggestedSiteUrl,
   onSaved,
+  initialTab,
 }: Props) {
-  const [tab, setTab] = useState<"variables" | "agents" | "delivery" | "maintenance">(
-    "variables",
+  const [tab, setTab] = useState<"variables" | "agents" | "delivery" | "maintenance" | "github">(
+    initialTab || "variables",
   );
   const [variables, setVariables] = useState<Variable[]>([]);
   const [revision, setRevision] = useState(0);
@@ -187,6 +190,7 @@ export function ProjectConfigurationPanel({
               ["agents", "Agentes"],
               ["delivery", "Entrega"],
               ["maintenance", "Manutenção"],
+              ["github", "GitHub"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -201,6 +205,7 @@ export function ProjectConfigurationPanel({
           ))}
         </nav>
         <div className="overflow-y-auto p-4 sm:p-6">
+          {tab === 'github' && <GithubProjectPanel projectId={projectId} />}
           {tab === 'maintenance' && <ProjectMaintenancePanel projectId={projectId} />}
           {tab === "variables" && (
             <div className="space-y-4">

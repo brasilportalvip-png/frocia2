@@ -1,3 +1,5 @@
+import { GithubAppService, GithubAppError } from '../services/githubAppService.js';
+import { GithubUserConnectionService, GithubUserConnectionError } from '../services/githubUserConnectionService.js';
 import crypto from 'node:crypto';
 import { Router, Response } from 'express';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -105,6 +107,7 @@ function sendProviderError(
   res: Response,
   error: unknown
 ) {
+  if (error instanceof GithubAppError || error instanceof GithubUserConnectionError) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
   if (error instanceof DeploymentProviderError) {
     return res.status(error.httpStatus).json({
       error: {
@@ -150,21 +153,6 @@ deployRouter.post(
       });
     }
 
-    const token =
-      process.env.GITHUB_TOKEN ||
-      process.env.GITHUB_APP_TOKEN;
-
-    if (!token) {
-      return res.status(503).json({
-        error: {
-          code: 'github_not_configured',
-          message:
-            'A integração do GitHub não está configurada no servidor.',
-          correlationId: req.correlationId,
-        },
-      });
-    }
-
     if (!isFirebaseAdminConfigured()) {
       return res.status(503).json({
         error: {
@@ -196,12 +184,14 @@ deployRouter.post(
         });
       }
 
-      const owner = (
-        process.env.GITHUB_OWNER ||
-        'brasilportalvip-png'
-      ).trim();
-      const normalizedRepoName =
-        normalizeRepositoryName(input.repoName);
+      const connection = await GithubAppService.getProjectConnection(userId, req.user!.tenantId, input.projectId);
+      await GithubUserConnectionService.assertRepositoryAccess({ userId, tenantId: req.user!.tenantId }, connection.owner, connection.repository, true);
+      if (input.repoName.toLowerCase() !== connection.repository.toLowerCase()) throw new GithubAppError('project_repository_conflict', 'O destino solicitado difere do repositório conectado.', 409);
+      const access = await GithubAppService.installationToken(connection.installationId);
+      if (access.permissions.contents !== 'write') throw new GithubAppError('github_write_not_authorized', 'A instalação não permite alterar o código.', 403);
+      const token = access.token;
+      const owner = connection.owner;
+      const normalizedRepoName = connection.repository;
       const repositoryFullName =
         `${owner}/${normalizedRepoName}`;
       const idempotencyKey =
@@ -261,7 +251,7 @@ deployRouter.post(
             allowExistingRepository:
               boundRepository ===
                 repositoryFullName ||
-              req.user!.role === 'admin',
+              connection.repository === normalizedRepoName,
           });
 
       const publishRecord = {
