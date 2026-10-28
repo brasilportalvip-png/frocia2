@@ -10,6 +10,7 @@ interface CostEstimationModalProps {
   maxCreditLimit: number;
   userBalance: number;
   description: string;
+  children?: React.ReactNode;
 }
 
 export const CostEstimationModal: React.FC<CostEstimationModalProps> = ({
@@ -20,7 +21,8 @@ export const CostEstimationModal: React.FC<CostEstimationModalProps> = ({
   estimatedCredits,
   maxCreditLimit,
   userBalance,
-  description
+  description,
+  children,
 }) => {
   if (!isOpen) return null;
 
@@ -28,7 +30,7 @@ export const CostEstimationModal: React.FC<CostEstimationModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 select-none">
-      <div className="w-full max-w-md glass-panel rounded-[32px] p-6 border border-amber-500/30 text-white space-y-5 relative shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="max-h-[92dvh] w-full max-w-md overflow-y-auto glass-panel rounded-[32px] p-6 border border-amber-500/30 text-white space-y-5 relative shadow-2xl animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-2.5">
@@ -82,6 +84,7 @@ export const CostEstimationModal: React.FC<CostEstimationModalProps> = ({
           </div>
         )}
 
+        {children}
         {/* Actions */}
         <div className="flex items-center justify-end gap-3 pt-2">
           <button

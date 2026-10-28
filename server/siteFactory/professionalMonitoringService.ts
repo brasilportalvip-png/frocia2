@@ -25,6 +25,7 @@ export async function monitorProfessionalProjects(
     if (Date.now() > deadline) break;
     const b = doc.data() as ProfessionalBuild;
     await cursorRef.set({ lastId: doc.id, checkedAt: new Date().toISOString() });
+    if (b.publication?.deliveryKind === 'github') continue;
     const project = await adminDb.collection("projects").doc(b.projectId).get();
     if (
       !project.exists ||
