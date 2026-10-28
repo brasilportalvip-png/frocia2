@@ -26,4 +26,12 @@ describe('Download público sem credenciais e com destinos fixos', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(1024), { headers: { 'content-length': '1024' } })));
     await expect(fixedDownload(new URL('https://api.github.com/repos/a/b'), new Set(['api.github.com']), 100)).rejects.toMatchObject({ code: 'download_size_limit' });
   });
+  it('negocia metadados npm sem enviar o cabeçalho exclusivo do GitHub', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, options: any) => {
+      expect(options.headers.Accept).toBe('*/*'); expect(options.headers.Authorization).toBeUndefined();
+      return Response.json({ name: 'proof', version: '1.0.0' });
+    }));
+    const bytes = await fixedDownload(new URL('https://registry.npmjs.org/proof/1.0.0'), new Set(['registry.npmjs.org']), 1000);
+    expect(JSON.parse(bytes.toString()).name).toBe('proof');
+  });
 });

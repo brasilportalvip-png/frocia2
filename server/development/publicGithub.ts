@@ -14,7 +14,7 @@ export async function fixedDownload(url: URL, allowedHosts: Set<string>, maxByte
   for (let i = 0; i < 4; i++) {
     if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowedHosts.has(url.hostname)) throw new DevelopmentError('download_host_denied', 'Destino de download não autorizado.');
     const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
-      headers: { 'User-Agent': 'FrocIA-Development/1', Accept: 'application/vnd.github+json' } });
+      headers: { 'User-Agent': 'FrocIA-Development/1', Accept: url.hostname === 'api.github.com' ? 'application/vnd.github+json' : '*/*' } });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location'); await response.body?.cancel();
       if (!location) throw new DevelopmentError('download_redirect_invalid', 'Redirecionamento sem endereço.');

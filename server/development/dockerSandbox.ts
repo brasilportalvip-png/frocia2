@@ -7,6 +7,7 @@ import { DevelopmentError, LIMITS, type SourceFiles, safePath, secretPath, sourc
 import { fixedDownload } from './publicGithub.js';
 import type { CommandReceipt, ValidationReceipt } from './agent.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
+import { resolveDependencyLock } from './dependencyLock.js';
 
 const MAX_LOG = 2 * 1024 * 1024;
 export async function processCommand(command: string, args: string[], cwd: string, signal?: AbortSignal, input?: string | Uint8Array, timeout: number = LIMITS.commandMs) {
@@ -65,34 +66,32 @@ async function materialize(root: string, files: SourceFiles) {
     await fs.writeFile(destination, file.bytes, { mode: file.mode });
   }
 }
-async function cacheDependencies(files: SourceFiles, temporary: string, signal: AbortSignal) {
+export async function cacheDependencies(files: SourceFiles, temporary: string, signal: AbortSignal, progress?: (message: string) => void) {
   const cache = path.join(temporary, 'npm-cache'); await fs.mkdir(cache);
-  const lockFile = files.get('package-lock.json'); if (!lockFile) throw new DevelopmentError('lockfile_required', 'O projeto npm precisa do lockfile original para instalação reproduzível.');
-  const lock = JSON.parse(Buffer.from(lockFile.bytes).toString()), packages = Object.values(lock.packages || {}) as any[];
-  if (![2, 3].includes(lock.lockfileVersion) || !packages.length) throw new DevelopmentError('lockfile_unsupported', 'O executor aceita package-lock versões 2 e 3. O arquivo original foi preservado.');
-  const resolved = new Map<string, string>();
-  for (const item of packages) if (item.resolved && !item.link) {
-    const url = new URL(item.resolved);
-    if (url.protocol !== 'https:' || url.hostname !== 'registry.npmjs.org' || url.search || url.hash || url.username || url.password || url.port || !/\/-\/[^/]+\.tgz$/.test(url.pathname)) {
-      throw new DevelopmentError('dependency_registry_denied', 'Dependências privadas, git ou fora do npm oficial exigem um adaptador autorizado. Nenhuma credencial foi solicitada.');
-    }
-    const integrity = String(item.integrity || '').split(/\s+/).find(i => /^sha512-[A-Za-z0-9+/]+=*$/.test(i));
-    if (!integrity) throw new DevelopmentError('dependency_integrity_missing', 'Uma dependência não possui integridade SHA-512 no lockfile.');
-    resolved.set(url.href, integrity.slice(7));
-  }
-  let total = 0, index = 0;
+  progress?.('Resolvendo metadados npm ausentes, sem alterar as versões do projeto.');
+  const prepared = await resolveDependencyLock(files, signal), resolved = prepared.tarballs;
+  progress?.(`Preparando ${resolved.size} tarballs oficiais para instalação offline; ${prepared.evidence.hydrated.length} entradas suplementadas.`);
+  let total = 0, index = 0, completed = 0, failure: unknown;
+  const entries = [...resolved];
   // Only this downloader has egress; it receives neither project scripts nor provider credentials.
-  for (const [url, expected] of resolved) {
-    if (signal.aborted) throw new DevelopmentError('job_cancelled', 'Execução cancelada.');
-    const bytes = await fixedDownload(new URL(url), new Set(['registry.npmjs.org']), 30 * 1024 * 1024, 30_000);
-    total += bytes.length; if (total > 300 * 1024 * 1024) throw new DevelopmentError('dependency_cache_limit', 'Cache de dependências excedeu 300 MiB.');
-    if (createHash('sha512').update(bytes).digest('base64') !== expected) throw new DevelopmentError('dependency_integrity_mismatch', 'Tarball npm diverge do lockfile.');
-    const tarball = path.join(temporary, `dependency-${index++}.tgz`); await fs.writeFile(tarball, bytes);
-    const cached = await processCommand('npm', ['cache', 'add', tarball, '--ignore-scripts', '--offline', '--cache', cache, '--userconfig', '/dev/null'], temporary, signal);
-    await fs.rm(tarball);
-    if (cached.exitCode !== 0) throw new DevelopmentError('dependency_cache_failed', 'Não foi possível preparar o cache offline.');
-  }
-  return cache;
+  await Promise.all(Array.from({ length: Math.min(4, entries.length) }, async () => {
+    while (index < entries.length && !failure) {
+      const current = index++, [url, expected] = entries[current], tarball = path.join(temporary, `dependency-${current}.tgz`);
+      try {
+        if (signal.aborted) throw new DevelopmentError('job_cancelled', 'Execução cancelada.');
+        const bytes = await fixedDownload(new URL(url), new Set(['registry.npmjs.org']), 30 * 1024 * 1024, 30_000);
+        total += bytes.length; if (total > 300 * 1024 * 1024) throw new DevelopmentError('dependency_cache_limit', 'Cache de dependências excedeu 300 MiB.');
+        if (createHash('sha512').update(bytes).digest('base64') !== expected) throw new DevelopmentError('dependency_integrity_mismatch', 'Tarball npm diverge do lockfile.');
+        await fs.writeFile(tarball, bytes);
+        const cached = await processCommand('npm', ['cache', 'add', tarball, '--ignore-scripts', '--offline', '--cache', cache, '--userconfig', '/dev/null'], temporary, signal);
+        if (cached.exitCode !== 0) throw new DevelopmentError('dependency_cache_failed', 'Não foi possível preparar o cache offline.');
+        completed++; if (completed % 25 === 0 || completed === resolved.size) progress?.(`Cache offline verificado: ${completed}/${resolved.size}.`);
+      } catch (error) { failure ||= error; }
+      finally { await fs.rm(tarball, { force: true }); }
+    }
+  }));
+  if (failure) throw failure;
+  return { cache, ...prepared };
 }
 
 export class DockerProjectSandbox {
@@ -100,14 +99,15 @@ export class DockerProjectSandbox {
     try { return (await processCommand('docker', ['version', '--format', '{{.Server.Version}}'], os.tmpdir(), undefined, undefined, 10_000)).exitCode === 0; }
     catch { return false; }
   }
-  constructor(private signal: AbortSignal, private image = process.env.DEVELOPMENT_SANDBOX_IMAGE || 'frocia-development:local') {}
+  constructor(private signal: AbortSignal, private image = process.env.DEVELOPMENT_SANDBOX_IMAGE || 'frocia-development:local',
+    private observe: { command?: (receipt: CommandReceipt) => Promise<void>; progress?: (message: string) => void } = {}) {}
   async validate(files: SourceFiles): Promise<ValidationReceipt> {
     if (!await DockerProjectSandbox.available()) throw new DevelopmentError('isolated_executor_unavailable', 'Docker isolado indisponível. Nenhum código do projeto foi executado no servidor principal.', 503);
     if (this.signal.aborted) throw new DevelopmentError('job_cancelled', 'Execução cancelada.');
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'froc-development-')), name = `froc-dev-${randomUUID()}`;
     const source = path.join(temporary, 'source'); await fs.mkdir(source);
     const commands: CommandReceipt[] = [];
-    const checked = async (args: string[], input?: string) => {
+    const checked = async (args: string[], input?: string | Uint8Array) => {
       const result = await processCommand('docker', args, temporary, this.signal, input);
       if (result.exitCode !== 0) throw new DevelopmentError('sandbox_operation_failed', 'A operação de isolamento falhou. O projeto foi preservado.');
       return result;
@@ -117,7 +117,7 @@ export class DockerProjectSandbox {
       await materialize(source, executableFiles);
       const pkg = files.has('package.json') ? JSON.parse(Buffer.from(files.get('package.json')!.bytes).toString()) : null;
       if (pkg && !['typecheck', 'test', 'build'].every(script => typeof pkg.scripts?.[script] === 'string')) throw new DevelopmentError('validation_scripts_missing', 'Faltam scripts originais typecheck, test ou build. Não foi inventada uma validação equivalente.');
-      const cache = pkg ? await cacheDependencies(files, temporary, this.signal) : null;
+      const dependencies = pkg ? await cacheDependencies(files, temporary, this.signal, this.observe.progress) : null;
       await checked(['create', '--name', name, '--network', 'none', '--read-only', '--cpus', '1', '--memory', '2g', '--memory-swap', '2g',
         '--pids-limit', '256', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '10001:10001',
         '--ulimit', 'nofile=1024:1024', '--ulimit', 'core=0',
@@ -135,12 +135,22 @@ export class DockerProjectSandbox {
       }
       await checked(['start', name]);
       await copyDevelopmentDirectory(source, '/workspace', name, temporary, this.signal);
-      if (cache) await copyDevelopmentDirectory(cache, '/cache', name, temporary, this.signal);
+      if (dependencies) await copyDevelopmentDirectory(dependencies.cache, '/cache', name, temporary, this.signal);
       const original = [...executableFiles.keys()];
       if (pkg) for (const args of [['ci'], ['run', 'typecheck'], ['test'], ['run', 'build']]) {
-        const result = await processCommand('docker', ['exec', '--user', '10001:10001', '-w', '/workspace', name, 'npm', ...args], temporary, this.signal);
-        commands.push({ ...result, command: `npm ${args.join(' ')}` });
-        if (result.exitCode !== 0) break;
+        const supplemented = args[0] === 'ci' && !!dependencies?.evidence.hydrated.length;
+        const writeLock = (bytes: Uint8Array) => checked(['exec', '-i', '--user', '10001:10001', name, 'node', '-e',
+          "require('node:fs').writeFileSync('/workspace/package-lock.json',require('node:fs').readFileSync(0))"], bytes);
+        let result: CommandReceipt;
+        try {
+          if (supplemented) await writeLock(dependencies!.installLockfile);
+          result = await processCommand('docker', ['exec', '--user', '10001:10001', '-w', '/workspace', name, 'npm', ...args], temporary, this.signal);
+        } finally {
+          if (supplemented && !this.signal.aborted) await writeLock(files.get('package-lock.json')!.bytes);
+        }
+        commands.push({ ...result!, command: `npm ${args.join(' ')}` });
+        await this.observe.command?.(commands.at(-1)!);
+        if (result!.exitCode !== 0) break;
       }
       else commands.push({ command: 'static-source-integrity', exitCode: files.has('index.html') ? 0 : 1, startedAt: new Date().toISOString(), durationMs: 0,
         stdout: 'Projeto estático: nenhum script npm declarado.', stderr: '', stdoutSha256: createHash('sha256').update('static-source-integrity').digest('hex'), stderrSha256: createHash('sha256').update('').digest('hex') });
@@ -169,7 +179,8 @@ export class DockerProjectSandbox {
         if (previewFiles.has('index.html')) preview = writeArchive(previewFiles);
       }
       return { commands, sourceDigest: sourceManifest(files).digest, preview, isolation: { engine: 'docker', projectSecretFilesMounted: false, network: host.NetworkMode, readOnlyRoot: host.ReadonlyRootfs,
-        user: inspected.Config.User, memoryBytes: host.Memory, nanoCpus: host.NanoCpus, pidsLimit: host.PidsLimit, capabilitiesDropped: host.CapDrop } };
+        user: inspected.Config.User, memoryBytes: host.Memory, nanoCpus: host.NanoCpus, pidsLimit: host.PidsLimit, capabilitiesDropped: host.CapDrop,
+        ...(dependencies ? { dependencyLock: dependencies.evidence } : {}) } };
     } finally {
       await processCommand('docker', ['rm', '--force', name], temporary, undefined, undefined, 15_000).catch(() => {});
       await fs.rm(temporary, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { DockerProjectSandbox } from '../server/development/dockerSandbox';
-import type { SourceFiles } from '../server/development/archive';
+import { sha256, type SourceFiles } from '../server/development/archive';
+import type { CommandReceipt } from '../server/development/agent';
 const enabled = process.env.RUN_DEVELOPMENT_DOCKER_TESTS === '1';
 const file = (text: string) => ({ bytes: Buffer.from(text), mode: 0o644 });
 function project(script: string): SourceFiles {
@@ -36,5 +37,33 @@ describe.skipIf(!enabled)('Isolamento real do executor central (Docker necessár
     expect(first.isolation).toMatchObject({ network: 'none', readOnlyRoot: true, user: '10001:10001', pidsLimit: 256, memoryBytes: 2147483648, nanoCpus: 1_000_000_000 });
     const second = await new DockerProjectSandbox(new AbortController().signal).validate(project(`require('node:assert/strict').equal(require('node:fs').existsSync('/tmp/project-private-marker'),false);`));
     expect(second.commands.every(c => c.exitCode === 0)).toBe(true); expect(second.preview).toBeTruthy();
+  }, 180_000);
+  it('preserva o recibo do comando que falhou sem executar o build nem declarar prévia', async () => {
+    const received: CommandReceipt[] = [];
+    const result = await new DockerProjectSandbox(new AbortController().signal, undefined,
+      { command: async receipt => { received.push(receipt); } }).validate(project('console.error("fixture-command-failure");process.exit(23);'));
+    expect(received.map(receipt => receipt.command)).toEqual(['npm ci', 'npm run typecheck', 'npm test']);
+    expect(received.map(receipt => receipt.exitCode)).toEqual([0, 0, 23]);
+    expect(received.at(-1)!.stderr).toContain('fixture-command-failure');
+    expect(result.commands).toEqual(received); expect(result.preview).toBeUndefined();
+  }, 180_000);
+  it('instala dependência sem URL/hash offline e restaura o lockfile antes dos testes', async () => {
+    const files = project(`
+      const assert=require('node:assert/strict'),fs=require('node:fs');
+      assert.equal(require('is-number')(42),true);
+      const entry=JSON.parse(fs.readFileSync('package-lock.json','utf8')).packages['node_modules/is-number'];
+      assert.equal(entry.version,'7.0.0');assert.equal(entry.resolved,undefined);assert.equal(entry.integrity,undefined);
+    `);
+    const pkg=JSON.parse(Buffer.from(files.get('package.json')!.bytes).toString());pkg.dependencies={'is-number':'7.0.0'};
+    files.set('package.json',file(JSON.stringify(pkg)));
+    const lock=JSON.parse(Buffer.from(files.get('package-lock.json')!.bytes).toString());
+    lock.packages[''].dependencies=pkg.dependencies;lock.packages['node_modules/is-number']={version:'7.0.0'};
+    files.set('package-lock.json',file(JSON.stringify(lock)));
+    const originalHash=sha256(files.get('package-lock.json')!.bytes);
+    const result=await new DockerProjectSandbox(new AbortController().signal).validate(files);
+    expect(result.commands.map(command=>command.exitCode)).toEqual([0,0,0,0]);
+    expect(result.isolation.dependencyLock).toMatchObject({originalSha256:originalHash,versionsChanged:false,sourceLockfileChanged:false,
+      hydrated:[{name:'is-number',version:'7.0.0'}]});
+    expect(sha256(files.get('package-lock.json')!.bytes)).toBe(originalHash);
   }, 180_000);
 });

@@ -7,6 +7,8 @@ import { readArchive, writeArchive, sourceManifest, sha256, safePath, type Sourc
 import { developProject, type ValidationReceipt } from '../server/development/agent.js';
 import { DockerProjectSandbox, processCommand } from '../server/development/dockerSandbox.js';
 import { portablePreview } from '../server/development/preview.js';
+import { RedactionService } from '../server/selfEvolution/redactionService.js';
+import type { CommandReceipt } from '../server/development/agent.js';
 
 const output = path.resolve(process.env.DEVELOPMENT_ACCEPTANCE_OUTPUT || 'development-acceptance');
 const native = process.argv.includes('--trusted-native-acceptance');
@@ -24,6 +26,17 @@ for (const entry of tree.tree.filter((f: any) => f.type === 'blob')) {
 await fs.writeFile(path.join(output, 'marketing-original.zip'), writeArchive(files));
 const controller = new AbortController();
 const workspace = path.join(output, 'marketing-workspace');
+let lastValidation: ValidationReceipt | undefined, lastDiagnostic = '';
+let recorded: CommandReceipt[] = [];
+const recordCommand = async (receipt: CommandReceipt) => {
+  const stdout = RedactionService.redactSensitiveData(receipt.stdout), stderr = RedactionService.redactSensitiveData(receipt.stderr);
+  const command = { ...receipt, stdout, stderr, rawStdoutSha256: receipt.stdoutSha256, rawStderrSha256: receipt.stderrSha256,
+    stdoutSha256: sha256(Buffer.from(stdout)), stderrSha256: sha256(Buffer.from(stderr)) };
+  recorded.push(command);
+  await fs.writeFile(path.join(output, 'commands.json'), JSON.stringify(recorded, null, 2));
+  console.log(`${command.command}: exit ${command.exitCode}`);
+  if (command.exitCode !== 0) console.error((command.stderr || command.stdout).slice(-6000));
+};
 const validateNative = async (files: SourceFiles): Promise<ValidationReceipt> => {
   await fs.mkdir(workspace, { recursive: true });
   for (const [file, data] of files) { const destination = path.join(workspace, safePath(file)); await fs.mkdir(path.dirname(destination), { recursive: true }); await fs.writeFile(destination, data.bytes, { mode: data.mode }); }
@@ -31,8 +44,7 @@ const validateNative = async (files: SourceFiles): Promise<ValidationReceipt> =>
   for (const args of [['ci', '--userconfig', '/dev/null'], ['run', 'typecheck'], ['test'], ['run', 'build']]) {
     console.log(`Starting npm ${args.join(' ')} in the explicit trusted acceptance copy.`);
     const receipt = await processCommand('npm', args, workspace, controller.signal); commands.push(receipt);
-    await fs.writeFile(path.join(output, 'commands.json'), JSON.stringify(commands, null, 2));
-    console.log(`${receipt.command}: exit ${receipt.exitCode}`);
+    await recordCommand(receipt);
     if (receipt.exitCode !== 0) break;
   }
   const built: SourceFiles = new Map();
@@ -45,13 +57,13 @@ const validateNative = async (files: SourceFiles): Promise<ValidationReceipt> =>
     }
   };
   if (commands.every(c => c.exitCode === 0)) await collect(path.join(workspace, 'dist'));
-  await fs.appendFile(path.join(output, 'validation-attempts.jsonl'), JSON.stringify({ at: new Date().toISOString(), commands }) + '\n');
   return { commands, sourceDigest: sourceManifest(files).digest, ...(built.size ? { preview: writeArchive(built) } : {}),
     isolation: { acceptanceMode: 'trusted_native_verification', productionSandboxNotBypassed: true, dockerIsolationVerified: false } };
 };
 const target = 'src/components/AuthModal.tsx'; let call = 0, repairTsx = false;
 const result = await developProject({ files, instruction: 'Associe o título visível do modal de autenticação ao diálogo para leitores de tela. Preserve design, arquitetura e Vercel.',
   checkControl: async () => {}, checkpoint: async (state, source, detail) => {
+    if (detail.diagnostic) { lastDiagnostic = String(detail.diagnostic); console.error(`Acceptance diagnostic: ${lastDiagnostic}`); }
     await fs.writeFile(path.join(output, 'working.zip'), writeArchive(source));
     await fs.appendFile(path.join(output, 'events.jsonl'), JSON.stringify({ state, ...detail }) + '\n');
   },
@@ -67,10 +79,27 @@ const result = await developProject({ files, instruction: 'Associe o título vis
     }
     if (repairTsx && call === 6) return { actions: [{ op: 'replace', path: 'package.json', expectedSha256: sha256(files.get('package.json')!.bytes), oldText: 'tsx --test test/*.test.ts', newText: 'node --import tsx --test test/*.test.ts' }] };
     if (repairTsx && call === 7) return { actions: [{ op: 'validate' }] };
-    if (call > (repairTsx ? 8 : 5)) throw new Error('Acceptance validation failed; inspect commands.json.');
+    const failed = lastValidation?.commands.find(command => command.exitCode !== 0);
+    if ((call >= 5 && !repairTsx) || (repairTsx && call >= 8)) {
+      if (failed) throw new Error(`Acceptance: ${failed.command} failed (exit ${failed.exitCode}). See commands.json and validation-attempts.jsonl.`);
+      if (!lastValidation) throw new Error(`Acceptance validation blocked: ${lastDiagnostic || 'no validation receipt'}. See validation-attempts.jsonl.`);
+    }
+    if (call > (repairTsx ? 8 : 5)) throw new Error(`Acceptance not completed: ${lastDiagnostic || 'finish rejected'}. See events.jsonl.`);
     return { actions: [{ op: 'finish', summary: 'Nome acessível do diálogo vinculado ao título, com os scripts originais executados.' }] };
   },
-  validate: native ? validateNative : source => new DockerProjectSandbox(controller.signal).validate(source),
+  validate: async source => {
+    recorded = []; lastValidation = undefined;
+    try {
+      lastValidation = native ? await validateNative(source) : await new DockerProjectSandbox(controller.signal, undefined,
+        { command: recordCommand, progress: message => console.log(message) }).validate(source);
+      lastValidation.commands = recorded;
+      await fs.appendFile(path.join(output, 'validation-attempts.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...lastValidation, preview: undefined }) + '\n');
+      return lastValidation;
+    } catch (error) {
+      await fs.appendFile(path.join(output, 'validation-attempts.jsonl'), JSON.stringify({ at: new Date().toISOString(), error: RedactionService.redactSensitiveData(error instanceof Error ? error.message : String(error)), commands: recorded }) + '\n');
+      throw error;
+    }
+  },
 });
 await fs.writeFile(path.join(output, 'marketing-atualizado.zip'), writeArchive(result.files));
 if (!result.validation.preview) throw new Error('No static preview captured.');
