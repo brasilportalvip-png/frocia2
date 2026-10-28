@@ -1,0 +1,37 @@
+name: Froc.IA - Desenvolvimento de projetos
+run-name: Projeto ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Identificador persistido na plataforma
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: project-development-${{ inputs.job_id }}
+  cancel-in-progress: false
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.1'
+      - name: Dependências confiáveis da plataforma
+        run: npm ci --ignore-scripts
+      - name: Preparar imagem sem credenciais de projeto
+        run: docker build -f worker/Dockerfile.development -t frocia-development:local worker
+      - name: Executar pedido isolado
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CODE_MODEL: ${{ vars.GEMINI_CODE_MODEL || vars.GEMINI_DEFAULT_MODEL || 'gemini-3.7-flash' }}
+          DEVELOPMENT_JOB_ID: ${{ inputs.job_id }}
+          DEVELOPMENT_SANDBOX_IMAGE: frocia-development:local
+        run: node --import tsx scripts/project-development-runner.ts

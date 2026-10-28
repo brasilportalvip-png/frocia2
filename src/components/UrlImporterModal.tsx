@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
 import { GithubConnectionPanel } from './GithubConnectionPanel';
+import { DevelopmentImporter } from './DevelopmentImporter';
 import { createTextAttachment } from '../services/attachmentService';
 import { UploadedFile } from '../types';
 
@@ -289,6 +290,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
         </div>
 
         {importType === 'github' && <>
+          <DevelopmentImporter onImported={handleClose} />
           <GithubConnectionPanel purpose="import" onImported={handleClose} />
           <p className="text-xs text-white/60">Ou anexe uma referência pública para análise usando o formulário abaixo. Essa opção traz uma seleção de conteúdo e não conecta o projeto.</p>
         </>}

@@ -1,4 +1,5 @@
 import { requestMode } from '../services/requestIntent';
+import { openDevelopmentWorkspace, uploadProjectZip } from '../services/development';
 import React, {
   useEffect,
   useRef,
@@ -1039,6 +1040,12 @@ export const ChatCentral: React.FC<
     setAttachmentError(null);
 
     try {
+      const projectZip = files.find(file => /\.zip$/i.test(file.name));
+      if (projectZip) {
+        if (files.length !== 1) throw new Error('Envie o ZIP completo sozinho para importar o projeto.');
+        const workspace = await uploadProjectZip(projectZip, message => setAttachmentError(message));
+        setAttachmentError(null); openDevelopmentWorkspace(workspace.id, inputText); return;
+      }
       const preparedFiles = await prepareNativeFiles(files);
       const zipFile = preparedFiles.find(
         (file) => file.type === 'zip'

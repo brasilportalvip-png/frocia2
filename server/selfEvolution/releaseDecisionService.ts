@@ -18,6 +18,8 @@ export class ReleaseDecisionService {
     canRelease: boolean;
     reason: string;
   } {
+    if (candidate.deliveryPolicy === 'pull_request_only') return { canRelease: false,
+      reason: 'Pedido autorizado somente para branch/PR. Merge e publicação exigem ação explícita do proprietário.' };
     if (!committeeGate.approved || committeeGate.status !== 'approved') {
       return {
         canRelease: false,

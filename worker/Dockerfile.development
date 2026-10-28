@@ -1,0 +1,9 @@
+FROM node:24.22.1-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates tar \
+    && rm -rf /var/lib/apt/lists/* && groupadd --gid 10001 project \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin project \
+    && mkdir -p /workspace /cache /opt/froc
+COPY development-files.mjs /opt/froc/development-files.mjs
+WORKDIR /workspace
+USER 10001:10001
+CMD ["node", "-e", "setInterval(()=>{},60000)"]

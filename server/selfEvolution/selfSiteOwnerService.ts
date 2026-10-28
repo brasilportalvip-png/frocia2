@@ -10,6 +10,7 @@ import { AuditService } from './auditService.js';
 import { AgentValidationService, agentValidationIntent } from './agentValidationService.js';
 import { env } from '../config/env.js';
 import { LockService } from './lockService.js';
+import { engineeringScope, explicitOwnTarget, hasEngineeringOrder, instructionText } from '../../shared/engineeringIntent.js';
 
 type OwnerMessage = { role: string; content: string };
 export type OwnerControlInput = { role?: string; userId: string; prompt: string; recentMessages?: OwnerMessage[] };
@@ -20,6 +21,7 @@ const githubSpeech = (prompt: string) => normalize(prompt).replace(/\b(?:git[ -]
 
 export function isOwnSiteAgentQuestion(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = githubSpeech(prompt);
+  if (hasEngineeringOrder(prompt) || /\b(?:nao|nunca)\b.{0,50}\b(?:contagem|quantidade|85 agentes|listar agentes)\b/.test(text)) return false;
   if (/\b(?:adicione|acrescente|crie|construa|implemente|aumente|reduza|remova)\b/.test(text)) return false;
   if (/\b(?:outro|outra)\s+(?:site|empresa|repositorio|projeto)/.test(text) ||
       /github\.com\/(?!brasilportalvip-png\/frocia2(?:\b|\/))[\w.-]+\/[\w.-]+/.test(text)) return false;
@@ -60,6 +62,9 @@ export function isOwnSiteAccessFollowUp(prompt: string): boolean {
 
 export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = normalize(prompt);
+  const scope = engineeringScope(prompt, recentMessages);
+  if (hasEngineeringOrder(prompt)) return scope === 'own';
+  if (scope === 'external' && !explicitOwnTarget(prompt)) return false;
   if (productSite.test(text)) return true;
   if (/\b(?:outro|outra)\s+(?:site|empresa|repositorio|projeto)/.test(text) ||
       /github\.com\/(?!brasilportalvip-png\/frocia2(?:\b|\/))[\w.-]+\/[\w.-]+/.test(text)) return false;
@@ -76,10 +81,11 @@ export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] 
 }
 
 function commandText(prompt: string): string {
-  return normalize(prompt.replace(/```[\s\S]*?```|^\s*>[^\n]*|["“][^"”\n]*["”]|['‘][^'’\n]*['’]|`[^`\n]*`/gm, ' '));
+  return instructionText(prompt).replace(/\s+/g, ' ').trim();
 }
 
 export function requestsOwnSiteAction(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
+  if (hasEngineeringOrder(prompt)) return engineeringScope(prompt, recentMessages) === 'own';
   const text = commandText(prompt);
   if (!isOwnSiteRequest(prompt, recentMessages) ||
       /\b(?:nao|nunca)\b.{0,30}\b(?:corrij|corrige|corrigir|consert|arrum|repar|resolv|execut|faca|inici|rode|audit|apliq)/.test(text) ||
@@ -149,21 +155,22 @@ export class SelfSiteOwnerService {
     if (!isFirebaseAdminConfigured()) return { status: 'blocked', message: 'Firestore nao configurado; a manutencao nao foi iniciada.' };
     // A aplicacao agenda o executor externo; nao executa codigo dentro da Vercel.
     const system = await adminDb.collection('self_evolution_config').doc('system').get();
-    if (system.data()?.SELF_EVOLUTION_ENABLED === false) return { status: 'paused', message: 'A manutencao esta pausada pela configuracao persistente do proprietario.' };
-    const clean = RedactionService.redactSensitiveData(reason).slice(0, 5000);
-    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const id = 'owner-' + createHash('sha256').update(`${userId}|${day}|${clean}`).digest('hex').slice(0, 32);
+    const clean = RedactionService.redactSensitiveData(reason).slice(0, 60_000);
+    const id = 'owner-' + createHash('sha256').update(`${userId}|${clean}`).digest('hex').slice(0, 32);
     const ref = adminDb.collection('self_evolution_owner_requests').doc(id);
     const prior = await ref.get();
 
     if (!prior.exists) {
       const knowledge = await SelfSiteKnowledgeService.latest();
       const mentioned = knowledge?.navigation.filter(v => clean.toLowerCase().includes(v.label.toLowerCase())).map(v => v.file) || [];
-      const files = [...new Set(mentioned.length ? mentioned : ['src/App.tsx'])];
+      const explicitFiles = [...clean.matchAll(/\b(?:server|src|shared|worker|tests|scripts)\/[A-Za-z0-9_./-]+\.(?:tsx?|mjs|json|css)\b/g)]
+        .map(match => match[0]).filter(file => !file.split('/').some(segment => segment === '..' || segment === '.'));
+      const files = [...new Set([...mentioned, ...explicitFiles].length ? [...mentioned, ...explicitFiles] : ['src/App.tsx'])];
       const riskLevel = SelfEvolutionPolicyEngine.classifyRisk(files);
       const now = new Date().toISOString();
       const candidate: ImprovementCandidate = {
         id, title: '[Proprietario] Investigar e corrigir o proprio site', summary: clean,
+        deliveryPolicy: 'pull_request_only',
         evidence: [`Pedido autenticado do administrador ${userId}.`, ...(knowledge ? [`self_evolution_repository_index/${knowledge.commitSha}`] : [])],
         frequency: 1, affectedUsersCount: 1, severity: 'high', confidence: 0.8,
         affectedComponents: ['self-site', 'owner-request'], probableFiles: files,
@@ -176,10 +183,13 @@ export class SelfSiteOwnerService {
       await adminDb.runTransaction(async tx => {
         const existing = await tx.get(ref);
         if (existing.exists) return;
-        tx.create(ref, { userId, reason: clean, candidateId: id, createdAt: now, dispatchConfirmed: false });
+        tx.create(ref, { userId, reason: clean, candidateId: id, createdAt: now, dispatchConfirmed: false,
+          instructionSha256: createHash('sha256').update(clean).digest('hex'), targetRepository: 'brasilportalvip-png/frocia2' });
         tx.create(adminDb.collection('self_evolution_candidates').doc(id), candidate);
       });
     }
+    if (system.data()?.SELF_EVOLUTION_ENABLED === false) return { status: 'paused', candidateId: id, dispatchAccepted: false,
+      message: 'Pedido persistido. A manutenção está pausada pelo botão mestre; nenhum dispatch foi enviado.' };
     const version = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || 'unknown';
     const lease = randomUUID();
     const decision = await adminDb.runTransaction(async tx => {
@@ -200,7 +210,8 @@ export class SelfSiteOwnerService {
       tx.set(ref, { dispatchConfirmed: dispatch.success, dispatchMessage: dispatch.message, dispatchLeaseUntil: 0,
         dispatchDiagnostic: dispatch.diagnostic || null, updatedAt: new Date().toISOString() }, { merge: true });
     });
-    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, resumed: decision.resumed === true, dispatchId: lease, dispatchVersion: version,
+    return { status: dispatch.success ? 'requested' : 'queued', candidateId: id, dispatchAccepted: dispatch.success, executionStarted: false,
+      resumed: decision.resumed === true, dispatchId: lease, dispatchVersion: version,
       message: dispatch.message, diagnostic: dispatch.diagnostic || null };
   }
 
@@ -217,7 +228,7 @@ export class SelfSiteOwnerService {
       } : null;
     }
     try {
-      if (agentValidationIntent(input.prompt, input.recentMessages)) {
+      if (agentValidationIntent(input.prompt, input.recentMessages) && !requestsOwnSiteAction(input.prompt, input.recentMessages) && requestedOwnSiteToggle(input.prompt, input.recentMessages) === null) {
         return { status: 'checked', agentValidation: await AgentValidationService.respond(input.userId, input.prompt) };
       }
       // Counting installed profiles is a local, read-only operation. A stale
@@ -235,7 +246,7 @@ export class SelfSiteOwnerService {
       } else if (requestsOwnSiteAction(input.prompt, input.recentMessages)) {
         const prior = isOwnSiteRequest(input.prompt) ? [] : (input.recentMessages || [])
           .filter(message => message.role === 'user' && ownSite.test(normalize(message.content))).slice(-2);
-        const reason = [...prior.map(message => `Contexto anterior do proprietario: ${message.content}`), input.prompt].join('\n').slice(-5000);
+        const reason = [...prior.map(message => `Contexto anterior do proprietario: ${message.content}`), input.prompt].join('\n').slice(-60_000);
         action = await this.requestRun(input.userId, reason);
       }
       // Uma falha de consulta ao indice nao pode apagar o recibo de um comando
