@@ -276,6 +276,7 @@ const fetchConversations = async () => {
   };
 
   const loadMessagesForConversation = async (convId: string): Promise<boolean> => {
+    if (!isAuthenticated) return false;
     setMessagesLoading(true);
     try {
       const res = await apiClient<{
