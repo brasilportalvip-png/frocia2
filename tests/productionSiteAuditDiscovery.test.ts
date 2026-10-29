@@ -28,7 +28,7 @@ describe('Falhas reais do site alimentam os agentes', () => {
 
   it('nao inventa defeito de H1 ou conteudo a partir do HTML vazio de uma SPA', () => {
     const original = page();
-    const spa = page({ signals: { likelyClientRendered: true } as SiteAuditPage['signals'],
+    const spa = page({ signals: { likelyClientRendered: true, scripts: 1, wordCount: 10 } as SiteAuditPage['signals'],
       issues: [
         { ...original.issues[0], code: 'H1_COUNT', category: 'accessibility' },
         { ...original.issues[0], code: 'THIN_CONTENT', category: 'content' },
@@ -36,6 +36,16 @@ describe('Falhas reais do site alimentam os agentes', () => {
       ] });
     expect(collectProductionFindings(html({ pages: [spa] }), browser()).map(f => f.code))
       .toEqual(['META_DESCRIPTION_MISSING']);
+  });
+
+  it('nao reporta THIN_CONTENT para SPA que possui scripts e pouco texto inicial', () => {
+    const spaWithScripts = page({
+      signals: { likelyClientRendered: false, scripts: 2, wordCount: 15, headings: { h1: ['Title'] } } as unknown as SiteAuditPage['signals'],
+      issues: [
+        { code: 'THIN_CONTENT', severity: 'low', category: 'content', url: 'https://froc.example.com/', message: 'Pouco conteúdo.', evidence: '15 palavras' },
+      ],
+    });
+    expect(collectProductionFindings(html({ pages: [spaWithScripts] }), browser())).toHaveLength(0);
   });
 
   it('encaminha falhas confirmadas pelo navegador, mas trata falta de login como bloqueio externo', () => {
@@ -49,11 +59,11 @@ describe('Falhas reais do site alimentam os agentes', () => {
     expect(findings[0].evidence).toContain('b'.repeat(64));
   });
 
-  it('preserva defeitos reais de uma página estática mesmo com um script de analytics', () => {
-    const source = page({ signals: { likelyClientRendered: false, scripts: 1 } as SiteAuditPage['signals'] });
-    const codes = ['H1_COUNT', 'THIN_CONTENT', 'IMAGE_ALT_MISSING'];
+  it('preserva defeitos reais de uma página estática sem scripts', () => {
+    const source = page({ signals: { likelyClientRendered: false, scripts: 0, wordCount: 150, headings: { h1: ['Title 1', 'Title 2'] }, images: { total: 1, missingAltAttribute: 1 } } as unknown as SiteAuditPage['signals'] });
+    const codes = ['H1_COUNT', 'IMAGE_ALT_MISSING'];
     source.issues = codes.map(code => ({ ...source.issues[0], code,
-      evidence: '<body><p>Olá</p><img src="foto.png"><script>console.log("analytics")</script></body>' }));
+      evidence: '<body><p>Texto longo com mais de cem palavras para ser estático...</p><img src="foto.png"></body>' }));
     expect(collectProductionFindings(html({ pages: [source] }), browser()).map(finding => finding.code).sort())
       .toEqual([...codes].sort());
   });
