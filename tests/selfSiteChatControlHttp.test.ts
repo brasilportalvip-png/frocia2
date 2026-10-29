@@ -184,7 +184,7 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
     expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Corrija https://github.com/outra/empresa' }, 'test')).toBeNull();
     expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Qual a capital da Franca?' }, 'test')).toBeNull();
     expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Voce consegue alterar a cor do botao?' }, 'test')).toBeNull();
-    expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Qual permissao e necessaria no banco de dados de outro projeto?' }, 'test')).toBeNull();
+    expect(await SelfSiteChatControlService.respond({ ...params, prompt: 'Qual permissao e personalizada no banco de dados de outro projeto?' }, 'test')).toBeNull();
     expect(SelfSiteOwnerService.requestRun).not.toHaveBeenCalled();
   });
 
