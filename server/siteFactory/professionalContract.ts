@@ -19,6 +19,12 @@ export const buildBriefSchema = z
     features: z.array(z.string().max(200)).max(40).default([]),
     language: z.string().max(20).default("pt-BR"),
     autoPublish: z.boolean().default(true),
+    githubTarget: z.object({
+      installationId: z.number().int().positive(),
+      owner: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+      repository: z.string().regex(/^[A-Za-z0-9_.-]{1,100}$/),
+    }).strict().optional(),
+    githubBaseSha: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
     media: z
       .object({ images: z.number().int().min(0).max(3), video: z.boolean() })
       .default({ images: 0, video: false }),

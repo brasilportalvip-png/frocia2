@@ -1,5 +1,6 @@
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { SelfSiteChatControlService } from './selfSiteChatControlService.js';
+import { DevelopmentChatService } from './developmentChatService.js';
 import { SafetyService } from './safetyService.js';
 import { AIRequestOrchestrator } from './requestOrchestrator.js';
 import { ContextBuilder } from './contextBuilder.js';
@@ -112,6 +113,32 @@ export class AIExecutionService {
     const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
 
     let attachments = submittedAttachments;
+
+    if (projectId) {
+      await MemoryService.assertScopeAccess(userId, tenantId, 'project', projectId);
+    }
+    if (conversationId) {
+      await MemoryService.assertScopeAccess(
+        userId,
+        tenantId,
+        'conversation',
+        conversationId
+      );
+    }
+
+    // Validate conversation existence & ownership if conversationId is provided
+    if (adminDb && conversationId) {
+      const convSnap = await adminDb.collection('conversations').doc(conversationId).get();
+      if (!convSnap.exists || convSnap.data()?.userId !== userId) {
+        throw new Error('Conversa não encontrada ou não pertence ao usuário.');
+      }
+    }
+
+    const operational = await SelfSiteChatControlService.respond({ ...params, prompt: sanitizedPrompt }, correlationId);
+    if (operational) return operational;
+    const development = await DevelopmentChatService.respond({ ...params, prompt: sanitizedPrompt });
+    if (development) return development;
+
     const githubRepositoryUrl =
       attachments.length === 0 &&
       !shouldResearchGithub(sanitizedPrompt)
@@ -136,28 +163,7 @@ export class AIExecutionService {
       ];
     }
 
-    if (projectId) {
-      await MemoryService.assertScopeAccess(userId, tenantId, 'project', projectId);
-    }
-    if (conversationId) {
-      await MemoryService.assertScopeAccess(
-        userId,
-        tenantId,
-        'conversation',
-        conversationId
-      );
-    }
 
-    // Validate conversation existence & ownership if conversationId is provided
-    if (adminDb && conversationId) {
-      const convSnap = await adminDb.collection('conversations').doc(conversationId).get();
-      if (!convSnap.exists || convSnap.data()?.userId !== userId) {
-        throw new Error('Conversa não encontrada ou não pertence ao usuário.');
-      }
-    }
-
-    const operational = await SelfSiteChatControlService.respond({ ...params, prompt: sanitizedPrompt }, correlationId);
-    if (operational) return operational;
 
     const artifactMemories =
   await ArtifactMemoryService.rememberAndRetrieve({

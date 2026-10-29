@@ -10,7 +10,9 @@ import {
   ShieldCheck,
   X
 } from 'lucide-react';
-import { getIdToken } from '../lib/firebase';
+import { apiClient } from '../services/apiClient';
+import { GithubConnectionPanel } from './GithubConnectionPanel';
+import { DevelopmentImporter } from './DevelopmentImporter';
 import { createTextAttachment } from '../services/attachmentService';
 import { UploadedFile } from '../types';
 
@@ -66,18 +68,6 @@ function filenameForImport(imported: ImportedContent): string {
   } catch {
     return `pagina-${safeFilenamePart(imported.title)}.txt`;
   }
-}
-
-async function readErrorMessage(response: Response): Promise<string> {
-  const payload = await response.json().catch(() => null) as
-    | { error?: string | { message?: string } }
-    | null;
-
-  if (typeof payload?.error === 'string') return payload.error;
-  if (payload?.error && typeof payload.error.message === 'string') {
-    return payload.error.message;
-  }
-  return `Não foi possível importar o endereço (${response.status}).`;
 }
 
 export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
@@ -144,19 +134,10 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
     setImportError(null);
 
     try {
-      const token = await getIdToken();
-      if (!token) {
-        throw new Error('Faça login para importar páginas ou repositórios.');
-      }
-
-      const response = await fetch(
+      const payload = await apiClient<ImportResponse>(
         importType === 'site-audit' ? '/api/site-audits' : '/api/imports/external',
         {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify(
           importType === 'site-audit'
             ? { url: normalizedUrl, maxPages: auditPageLimit }
@@ -166,11 +147,6 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
         }
       );
 
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response));
-      }
-
-      const payload = await response.json() as ImportResponse;
       if (!payload.imported?.content) {
         throw new Error('O servidor não retornou conteúdo para anexar.');
       }
@@ -238,7 +214,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xl">
-      <div className="relative w-full max-w-lg space-y-5 rounded-[32px] border border-amber-400/20 bg-zinc-950 p-6 text-white shadow-2xl shadow-amber-500/10">
+      <div className="relative max-h-[92dvh] w-full max-w-lg space-y-5 overflow-y-auto rounded-[32px] border border-amber-400/20 bg-zinc-950 p-6 text-white shadow-2xl shadow-amber-500/10">
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-200 text-black shadow-lg shadow-amber-500/20">
@@ -253,7 +229,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
             <div>
               <h3 className="text-base font-bold">
                 {importType === 'github'
-                  ? 'Importar repositório público'
+                  ? 'Importar do GitHub'
                   : importType === 'site-audit'
                     ? 'Auditar site público'
                     : 'Importar página pública'}
@@ -313,6 +289,11 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
           </button>
         </div>
 
+        {importType === 'github' && <>
+          <DevelopmentImporter onImported={handleClose} />
+          <GithubConnectionPanel purpose="import" onImported={handleClose} />
+          <p className="text-xs text-white/60">Ou anexe uma referência pública para análise usando o formulário abaixo. Essa opção traz uma seleção de conteúdo e não conecta o projeto.</p>
+        </>}
         <form onSubmit={(event) => void handleFetchUrl(event)} className="space-y-3">
           <div>
             <label
@@ -395,6 +376,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
             <p className="text-xs leading-relaxed text-white/70">
               {previewData.summary}
             </p>
+            {previewData.type === 'github' && <p className="text-xs text-amber-200">Referência parcial para análise. Esta opção não faz checkout completo nem concede escrita no repositório.</p>}
 
             {previewData.structure.length > 0 && (
               <div className="border-t border-white/10 pt-2">

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { DeviceView, GeneratedSite } from '../types';
 import { SandboxedSiteFrame } from './SandboxedSiteFrame';
+import { openDevelopmentWorkspace } from '../services/development';
 
 interface PreviewFrameProps {
   site: GeneratedSite | null;
@@ -15,6 +16,7 @@ interface PreviewFrameProps {
   isGenerating: boolean;
   onOpenFullscreen: () => void;
   onRefresh: () => void;
+  onOpenProjectSettings?: () => void;
 }
 
 export const PreviewFrame: React.FC<PreviewFrameProps> = ({
@@ -22,7 +24,8 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
   deviceView,
   isGenerating,
   onOpenFullscreen,
-  onRefresh
+  onRefresh,
+  onOpenProjectSettings
 }) => {
     const openNewTab = () => {
     if (site?.professionalBuildId && site.productionUrl) { try { const url=new URL(site.productionUrl);if(url.protocol==='https:')window.open(url.href,'_blank','noopener,noreferrer'); } catch { window.alert('O endereço publicado é inválido. Consulte o painel de entrega.'); } return; }
@@ -97,6 +100,7 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
 
         {site && (
           <div className="flex items-center gap-3">
+            {onOpenProjectSettings && <button type="button" onClick={onOpenProjectSettings} className="text-[11px] hover:text-white" title="Abrir controles deste projeto">Projeto</button>}
             <button
               onClick={onRefresh}
               className="hover:text-white transition-colors flex items-center gap-1 text-[11px]"
@@ -146,7 +150,15 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
         )}
 
         {/* Render Frame or Empty State */}
-        {site ? (
+        {site?.sourceKind === 'workspace' ? (
+          <div className="max-w-lg space-y-4 rounded-2xl border border-violet-400/30 bg-slate-950 p-6 text-center text-white">
+            <h3 className="text-lg font-semibold">Projeto importado: {site.title}</h3>
+            <p className="text-sm text-slate-300">O código original está em um workspace privado. A prévia será exibida no painel depois de executar e validar uma alteração.</p>
+            <button type="button" onClick={() => openDevelopmentWorkspace(site.workspaceId || site.id)} className="rounded-lg bg-violet-700 px-4 py-2 text-sm">Abrir arquivos e estado da execução</button>
+          </div>
+        ) : site?.sourceKind === 'github' && !site.html ? (
+          <div className="max-w-lg space-y-3 rounded-2xl border border-white/20 bg-slate-950 p-6 text-center text-white"><h3 className="font-semibold">Repositório conectado: {site.title}</h3><p className="text-sm">Abra os controles deste projeto para consultar os arquivos e importar o conteúdo integral para desenvolvimento.</p>{onOpenProjectSettings && <button type="button" onClick={onOpenProjectSettings} className="rounded-lg border px-3 py-2 text-sm">Abrir arquivos e repositório</button>}</div>
+        ) : site ? (
           <div className={`transition-all duration-300 relative ${getContainerWidthClass()}`}>
             {/* Device Speaker Notch simulation for mobile/tablet */}
             {deviceView !== 'desktop' && (

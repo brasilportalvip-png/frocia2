@@ -1,3 +1,9 @@
+import { githubCallbackFromHref, removeGithubCallback } from './services/githubConnection';
+import type { CreationDelivery } from './services/requestIntent';
+import { GithubConnectionPanel } from './components/GithubConnectionPanel';
+import { DevelopmentPanel } from './components/DevelopmentPanel';
+import { openDevelopmentWorkspace } from './services/development';
+import { hasEngineeringOrder, explicitOwnTarget } from '../shared/engineeringIntent';
 import { committeeNavigation } from './services/committeeNavigation';
 import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
@@ -5,6 +11,7 @@ import React, {
   useState,
   useEffect,
   useRef,
+  useCallback,
   lazy,
   Suspense
 } from 'react';
@@ -169,13 +176,21 @@ function upsertResearchProgress(
 export default function App() {
   const { user: authUser, loading, isAuthenticated, isAdmin, profileError, logout, refreshProfile } = useAuth();
 
-  const [navMode, setNavMode] = useState<AppNavigationMode>(() => committeeNavigation(window.location.href).openAdmin ? 'admin' : 'studio');
+  const [githubCallback] = useState(() => githubCallbackFromHref(window.location.href));
+  const [navMode, setNavMode] = useState<AppNavigationMode>(() => githubCallbackFromHref(window.location.href) || new URL(window.location.href).searchParams.get('view') === 'integrations' ? 'integrations' : committeeNavigation(window.location.href).openAdmin ? 'admin' : 'studio');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [deviceView, setDeviceView] = useState<DeviceView>('desktop');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.6-flash');
 
   const [savedSites, setSavedSites] = useState<GeneratedSite[]>([]);
+  const [creationDelivery, setCreationDelivery] = useState<CreationDelivery>({ autoPublish: true });
+  const creationDeliveryRef = useRef<CreationDelivery>({ autoPublish: true });
+  const updateCreationDelivery = useCallback((delivery: CreationDelivery) => {
+    creationDeliveryRef.current = delivery;
+    setCreationDelivery(delivery);
+  }, []);
   const [professionalBuildId, setProfessionalBuildId] = useState<string | null>(null);
+  const [developmentWorkspace, setDevelopmentWorkspace] = useState<{ id: string; instruction: string } | null>(null);
   const [isProjectConfigurationOpen, setIsProjectConfigurationOpen] = useState(false);
   const [activeSite, setActiveSite] = useState<GeneratedSite | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -635,7 +650,7 @@ const fetchConversations = async () => {
     colorPalette: string;
     tone: string;
     features: string[];
-  },
+  } & CreationDelivery,
   files: UploadedFile[] = [],
   budgetApproved = false
 ) => {
@@ -644,14 +659,15 @@ const fetchConversations = async () => {
     setErrorMsg(
       'É necessário fazer login para gerar projetos com a Froc.IA.'
     );
-    return;
+    return false;
   }
 
   if (!budgetApproved) {
+    if ('githubTarget' in data || 'autoPublish' in data) updateCreationDelivery({ githubTarget: data.githubTarget, autoPublish: data.autoPublish ?? true });
     const images=/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0;
     const video=/v[ií]deo|veo\s*3/i.test(data.prompt);
-    setCostModal({isOpen:true,opType:'Construção profissional',credits:95+images*18+(video?120:0),desc:'Limite estimado incluindo planejamento, geração, revisão e até duas correções. Mídias solicitadas estão incluídas. A publicação só é aprovada após os testes. Credenciais externas são configuradas pelo painel.',onConfirm:()=>{setCostModal(prev=>({...prev,isOpen:false}));void handleGenerateSite(data,files,true);}});
-    return;
+    setCostModal({isOpen:true,opType:'Construção profissional',credits:95+images*18+(video?120:0),desc:'Limite estimado incluindo planejamento, geração, revisão e até duas correções. Mídias solicitadas estão incluídas. A publicação só é aprovada após os testes. Credenciais externas são configuradas pelo painel.',onConfirm:()=>{setCostModal(prev=>({...prev,isOpen:false}));void handleGenerateSite({...data,...creationDeliveryRef.current},files,true);}});
+    return false;
   }
 
   activeRequestControllerRef.current?.abort();
@@ -668,17 +684,19 @@ const fetchConversations = async () => {
   try {
     const attachments = toAIAttachmentPayloads(files);
     const saved = await apiClient<{project:GeneratedSite}>('/api/projects', {method:'POST',signal:requestController.signal,body:JSON.stringify({...data,title:'Novo projeto em construção',description:data.prompt.slice(0,1000),html:'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Construção em andamento</title></head><body><h1>Seu projeto está em construção</h1><p>Acompanhe as etapas no painel de entrega.</p></body></html>'})});
-    const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(saved.project.id)+'/builds',{method:'POST',signal:requestController.signal,body:JSON.stringify({brief:{...data,autoPublish:true,media:{images:/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0,video:/v[ií]deo|veo\s*3/i.test(data.prompt)}},idempotencyKey:crypto.randomUUID(),attachments})});
+    const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(saved.project.id)+'/builds',{method:'POST',signal:requestController.signal,body:JSON.stringify({brief:{...data,autoPublish:data.autoPublish ?? true,media:{images:/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0,video:/v[ií]deo|veo\s*3/i.test(data.prompt)}},idempotencyKey:crypto.randomUUID(),attachments})});
     const project={...saved.project,professionalBuildId:result.build.id};
     setActiveSite(project);saveSitesToStorage([project,...savedSites]);setProfessionalBuildId(result.build.id);
+    window.dispatchEvent(new CustomEvent('froc:creation-accepted', { detail: { prompt: data.prompt } }));
     setChatMessages([{id:'factory-'+Date.now(),sender:'ai',timestamp:Date.now(),text:'Iniciei a construção completa do seu projeto. A equipe vai gerar o código, revisar, testar e verificar a publicação. Se faltarem credenciais ou dados do negócio, você poderá preenchê-los no painel, sem editar código.'}]);
+    return true;
   } catch (error: any) {
     if (
       error?.code ===
       'request_aborted'
     ) {
       setErrorMsg(null);
-      return;
+      return false;
     }
 
     console.error(error);
@@ -687,6 +705,7 @@ const fetchConversations = async () => {
       error?.message ||
       'Erro ao gerar o projeto. Tente novamente.'
     );
+    return false;
   } finally {
     if (
       activeRequestControllerRef.current ===
@@ -715,6 +734,7 @@ const fetchConversations = async () => {
   // Refine Site with froc.ia AI
   const handleRefineSite = async (instruction: string) => {
     if (!activeSite) return;
+    if (activeSite.sourceKind === 'github') { setErrorMsg('Este projeto mantém o código no GitHub. A edição automatizada de repositórios existentes precisa de um executor dedicado; não vou substituir o código por uma página HTML.'); return; }
 
     if (!isAuthenticated) {
       setIsAuthOpen(true);
@@ -809,21 +829,21 @@ const handleGeneralChat = async (
 ) => {
   const prompt = text.trim();
 
-  if (!prompt) return;
+  if (!prompt) return false;
 
   if (!isAuthenticated) {
     setIsAuthOpen(true);
     setErrorMsg(
       'É necessário fazer login para conversar com a Froc.IA.'
     );
-    return;
+    return false;
   }
 
   if (profileError || !authUser) {
     setErrorMsg(
       'Operação bloqueada: Não foi possível carregar seu perfil e saldo do servidor. Tente novamente.'
     );
-    return;
+    return false;
   }
 
   const apiMode =
@@ -833,7 +853,7 @@ const handleGeneralChat = async (
     setErrorMsg(
       `O modo ${mode} ainda não está homologado para produção.`
     );
-    return;
+    return false;
   }
 
   activeRequestControllerRef.current?.abort();
@@ -1067,6 +1087,8 @@ const handleGeneralChat = async (
           }
           if (event === 'completed') {
             consumedCredits = Number(payload?.consumedCredits || 0);
+            const development = payload?.operationalControl?.development;
+            if (typeof development?.workspaceId === 'string') openDevelopmentWorkspace(development.workspaceId, development.pendingInstruction || prompt);
           }
           if (event === 'error' || event === 'cancelled') {
             streamError = new Error(
@@ -1111,6 +1133,7 @@ const handleGeneralChat = async (
     });
 
     await refreshProfile();
+    return true;
   } catch (error: any) {
     if (
       error?.code ===
@@ -1129,7 +1152,7 @@ const handleGeneralChat = async (
         }
       ]);
 
-      return;
+      return false;
     }
 
     const message =
@@ -1149,6 +1172,7 @@ const handleGeneralChat = async (
         timestamp: Date.now()
       }
     ]);
+    return false;
   } finally {
     activeResearchJobIdRef.current = null;
     if (
@@ -1208,6 +1232,7 @@ const handleGeneralChat = async (
 
   const handleManualHtmlUpdate = (newHtml: string) => {
     if (!activeSite) return;
+    if (activeSite.sourceKind === 'github') { setErrorMsg('O código deste projeto está no repositório conectado. Este editor de HTML não altera o repositório original.'); return; }
     if (activeSite.professionalBuildId) { setErrorMsg('Este projeto possui frontend e backend. Solicite a alteração no chat para revisar e testar o projeto completo.'); return; }
     const updatedSite = { ...activeSite, html: newHtml, updatedAt: Date.now() };
     setActiveSite(updatedSite);
@@ -1215,11 +1240,43 @@ const handleGeneralChat = async (
     saveSitesToStorage(updatedList);
   };
 
+  useEffect(() => {
+    if (githubCallback) window.history.replaceState({}, '', removeGithubCallback(window.location.href));
+    const login = () => setIsAuthOpen(true);
+    const imported = (event: Event) => {
+      const projectId = (event as CustomEvent).detail?.projectId;
+      if (typeof projectId !== 'string') return;
+      void apiClient<{ project: GeneratedSite }>('/api/projects/' + encodeURIComponent(projectId)).then(({ project }) => {
+        setActiveSite(project); setNavMode('studio'); setIsProjectConfigurationOpen(true);
+        setSavedSites(previous => [project, ...previous.filter(item => item.id !== project.id)]);
+      }).catch(e => setErrorMsg(e.message));
+    };
+    const workspaceImported = (event: Event) => {
+      const { workspaceId, instruction = '' } = (event as CustomEvent).detail || {};
+      if (typeof workspaceId !== 'string') return;
+      setDevelopmentWorkspace({ id: workspaceId, instruction });
+      void apiClient<{ project: GeneratedSite }>('/api/projects/' + encodeURIComponent(workspaceId)).then(({ project }) => {
+        setActiveSite(project); setNavMode('studio');
+        setSavedSites(previous => [project, ...previous.filter(item => item.id !== project.id)]);
+      }).catch(e => setErrorMsg(e.message));
+    };
+    window.addEventListener('froc:request-login', login);
+    window.addEventListener('froc:github-project', imported);
+    window.addEventListener('froc:development-workspace', workspaceImported);
+    return () => { window.removeEventListener('froc:request-login', login); window.removeEventListener('froc:github-project', imported); window.removeEventListener('froc:development-workspace', workspaceImported); };
+  }, [githubCallback]);
+
   const handleNewSite = () => {
     setActiveSite(null);
     setProfessionalBuildId(null);
     setChatMessages([]);
     setErrorMsg(null);
+  };
+  const openProjectTools = () => {
+    if (!activeSite) return;
+    if (activeSite.workspaceId) openDevelopmentWorkspace(activeSite.workspaceId);
+    else if (activeSite.professionalBuildId) setProfessionalBuildId(activeSite.professionalBuildId);
+    else setIsProjectConfigurationOpen(true);
   };
 
   const handleDeleteSite = async (siteId: string) => {
@@ -1301,16 +1358,12 @@ const handleGeneralChat = async (
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
-      {activeSite?.id && !activeSite.id.startsWith('local-') && (
-        <div className="flex justify-end border-b border-white/10 bg-slate-950 px-4 py-1">
-          <button type="button" onClick={() => activeSite.professionalBuildId ? setProfessionalBuildId(activeSite.professionalBuildId) : setIsProjectConfigurationOpen(true)} className="rounded-lg px-3 py-2 text-xs text-violet-200 hover:bg-white/5">Variáveis e entrega do projeto</button>
-        </div>
-      )}
       {professionalBuildId && activeSite?.id && (
         <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{const updated={...activeSite,professionalBuildId:id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(id);}} onReady={(url,title)=>{const updated={...activeSite,title,productionUrl:url};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));void refreshProfile();}}/>
       )}
+      {developmentWorkspace && <DevelopmentPanel key={developmentWorkspace.id} workspaceId={developmentWorkspace.id} initialInstruction={developmentWorkspace.instruction} onClose={() => setDevelopmentWorkspace(null)} />}
       {isProjectConfigurationOpen && activeSite?.id && (
-        <ProjectConfigurationPanel key={activeSite.id} projectId={activeSite.id} title={activeSite.title} onClose={() => setIsProjectConfigurationOpen(false)} />
+        <ProjectConfigurationPanel key={activeSite.id} projectId={activeSite.id} title={activeSite.title} initialTab={activeSite.sourceKind === 'github' ? 'github' : undefined} onClose={() => setIsProjectConfigurationOpen(false)} />
       )}
       {profileError && (
         <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 flex items-center justify-between text-xs text-amber-200 z-40">
@@ -1336,6 +1389,7 @@ const handleGeneralChat = async (
             savedSites={savedSites}
             onSelectSite={(site) => {
               setActiveSite(site);
+              if (site.sourceKind === 'github') { setNavMode('studio'); setIsProjectConfigurationOpen(true); return; }
               setNavMode('studio');
               if(site.professionalBuildId)setProfessionalBuildId(site.professionalBuildId);
             }}
@@ -1361,7 +1415,7 @@ const handleGeneralChat = async (
           )}
 
           {navMode === 'integrations' && (
-            <IntegrationsPage />
+            <IntegrationsPage githubCallback={githubCallback} />
           )}
 
           {navMode === 'admin' && (
@@ -1394,10 +1448,12 @@ const handleGeneralChat = async (
             {/* Left Collapsible Sidebar */}
             <Sidebar
               onGenerateSite={handleGenerateSite}
+              onDeliveryChange={updateCreationDelivery}
               onRefineSite={handleRefineSite}
               onSelectTemplate={handleSelectTemplate}
               onLoadSavedSite={(site) => {
                 setActiveSite(site);
+                if (site.sourceKind === 'github') { setIsProjectConfigurationOpen(true); setIsMobileSidebarOpen(false); return; }
                 if(site.professionalBuildId){setProfessionalBuildId(site.professionalBuildId);setIsMobileSidebarOpen(false);return;}
                 setActiveArtifact({
                   id: site.id,
@@ -1442,8 +1498,11 @@ const handleGeneralChat = async (
 
 
              onSendMessage={async (text, mode, files = []) => {
-  if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
-    await handleGenerateSite(
+  if (hasEngineeringOrder(text) && explicitOwnTarget(text)) return await handleGeneralChat(text, 'Programação', files);
+  if (activeSite?.sourceKind === 'workspace' && mode !== 'Imagem' && mode !== 'Vídeo') return await handleGeneralChat(text, 'Programação', files);
+  if (mode === 'Criador de projetos') {
+    if (activeSite?.sourceKind === 'github') { setErrorMsg('Este é um projeto existente conectado ao GitHub. A criação de um projeto novo não será aplicada sobre ele. Use Novo projeto para começar outro site.'); return false; }
+    return await handleGenerateSite(
       {
         prompt: text,
         category: 'Software / Tecnologia',
@@ -1457,7 +1516,6 @@ const handleGeneralChat = async (
       },
       files
     );
-    return;
   }
 
   if (mode === 'Imagem') {
@@ -1699,7 +1757,7 @@ const handleGeneralChat = async (
     return;
   }
 
-  await handleGeneralChat(
+  return await handleGeneralChat(
     text,
     mode,
     files
@@ -1739,6 +1797,7 @@ const handleGeneralChat = async (
                     isGenerating={isGenerating}
                     onOpenFullscreen={() => setIsFullscreen(true)}
                     onRefresh={refreshFrame}
+                    onOpenProjectSettings={openProjectTools}
                   />
                 )}
 
@@ -1758,6 +1817,7 @@ const handleGeneralChat = async (
                         isGenerating={isGenerating}
                         onOpenFullscreen={() => setIsFullscreen(true)}
                         onRefresh={refreshFrame}
+                    onOpenProjectSettings={openProjectTools}
                       />
                     </div>
                     <div className="w-1/2">
@@ -1823,7 +1883,13 @@ const handleGeneralChat = async (
             maxCreditLimit={costModal.credits + 5}
             userBalance={currentUser.creditsRemaining}
             description={costModal.desc}
-          />
+          >
+            {costModal.opType === 'Construção profissional' && <div className="space-y-3">
+              <GithubConnectionPanel purpose="create" onSelect={githubTarget => updateCreationDelivery({ ...creationDeliveryRef.current, githubTarget })} />
+              {creationDelivery.githubTarget && <p className="break-all text-xs text-emerald-300">Destino: {creationDelivery.githubTarget.owner}/{creationDelivery.githubTarget.repository}<button type="button" className="ml-2 underline" onClick={() => updateCreationDelivery({ ...creationDeliveryRef.current, githubTarget: undefined })}>Remover destino</button></p>}
+              <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={creationDelivery.autoPublish ?? true} onChange={e => updateCreationDelivery({ ...creationDeliveryRef.current, autoPublish: e.target.checked })} />{creationDelivery.githubTarget ? 'Enviar código e abrir PR após os testes' : 'Publicar na Vercel após os testes'}</label>
+            </div>}
+          </CostEstimationModal>
         )}
 
         {/* Export Modal */}
