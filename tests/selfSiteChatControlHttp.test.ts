@@ -56,16 +56,6 @@ describe('Ponte real do chat para manutencao, sem resposta generica do modelo', 
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['chat', 'executions'])('encaminha a ordem P0 com memória, anexos e repositório de aceitação pela rota %s', async path => {
-    const prompt = `P0 — CORREÇÃO COMPLETA DA FROC.IA: CHAT + MOTOR UNIVERSAL DE DESENVOLVIMENTO\nRepositório-alvo: brasilportalvip-png/frocia2\nTipo: ordem de engenharia. Não quero mais a contagem dos 85 agentes. Implemente a correção na própria Froc.IA.\nUse https://github.com/brasilportalvip-png/Froc.-IA-Marketing-Engine como teste. Preserve memória, homologação, backend e assets.`;
-    const response = await send(path, prompt);
-    expect(response.status, response.text).toBe(200);
-    expect(SelfSiteOwnerService.requestRun).toHaveBeenCalledWith('owner', expect.stringContaining('MOTOR UNIVERSAL'));
-    expect(response.text).toContain('owner-request-1'); expect(response.text).not.toContain('A criptografia');
-    expect(response.text).not.toContain('85 perfis');
-    expect(GeminiProvider.generateStream).not.toHaveBeenCalled(); expect(CreditWalletService.reserveCredits).not.toHaveBeenCalled();
-  });
-
   it.each(['chat', 'executions'])('encaminha homologação real pelo controle na rota %s sem modelo ou cobrança', async path => {
     vi.spyOn(AgentValidationService, 'respond').mockResolvedValue({ inventoryTotal: 85, agents: [], limitations: [],
       request: { requestId: 'validation-' + 'a'.repeat(32), status: 'dispatch_accepted' }, run: { status: 'queued' }, scope: 'Validação automatizada solicitada.' } as any);

@@ -13,9 +13,6 @@ import { FactoryError, sourceDigest } from "./professionalContract.js";
 import { managedProjectName, ProjectFile } from "./professionalScaffold.js";
 import { ProjectVariableService } from "./projectVariableService.js";
 import { generateFactoryMedia } from "./professionalMediaService.js";
-import { GithubAppService } from '../services/githubAppService.js';
-import { GithubUserConnectionService } from '../services/githubUserConnectionService.js';
-import { ProjectDeploymentService } from '../services/projectDeploymentService.js';
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const key = (b: ProfessionalBuild) =>
   JSON.stringify([b.tenantId, b.userId, b.projectId]);
@@ -529,35 +526,6 @@ export class ProfessionalAdapters implements FactoryAdapter {
         "certification_required",
         "A publicação exige certificação do artefato exato.",
       );
-    if (b.brief?.githubTarget) {
-      const connection = await GithubAppService.getProjectConnection(b.userId, b.tenantId, b.projectId);
-      const target = b.brief.githubTarget;
-      if (connection.owner.toLowerCase() !== target.owner.toLowerCase() || connection.repository.toLowerCase() !== target.repository.toLowerCase() || connection.installationId !== target.installationId) {
-        throw new FactoryError('github_target_changed', 'A conexão GitHub mudou durante a construção. Revise o destino antes de continuar.');
-      }
-      await GithubUserConnectionService.assertRepositoryAccess(b, connection.owner, connection.repository, true);
-      const snapshot = await GithubAppService.sourceTree(connection);
-      if (snapshot.commitSha !== b.brief.githubBaseSha) throw new FactoryError('github_base_changed', 'O repositório recebeu alterações. Atualize a base antes de publicar.');
-      const access = await GithubAppService.installationToken(connection.installationId);
-      if (access.permissions.contents !== 'write' || access.permissions.pull_requests !== 'write') throw new FactoryError('github_write_not_authorized', 'A instalação precisa de Contents: write e Pull requests: write.');
-      const record = adminDb.collection('github_factory_deliveries').doc(b.id);
-      let delivered = (await record.get()).data();
-      if (!delivered?.commitSha) {
-        const result = await ProjectDeploymentService.publishToGitHub({ token: access.token,
-          owner: connection.owner, repoName: connection.repository, isPrivate: true,
-          branch: 'froc/build-' + b.id, message: 'feat: projeto criado pela Froc.IA', files,
-          allowExistingRepository: true });
-        delivered = { ...result, userId: b.userId, tenantId: b.tenantId, projectId: b.projectId };
-        await record.set(delivered);
-      }
-      const pull = await GithubAppService.createPullRequest(connection, { title: b.bundle!.title,
-        body: 'Código gerado pela Froc.IA. O artefato passou pela certificação isolada. Revise o CI deste repositório antes do merge. Esta entrega salva código no GitHub e não confirma publicação na Vercel.',
-        head: delivered.branch, base: connection.defaultBranch || 'main', humanConfirmed: true });
-      const pullRequestUrl = (pull as any)?.html_url;
-      if (typeof pullRequestUrl !== 'string' || !pullRequestUrl.startsWith(snapshot.repositoryUrl + '/pull/')) throw new FactoryError('github_pull_unverified', 'O GitHub não confirmou a PR criada.');
-      return { status: 'ready', deliveryKind: 'github', url: pullRequestUrl, pullRequestUrl,
-        repositoryUrl: snapshot.repositoryUrl, commitSha: delivered.commitSha, verifiedAt: new Date().toISOString() };
-    }
     let p = b.publication
       ? structuredClone(b.publication)
       : {

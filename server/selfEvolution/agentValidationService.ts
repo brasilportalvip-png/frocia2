@@ -3,14 +3,11 @@ import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { installedSelfSiteAgentInventory } from './selfSiteKnowledgeService.js';
 import { GithubAutomationService } from './githubAutomationService.js';
 import { RedactionService } from './redactionService.js';
-import { hasEngineeringOrder, instructionText } from '../../shared/engineeringIntent.js';
 
 const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 type Message = { role: string; content: string };
 export function agentValidationIntent(prompt: string, history: Message[] = []): boolean {
-  const text = instructionText(prompt);
-  if (hasEngineeringOrder(prompt) && !/\b(?:execute|inicie|rode|faca)\b.{0,45}\b(?:homologacao|validacao)\b/.test(text)) return false;
-  if (/\b(?:nao|nunca)\b.{0,50}\b(?:contagem|homologacao|validacao|85 agentes)\b/.test(text)) return false;
+  const text = normalize(prompt);
   if (/\b(?:outro|outra)\s+(?:site|empresa|projeto)|https?:\/\//.test(text)) return false;
   const prior = history.filter(m => m.role === 'user').slice(-5).some(m => /agentes|froc|homologacao/.test(normalize(m.content)));
   return (/agentes|froc/.test(text) || prior) && /homologa|evidencias|registros|funcion|integrados?|executados?|testados?|validacao/.test(text);

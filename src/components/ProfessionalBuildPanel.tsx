@@ -41,7 +41,7 @@ export function ProfessionalBuildPanel({
         });
         if (closed.current) return;
         setBuild(result.build);
-        if (result.build.ready && result.build.publication?.deliveryKind !== 'github' && !readyCalled.current) {
+        if (result.build.ready && !readyCalled.current) {
           readyCalled.current = true;
           ready.current?.(result.build.publication.url, result.build.title);
         }
@@ -214,7 +214,7 @@ export function ProfessionalBuildPanel({
           <>
             <p role="status" className="mt-4 text-sm">
               {build.ready
-                ? build.publication?.deliveryKind === 'github' ? 'Código entregue no GitHub' : "Entrega verificada"
+                ? "Entrega verificada"
                 : labels[build.phase] || "Aguardando"}{" "}
               · {build.progress}%
             </p>
@@ -292,7 +292,7 @@ export function ProfessionalBuildPanel({
             {build.ready && (
               <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-4">
                 <h3 className="font-semibold">
-                  {build.publication?.deliveryKind === 'github' ? 'Código salvo e PR aberta' : 'Projeto publicado e verificado'}
+                  Projeto publicado e verificado
                 </h3>
                 <a
                   href={build.publication.url}
@@ -300,10 +300,11 @@ export function ProfessionalBuildPanel({
                   rel="noopener noreferrer"
                   className="mt-3 inline-block rounded-lg bg-emerald-600 px-4 py-2"
                 >
-                  {build.publication?.deliveryKind === 'github' ? 'Abrir pull request' : 'Abrir projeto pronto'}
+                  Abrir projeto pronto
                 </a>
                 <p className="mt-2 text-xs text-slate-300">
-                  {build.publication?.deliveryKind === 'github' ? 'Revise a PR e os testes do repositório. Esta entrega não confirma publicação na Vercel.' : 'A submissão aos mecanismos de busca não garante indexação nem posição.'}
+                  A submissão aos mecanismos de busca não garante indexação nem
+                  posição.
                 </p>
               </div>
             )}

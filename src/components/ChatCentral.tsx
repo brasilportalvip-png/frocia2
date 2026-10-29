@@ -1,5 +1,3 @@
-import { requestMode } from '../services/requestIntent';
-import { openDevelopmentWorkspace, uploadProjectZip } from '../services/development';
 import React, {
   useEffect,
   useRef,
@@ -71,7 +69,7 @@ interface ChatCentralProps {
     text: string,
     mode: ChatMode,
     files: UploadedFile[]
-  ) => Promise<void | boolean>;
+  ) => Promise<void>;
   onStopGeneration: () => void;
   isGenerating: boolean;
   selectedMode: ChatMode;
@@ -214,31 +212,6 @@ export const ChatCentral: React.FC<
   const [inputText, setInputText] = useState('');
   const [attachedFiles, setAttachedFiles] =
     useState<UploadedFile[]>([]);
-  const chatDraftKey = 'frocia_chat_draft_v2_' + user.id;
-  const [chatDraftLoaded, setChatDraftLoaded] = useState('');
-  useEffect(() => {
-    try {
-      const value = sessionStorage.getItem(chatDraftKey);
-      if (value) {
-        const draft = JSON.parse(value);
-        if (typeof draft.text === 'string') setInputText(draft.text);
-        if (Array.isArray(draft.files)) setAttachedFiles(draft.files);
-      } else if (chatDraftLoaded && !chatDraftLoaded.endsWith('_guest')) { setInputText(''); setAttachedFiles([]); }
-    } catch { /* The current draft remains available if browser storage is unavailable. */ }
-    setChatDraftLoaded(chatDraftKey);
-  }, [chatDraftKey]);
-  useEffect(() => {
-    if (chatDraftLoaded === chatDraftKey) {
-      try { sessionStorage.setItem(chatDraftKey, JSON.stringify({ text: inputText, files: attachedFiles })); } catch { /* Keep the in-memory draft. */ }
-    }
-  }, [chatDraftKey, chatDraftLoaded, inputText, attachedFiles]);
-  useEffect(() => {
-    const accepted = (event: Event) => {
-      if ((event as CustomEvent).detail?.prompt === inputText.trim()) { setInputText(''); setAttachedFiles([]); }
-    };
-    window.addEventListener('froc:creation-accepted', accepted);
-    return () => window.removeEventListener('froc:creation-accepted', accepted);
-  }, [inputText]);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] =
     useState(false);
   const [attachmentError, setAttachmentError] =
@@ -1040,12 +1013,6 @@ export const ChatCentral: React.FC<
     setAttachmentError(null);
 
     try {
-      const projectZip = files.find(file => /\.zip$/i.test(file.name));
-      if (projectZip) {
-        if (files.length !== 1) throw new Error('Envie o ZIP completo sozinho para importar o projeto.');
-        const workspace = await uploadProjectZip(projectZip, message => setAttachmentError(message));
-        setAttachmentError(null); openDevelopmentWorkspace(workspace.id, inputText); return;
-      }
       const preparedFiles = await prepareNativeFiles(files);
       const zipFile = preparedFiles.find(
         (file) => file.type === 'zip'
@@ -1240,15 +1207,37 @@ export const ChatCentral: React.FC<
         setVoicePhase('thinking');
       }
 
-      const requestedMode = requestMode(textToSend, modeOverride);
+      const normalizedRequest = textToSend
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toLowerCase();
 
-const accepted = await onSendMessage(
+const creationIntent =
+  /^(?:(?:froc|por favor|pode|voce pode|quero que voce|preciso que voce)[\s,.:]+){0,3}(?:crie|cria|gere|gera|faca|desenhe|produza|construa|desenvolva|monte)\b/.test(normalizedRequest) ||
+  /^(?:eu\s+)?(?:quero|preciso)\s+(?:que voce\s+)?(?:crie|criar|gere|gerar|faca|fazer|produza|produzir)\b/.test(normalizedRequest);
+
+const requestedMode: ChatMode =
+  modeOverride ??
+  (creationIntent &&
+  /\b(video|videos|vidio|vidios|animacao|animacoes|filme|filmes|clipe|clipes|reel|reels|short|shorts)\b/.test(normalizedRequest)
+    ? 'Vídeo'
+    : creationIntent &&
+        /\b(imagem|imagens|imagen|imagenes|image|images|foto|fotos|fotografia|ilustracao|arte|desenho|desenhos|figura|figuras)\b/.test(normalizedRequest)
+      ? 'Imagem'
+      : creationIntent &&
+          /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
+        ? 'Criador de projetos'
+        : /^(?:froc[\s,.:]*)?(?:pesquise|investigue|faca uma pesquisa)\b/.test(normalizedRequest)
+          ? 'Pesquisa'
+          : 'Inteligente');
+
+await onSendMessage(
   textToSend,
   requestedMode,
   attachedFiles
 );
 
-      if (accepted === false) return;
       setInputText('');
       setAttachedFiles([]);
       setIsAttachmentMenuOpen(false);
