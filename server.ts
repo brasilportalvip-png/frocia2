@@ -1,5 +1,4 @@
 import { professionalFactoryRouter } from './server/routes/professionalFactoryRoutes.js';
-import { developmentRouter } from './server/routes/developmentRoutes.js';
 import { projectVariableRouter } from './server/routes/projectVariableRoutes.js';
 import express, {
   NextFunction,
@@ -183,7 +182,6 @@ export async function createApp() {
   app.use('/api/site-factory', siteFactoryRouter);
   app.use('/api/project-variables', projectVariableRouter);
   app.use('/api/professional-factory', professionalFactoryRouter);
-  app.use('/api/development', developmentRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
   app.use('/api/admin/observability', observabilityRouter);

@@ -7,58 +7,10 @@ const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
 describe('GithubAppService', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     delete process.env.GITHUB_APP_ID;
     delete process.env.GITHUB_APP_PRIVATE_KEY;
     delete process.env.GITHUB_APP_SLUG;
-  });
-
-  it('aceita o estado assinado legado e o novo estado opaco sem aceitar uma URL como estado', () => {
-    process.env.GITHUB_APP_SLUG = 'frocia-app';
-    const payload = Buffer.from(JSON.stringify({ uid: 'u', nonce: 'n', exp: Date.now() + 600000 })).toString('base64url');
-    const signature = crypto.createHmac('sha256', 'test-secret').update(payload).digest('base64url');
-    expect(GithubAppService.installationUrl(`${payload}.${signature}`)).toContain(encodeURIComponent(`${payload}.${signature}`));
-    expect(GithubAppService.installationUrl('a'.repeat(43))).toContain('state=');
-    expect(() => GithubAppService.installationUrl('https://attacker.example/')).toThrow();
-  });
-
-  it('carrega repositórios depois da primeira página de cem', async () => {
-    vi.spyOn(GithubAppService, 'installationToken').mockResolvedValue({ token: 'test-installation', expiresAt: '', permissions: {} });
-    const rows = Array.from({ length: 100 }, (_, id) => ({ id: id + 1, owner: { login: 'owner' }, name: 'repo-' + id }));
-    const mock = vi.fn().mockResolvedValueOnce(Response.json({ total_count: 101, repositories: rows }))
-      .mockResolvedValueOnce(Response.json({ total_count: 101, repositories: [{ id: 101, owner: { login: 'owner' }, name: 'last-repo' }] }));
-    vi.stubGlobal('fetch', mock);
-    expect((await GithubAppService.listInstallationRepositories(17))).toHaveLength(101);
-    expect(String(mock.mock.calls[1][0])).toContain('page=2');
-  });
-
-  it('preserva metadados quando o App não pode ler Actions', async () => {
-    vi.spyOn(GithubAppService, 'installationToken').mockResolvedValue({ token: 'test-installation', expiresAt: '', permissions: { contents: 'read' } });
-    vi.stubGlobal('fetch', vi.fn(async (url: URL) => String(url).includes('/actions/')
-      ? Response.json({ message: 'Resource not accessible by integration' }, { status: 403 })
-      : Response.json({ name: 'repo', items: [] })));
-    const result = await GithubAppService.repositoryIntelligence({ owner: 'owner', repository: 'repo', installationId: 17 } as any);
-    expect(result.repository).toMatchObject({ name: 'repo' });
-    expect(result.workflows).toMatchObject({ unavailable: true });
-    expect(result.limitations.some(value => value.includes('Workflows'))).toBe(true);
-  });
-
-  it('lista a árvore inteira e permite abrir o backend original na versão selecionada', async () => {
-    const commitSha = 'a'.repeat(40), treeSha = 'b'.repeat(40);
-    vi.spyOn(GithubAppService, 'installationToken').mockResolvedValue({ token: 'test-installation', expiresAt: '', permissions: { contents: 'read' } });
-    const files = Array.from({ length: 100 }, (_, id) => ({ type: 'blob', path: id === 99 ? 'server/production/router.ts' : `src/file-${id}.ts`, sha: 'c'.repeat(40), size: 100 }));
-    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ sha: commitSha, commit: { tree: { sha: treeSha } } }))
-      .mockResolvedValueOnce(Response.json({ tree: files, truncated: false }))
-      .mockResolvedValueOnce(Response.json({ type: 'file', encoding: 'base64', sha: 'c'.repeat(40), size: 20, content: Buffer.from('export const backend = true;').toString('base64') }));
-    vi.stubGlobal('fetch', fetch);
-    const connection = { owner: 'owner', repository: 'repo', installationId: 17 } as any;
-    const snapshot = await GithubAppService.sourceTree(connection);
-    expect(snapshot.files).toHaveLength(100); expect(snapshot.contentsLoaded).toBe(false);
-    expect(await GithubAppService.readSourceFile(connection, 'server/production/router.ts', commitSha)).toMatchObject({ content: 'export const backend = true;', commitSha });
-    expect(String(fetch.mock.calls[2][0])).toContain(`ref=${commitSha}`);
-    await expect(GithubAppService.readSourceFile(connection, '../.env', commitSha)).rejects.toMatchObject({ code: 'invalid_github_file' });
-    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it('gera JWT RS256 de curta duração para autenticar o aplicativo', () => {

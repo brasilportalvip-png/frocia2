@@ -138,7 +138,6 @@ export interface KnowledgeDocument {
 }
 
 export interface ImprovementCandidate {
-  deliveryPolicy?: 'pull_request_only';
   committeeRepair?: { dateKey: string; attempt: number; previousCommitSha: string };
   deletedAt?: string;
   deletedBy?: string;

@@ -18,8 +18,6 @@ import {
   ScanSearch
 } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
-import { GithubConnectionPanel } from './GithubConnectionPanel';
-import type { GithubOAuthCallback } from '../services/githubConnection';
 
 interface HealthResponse {
   status: string;
@@ -135,7 +133,7 @@ const StatusCard: React.FC<StatusCardProps> = ({
   );
 };
 
-export const IntegrationsPage: React.FC<{ githubCallback?: GithubOAuthCallback | null }> = ({ githubCallback }) => {
+export const IntegrationsPage: React.FC = () => {
   const [health, setHealth] =
     useState<HealthResponse | null>(null);
   const [loading, setLoading] =
@@ -339,7 +337,14 @@ export const IntegrationsPage: React.FC<{ githubCallback?: GithubOAuthCallback |
             details="A presença da chave é verificada sem executar uma geração onerosa. Homologação exige recibo de uma chamada real separada."
           />
 
-          <GithubConnectionPanel callback={githubCallback} />
+          <StatusCard
+            title="GitHub do usuário"
+            description="OAuth e publicação de projetos"
+            status="Não integrado"
+            tone="warning"
+            icon={Github}
+            details="O repositório do próprio Froc.IA está conectado ao GitHub, mas ainda não existe OAuth para conectar contas e publicar projetos dos usuários."
+          />
 
           <StatusCard
             title="Pesquisa em redes sociais"

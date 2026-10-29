@@ -100,18 +100,6 @@ describe('Conversa do dono ligada ao executor de manutencao', () => {
     expect([...database.documents.values()].find(doc => doc.dispatchConfirmed !== undefined)?.dispatchConfirmed).toBe(false);
   });
 
-  it('persiste a ordem longa mesmo pausada e preserva os caminhos e a entrega por PR', async () => {
-    database.documents.set('self_evolution_config/system', { SELF_EVOLUTION_ENABLED: false });
-    const reason = 'Implemente a correção da Froc IA em server/ai/selfSiteChatControlService.ts.\n' + 'Escopo original preservado. '.repeat(400);
-    const result = await SelfSiteOwnerService.requestRun('owner', reason);
-    expect(result.status).toBe('paused'); expect(result.candidateId).toMatch(/^owner-/);
-    expect([...database.documents.values()].find(value => value.reason === reason)).toBeTruthy();
-    const candidate = database.documents.get('self_evolution_candidates/' + result.candidateId);
-    expect(candidate.probableFiles).toContain('server/ai/selfSiteChatControlService.ts');
-    expect(candidate.deliveryPolicy).toBe('pull_request_only');
-    expect(calls.filter(call => call.init.method === 'POST')).toHaveLength(0);
-  });
-
   it('nao perde o recibo de uma ordem executada quando a consulta de fontes falha', async () => {
     vi.mocked(SelfSiteKnowledgeService.contextForOwner).mockRejectedValue(new Error('indice temporariamente indisponivel'));
     const context = await SelfSiteOwnerService.context({ role: 'admin', userId: 'owner', prompt: 'Arrume os erros do meu site.' });

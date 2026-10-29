@@ -1,7 +1,3 @@
-import { GithubConnectionPanel } from './GithubConnectionPanel';
-import { openDevelopmentWorkspace, uploadProjectZip } from '../services/development';
-import type { CreationDelivery, ProjectGithubTarget } from '../services/requestIntent';
-import { useAuth } from '../context/AuthContext';
 import React, {
   useEffect,
   useMemo,
@@ -74,7 +70,7 @@ interface SidebarProps {
     colorPalette: string;
     tone: string;
     features: string[];
-  } & CreationDelivery, files?: UploadedFile[]) => Promise<void | boolean>;
+  }, files?: UploadedFile[]) => Promise<void>;
   onRefineSite: (instruction: string) => Promise<void>;
   onSelectTemplate: (template: SiteTemplate) => void;
   onLoadSavedSite: (site: GeneratedSite) => void;
@@ -96,7 +92,6 @@ interface SidebarProps {
   onCloseMobile?: () => void;
   onNavigate?: (mode: AppNavigationMode) => void;
   isAdmin?: boolean;
-  onDeliveryChange?(delivery: CreationDelivery): void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -118,8 +113,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   errorMsg,
   isOpenMobile = false,
   onCloseMobile,
-  onNavigate,
-  onDeliveryChange,
+  onNavigate
 }) => {
   const [historyTab, setHistoryTab] = useState<'conversations' | 'projects'>('conversations');
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -138,12 +132,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   const [prompt, setPrompt] = useState('');
-  const { user: authUser, loading: authLoading } = useAuth();
-  const [githubTarget, setGithubTarget] = useState<ProjectGithubTarget | undefined>();
-  const [autoPublish, setAutoPublish] = useState(true);
-  const [draftLoaded, setDraftLoaded] = useState('');
-  const draftKey = 'frocia_creation_draft_v2_' + (authUser?.id || 'guest');
-  useEffect(() => { onDeliveryChange?.({ githubTarget, autoPublish }); }, [githubTarget, autoPublish, onDeliveryChange]);
   const [category, setCategory] =
     useState('Software / Tecnologia');
   const [colorPalette, setColorPalette] =
@@ -276,33 +264,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     );
   };
 
-  useEffect(() => {
-    if (authLoading) return;
-    try {
-      const saved = sessionStorage.getItem(draftKey);
-      if (saved) {
-        const draft = JSON.parse(saved);
-        if (typeof draft.prompt === 'string') setPrompt(draft.prompt);
-        if (Array.isArray(draft.attachedFiles)) setAttachedFiles(draft.attachedFiles);
-        setGithubTarget(draft.githubTarget);
-        if (typeof draft.autoPublish === 'boolean') setAutoPublish(draft.autoPublish);
-      } else if (draftLoaded && !draftLoaded.endsWith('_guest')) { setPrompt(''); setAttachedFiles([]); setGithubTarget(undefined); }
-    } catch { /* A draft must not prevent opening the creator. */ }
-    setDraftLoaded(draftKey);
-  }, [authLoading, draftKey]);
-  useEffect(() => {
-    if (!authLoading && draftLoaded === draftKey) {
-      try { sessionStorage.setItem(draftKey, JSON.stringify({ prompt, attachedFiles, githubTarget, autoPublish })); } catch { /* In-memory draft remains available. */ }
-    }
-  }, [authLoading, draftLoaded, draftKey, prompt, attachedFiles, githubTarget, autoPublish]);
-  useEffect(() => {
-    const accepted = (event: Event) => {
-      if ((event as CustomEvent).detail?.prompt === prompt) { setPrompt(''); setAttachedFiles([]); }
-    };
-    window.addEventListener('froc:creation-accepted', accepted);
-    return () => window.removeEventListener('froc:creation-accepted', accepted);
-  }, [prompt]);
-
   const handleGenerate = async (
     event: React.FormEvent<HTMLFormElement>
   ) => {
@@ -314,26 +275,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       return;
     }
 
-    const accepted = await onGenerateSite({
+    await onGenerateSite({
       prompt: normalizedPrompt,
       category,
       colorPalette,
       tone,
-      features: selectedFeatures, githubTarget, autoPublish
+      features: selectedFeatures
     }, attachedFiles);
-    if (accepted === false) return;
 
     setPrompt('');
     setAttachedFiles([]);
   };
 
   const processNativeFiles = (files: File[]) => {
-    const projectZip = files.find(file => /\.zip$/i.test(file.name));
-    if (projectZip) {
-      if (files.length !== 1) { setToolNotice('Envie o ZIP completo sozinho para importar o projeto.'); return; }
-      void uploadProjectZip(projectZip, setToolNotice).then(workspace => { setToolNotice(null); openDevelopmentWorkspace(workspace.id, prompt); })
-        .catch(error => setToolNotice(error.message)); return;
-    }
     const newFiles: UploadedFile[] = files.map(
       (file, index) => {
         const normalizedName = file.name.toLowerCase();
@@ -911,13 +865,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </button>
                 ))}
               </div>
-
-              <details className="rounded-xl border border-white/15 p-3"><summary className="cursor-pointer text-xs text-white">GitHub e destino do projeto</summary><div className="mt-3 space-y-3">
-                <GithubConnectionPanel purpose="create" onSelect={setGithubTarget} />
-                {githubTarget && <p className="break-all text-xs text-emerald-300">Destino: {githubTarget.owner}/{githubTarget.repository}<button type="button" className="ml-2 underline" onClick={() => setGithubTarget(undefined)}>Remover destino</button></p>}
-                <label className="flex items-start gap-2 text-xs text-white"><input type="checkbox" checked={autoPublish} onChange={e => setAutoPublish(e.target.checked)} />{githubTarget ? 'Enviar o código e abrir PR no GitHub após os testes' : 'Publicar na Vercel após os testes'}</label>
-                <p className="text-[11px] text-white/60">Desmarque para gerar e testar sem publicar. Apps criados neste fluxo são aplicações web/PWA.</p>
-              </div></details>
 
               <button
                 type="submit"

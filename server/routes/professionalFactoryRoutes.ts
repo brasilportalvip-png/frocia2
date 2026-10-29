@@ -16,7 +16,6 @@ import {
 import { getProfessionalFactory } from "../siteFactory/professionalRuntime.js";
 import { GithubAutomationService } from "../selfEvolution/githubAutomationService.js";
 import { ProfessionalMaintenanceService } from '../siteFactory/professionalMaintenanceService.js';
-import { GithubAppService } from '../services/githubAppService.js';
 export const professionalFactoryRouter = Router();
 professionalFactoryRouter.use(
   requireAuth,
@@ -91,19 +90,6 @@ professionalFactoryRouter.post(
       const s = await scope(req),
         input = startSchema.parse(req.body),
         service = getProfessionalFactory();
-      if ((await adminDb.collection('projects').doc(s.projectId).get()).data()?.sourceKind === 'github') {
-        throw new FactoryError('github_existing_project_requires_import', 'Este projeto usa um repositório existente. A fábrica de projetos novos não pode substituir seu código.', 409);
-      }
-      if (input.brief.githubTarget) {
-        const target = input.brief.githubTarget;
-        const connection = await GithubAppService.connectProject({ ...s, ...target });
-        const snapshot = await GithubAppService.sourceTree(connection);
-        if (snapshot.files.some((file: any) => !/^(?:readme(?:\.[a-z]+)?|license(?:\.[a-z]+)?|\.gitignore)$/i.test(file.path))) {
-          throw new FactoryError('github_existing_project_requires_import',
-            'Este repositório já contém código. Use Importar projeto para preservar o site existente.', 409);
-        }
-        input.brief.githubBaseSha = snapshot.commitSha;
-      } else delete input.brief.githubBaseSha;
       const validated = validateAIAttachments(input.attachments || []);
       const references = [];
       if (validated.length) {

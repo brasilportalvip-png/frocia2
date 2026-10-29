@@ -4,7 +4,6 @@ import { AuthenticatedRequest } from '../types.js';
 import { AIExecutionService } from '../ai/aiExecutionService.js';
 import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
 import { SelfSiteChatControlService } from '../ai/selfSiteChatControlService.js';
-import { DevelopmentChatService } from '../ai/developmentChatService.js';
 import { GeminiProvider } from '../ai/providers/geminiProvider.js';
 import { ContextBuilder, ContextLimitExceededError } from '../ai/contextBuilder.js';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -366,49 +365,6 @@ aiRouter.post(
       SafetyService.sanitizeInput(prompt);
 
     let attachments = submittedAttachments;
-
-    try {
-      if (projectId) {
-        await MemoryService.assertScopeAccess(
-          uid,
-          req.user!.tenantId,
-          'project',
-          projectId
-        );
-      }
-      if (conversationId) {
-        await MemoryService.assertScopeAccess(
-          uid,
-          req.user!.tenantId,
-          'conversation',
-          conversationId
-        );
-      }
-      const operational = await SelfSiteChatControlService.respond({ ...parsedRequest, prompt: sanitizedPrompt,
-        userId: uid, tenantId: req.user!.tenantId, trustedUserRole: req.user!.role }, req.correlationId) || await DevelopmentChatService.respond({ ...parsedRequest, prompt: sanitizedPrompt, userId: uid, tenantId: req.user!.tenantId, trustedUserRole: req.user!.role });
-      if (operational) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.write(`event: start\ndata: ${JSON.stringify({ executionId: operational.executionId, selectedModel: operational.modelUsed })}\n\n`);
-        res.write(`event: token\ndata: ${JSON.stringify({ text: operational.text })}\n\n`);
-        res.write(`event: completed\ndata: ${JSON.stringify({ executionId: operational.executionId, consumedCredits: 0,
-          totalTokens: 0, operationalControl: operational.operationalControl, evidence: operational.evidence })}\n\n`);
-        res.end();
-        return;
-      }
-    } catch (error) {
-      if (error instanceof MemoryScopeAccessError) {
-        return res.status(403).json({
-          error: {
-            code: 'ai_scope_forbidden',
-            message: error.message,
-            correlationId: req.correlationId,
-          },
-        });
-      }
-      throw error;
-    }
-
     const githubRepositoryUrl =
       attachments.length === 0 &&
       !shouldResearchGithub(sanitizedPrompt)
@@ -444,6 +400,48 @@ aiRouter.post(
         }
         throw error;
       }
+    }
+
+    try {
+      if (projectId) {
+        await MemoryService.assertScopeAccess(
+          uid,
+          req.user!.tenantId,
+          'project',
+          projectId
+        );
+      }
+      if (conversationId) {
+        await MemoryService.assertScopeAccess(
+          uid,
+          req.user!.tenantId,
+          'conversation',
+          conversationId
+        );
+      }
+      const operational = await SelfSiteChatControlService.respond({ ...parsedRequest, prompt: sanitizedPrompt,
+        userId: uid, tenantId: req.user!.tenantId, trustedUserRole: req.user!.role }, req.correlationId);
+      if (operational) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.write(`event: start\ndata: ${JSON.stringify({ executionId: operational.executionId, selectedModel: operational.modelUsed })}\n\n`);
+        res.write(`event: token\ndata: ${JSON.stringify({ text: operational.text })}\n\n`);
+        res.write(`event: completed\ndata: ${JSON.stringify({ executionId: operational.executionId, consumedCredits: 0,
+          totalTokens: 0, operationalControl: operational.operationalControl, evidence: operational.evidence })}\n\n`);
+        res.end();
+        return;
+      }
+    } catch (error) {
+      if (error instanceof MemoryScopeAccessError) {
+        return res.status(403).json({
+          error: {
+            code: 'ai_scope_forbidden',
+            message: error.message,
+            correlationId: req.correlationId,
+          },
+        });
+      }
+      throw error;
     }
 
     const artifactMemories =
