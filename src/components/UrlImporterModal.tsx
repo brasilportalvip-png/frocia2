@@ -19,6 +19,7 @@ interface UrlImporterModalProps {
   onClose: () => void;
   onImport: (file: UploadedFile) => void;
   defaultType?: 'url' | 'github';
+  initialUrl?: string;
 }
 
 interface ImportedContent {
@@ -84,10 +85,11 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
   isOpen,
   onClose,
   onImport,
-  defaultType = 'url'
+  defaultType = 'url',
+  initialUrl = ''
 }) => {
   const [importType, setImportType] = useState<'url' | 'github' | 'site-audit'>(defaultType);
-  const [urlInput, setUrlInput] = useState('');
+  const [urlInput, setUrlInput] = useState(initialUrl);
   const [isLoading, setIsLoading] = useState(false);
   const [isPreparingFile, setIsPreparingFile] = useState(false);
   const [auditPageLimit, setAuditPageLimit] = useState<10 | 20 | 40>(20);
