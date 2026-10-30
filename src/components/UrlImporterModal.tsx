@@ -92,6 +92,7 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
   const [urlInput, setUrlInput] = useState(initialUrl);
   const [isLoading, setIsLoading] = useState(false);
   const [isPreparingFile, setIsPreparingFile] = useState(false);
+  const [isOpeningSite, setIsOpeningSite] = useState(false);
   const [auditPageLimit, setAuditPageLimit] = useState<10 | 20 | 40>(20);
   const [previewData, setPreviewData] = useState<ImportedContent | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -131,6 +132,35 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
     setPreviewData(null);
     setImportError(null);
     setIsLoading(false);
+  };
+
+  const handleOpenAsSite = async () => {
+    const normalizedUrl = urlInput.trim();
+    if (!normalizedUrl || isLoading || isOpeningSite) return;
+    setIsOpeningSite(true);
+    setImportError(null);
+    try {
+      const token = await getIdToken();
+      if (!token) throw new Error('Faça login para importar repositórios.');
+      const response = await fetch('/api/imports/github-site', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url: normalizedUrl })
+      });
+      if (!response.ok) throw new Error(await readErrorMessage(response));
+      const payload = await response.json() as { site?: { html: string | null; title: string; repository: string; sourceUrl: string; fullDownloadUrl: string; report: { kind: string; complete: boolean; message: string } } };
+      const site = payload.site;
+      if (!site) throw new Error('O servidor não retornou o site.');
+      if (!site.html) {
+        throw new Error(`${site.report.message} ZIP completo: ${site.fullDownloadUrl}`);
+      }
+      window.dispatchEvent(new CustomEvent('froc:open-imported-site', { detail: site }));
+      handleClose();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Não foi possível abrir o site do GitHub.');
+    } finally {
+      setIsOpeningSite(false);
+    }
   };
 
   const handleFetchUrl = async (event: React.FormEvent) => {
@@ -454,6 +484,18 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
           >
             Cancelar
           </button>
+          {importType === 'github' && (
+            <button
+              type="button"
+              onClick={() => void handleOpenAsSite()}
+              disabled={!urlInput.trim() || isLoading || isOpeningSite || isPreparingFile}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-400/50 px-4 py-2.5 text-xs font-extrabold text-amber-200 transition hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Baixa o site inteiro (HTML, CSS, JS e imagens) e abre no editor"
+            >
+              {isOpeningSite ? <Loader2 className="h-4 w-4 animate-spin" /> : <Github className="h-4 w-4" />}
+              {isOpeningSite ? 'Baixando site inteiro...' : 'Abrir site inteiro no editor'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void handleConfirmImport()}
