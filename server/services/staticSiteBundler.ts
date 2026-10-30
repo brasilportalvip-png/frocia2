@@ -22,6 +22,7 @@ export interface StaticSiteReport {
     packages: string[];
     missingEnv: string[];
     notes: string[];
+    stubbedPackages?: string[];
   };
   entry: string | null;
   totalFiles: number;

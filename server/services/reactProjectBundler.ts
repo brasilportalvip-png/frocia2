@@ -32,6 +32,8 @@ const MAX_MODULE_BYTES = 4_000_000;
 const MAX_REMOTE_TOTAL_BYTES = 20_000_000;
 const MAX_HTML_BYTES = 4_200_000;
 const FETCH_TIMEOUT_MS = 20_000;
+const CORE_PACKAGES = new Set(['react', 'react-dom']);
+
 
 export interface ReactBundleOptions {
   /** Injetável para testes. Padrão: fetch real, restrito ao esm.sh. */
@@ -59,24 +61,73 @@ function splitPackage(spec: string): { name: string; subpath: string } {
   return { name: parts.slice(0, nameLength).join('/'), subpath: parts.slice(nameLength).join('/') };
 }
 
+const RETRY_DELAYS_MS = [1_500, 3_500];
+
+async function fetchOnce(url: string): Promise<{ ok: boolean; status: number; text: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'froc-ia-bundler' } });
+    const finalHost = new URL(response.url || url).hostname;
+    if (finalHost !== ESM_HOST) throw new Error(`Redirecionamento bloqueado para ${finalHost}`);
+    const text = await response.text();
+    if (text.length > MAX_MODULE_BYTES) throw new Error(`Módulo grande demais: ${url}`);
+    return { ok: response.ok, status: response.status, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function defaultFetchText(url: string): Promise<string> {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:' || parsed.hostname !== ESM_HOST) {
     throw new Error(`Host não permitido para pacotes: ${parsed.hostname}`);
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'froc-ia-bundler' } });
-    if (!response.ok) throw new Error(`esm.sh respondeu ${response.status} para ${url}`);
-    const finalHost = new URL(response.url || url).hostname;
-    if (finalHost !== ESM_HOST) throw new Error(`Redirecionamento bloqueado para ${finalHost}`);
-    const text = await response.text();
-    if (text.length > MAX_MODULE_BYTES) throw new Error(`Módulo grande demais: ${url}`);
-    return text;
-  } finally {
-    clearTimeout(timer);
+  let lastError = '';
+  // O esm.sh monta pacotes sob demanda: a primeira tentativa às vezes dá 5xx e a seguinte funciona.
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const result = await fetchOnce(url);
+      if (result.ok) return result.text;
+      lastError = `esm.sh respondeu ${result.status} para ${url}`;
+      if (result.status < 500 && result.status !== 429) throw new Error(lastError);
+    } catch (error) {
+      if (error instanceof Error && /Redirecionamento bloqueado|Módulo grande demais/.test(error.message)) throw error;
+      lastError = error instanceof Error ? error.message : String(error);
+      if (/^esm\.sh respondeu 4\d\d/.test(lastError) && !lastError.includes(' 429 ')) throw error;
+    }
+    if (attempt < RETRY_DELAYS_MS.length) await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
   }
+  throw new Error(lastError);
+}
+
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Módulo ESM vazio, mas com exatamente os nomes que o projeto importa do pacote. */
+function buildStubModule(spec: string, files: Map<string, Uint8Array>): string {
+  const names = new Set<string>();
+  const pattern = new RegExp(`import\\s+(?:type\\s+)?(?:[\\w$]+\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*['"]${escapeRegExp(spec)}['"]`, 'g');
+  for (const [path, bytes] of files) {
+    if (!/\.(?:tsx?|jsx?|mjs)$/.test(path)) continue;
+    for (const match of decodeText(bytes).matchAll(pattern)) {
+      for (const part of match[1].split(',')) {
+        const original = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(original) && original !== 'default') names.add(original);
+      }
+    }
+  }
+  return [
+    'const make = () => new Proxy(function () {}, {',
+    "  get: (_t, key) => (key === 'then' ? undefined : key === Symbol.toPrimitive ? () => '' : make()),",
+    '  apply: () => make(),',
+    '  construct: () => make(),',
+    '});',
+    'export default make();',
+    ...[...names].map((name) => `export const ${name} = make();`),
+  ].join('\n');
 }
 
 export async function bundleReactProject(
@@ -186,6 +237,8 @@ export async function bundleReactProject(
     return cached;
   };
 
+  const topLevelPackages = new Map<string, { name: string; spec: string }>();
+  const stubbed = new Set<string>();
   const compiled = new Set<string>();
   const packages = new Set<string>();
   const envUsed = new Set<string>();
@@ -203,6 +256,7 @@ export async function bundleReactProject(
           if (/^https?:\/\//.test(spec)) return { path: new URL(spec).href, namespace: 'esm' };
           if (spec.startsWith('/') || spec.startsWith('.')) return { path: new URL(spec, args.importer).href, namespace: 'esm' };
           packages.add(splitPackage(spec).name);
+          topLevelPackages.set(esmUrl(spec), { name: splitPackage(spec).name, spec });
           return { path: esmUrl(spec), namespace: 'esm' };
         }
 
@@ -236,6 +290,7 @@ export async function bundleReactProject(
           if (local) return { path: local, namespace: 'proj' };
         }
         packages.add(name);
+        topLevelPackages.set(esmUrl(clean), { name, spec: clean });
         return { path: esmUrl(clean), namespace: 'esm' };
       });
 
@@ -256,9 +311,20 @@ export async function bundleReactProject(
       }));
 
       build.onLoad({ filter: /.*/, namespace: 'esm' }, async (args) => {
-        const contents = await loadRemote(args.path);
-        const pathname = new URL(args.path).pathname;
-        return { contents, loader: pathname.endsWith('.css') ? 'css' : 'js' };
+        try {
+          const contents = await loadRemote(args.path);
+          const pathname = new URL(args.path).pathname;
+          return { contents, loader: pathname.endsWith('.css') ? 'css' : 'js' };
+        } catch (error) {
+          // Pacote opcional/nativo que o esm.sh não conseguiu montar: usa uma versão vazia
+          // para o restante do projeto continuar abrindo. O núcleo (React) nunca é trocado.
+          const info = topLevelPackages.get(args.path);
+          if (info && !CORE_PACKAGES.has(info.name)) {
+            stubbed.add(info.name);
+            return { contents: buildStubModule(info.spec, files), loader: 'js' };
+          }
+          throw error;
+        }
       });
     },
   };
@@ -329,6 +395,7 @@ export async function bundleReactProject(
   const missingEnv = [...envUsed].sort();
   const notes: string[] = [];
   if (usesTailwind) notes.push('Estilos Tailwind aplicados pela biblioteca oficial (CDN). Configurações personalizadas do tailwind.config não são lidas.');
+  if (stubbed.size) notes.push(`Pacotes opcionais que não puderam ser carregados e foram trocados por versão vazia: ${[...stubbed].sort().join(', ')}. Recursos que dependem deles (aplicativo de celular, analytics) ficam desligados na prévia.`);
   if (missingEnv.length) notes.push(`Variáveis de ambiente usadas e não configuradas: ${missingEnv.join(', ')}. Partes que dependem delas (APIs, login) podem não funcionar na prévia.`);
   notes.push('Rotas do navegador (React Router) funcionam melhor com HashRouter dentro da prévia.');
   const packageList = [...packages].sort();
@@ -350,7 +417,7 @@ export async function bundleReactProject(
       complete: missing.length === 0,
       needsBuildReason: null,
       message: `Projeto React compilado e aberto: ${compiled.size} arquivos do projeto e ${packageList.length} pacotes (${packageList.slice(0, 8).join(', ')}${packageList.length > 8 ? '…' : ''}). ${notes.join(' ')}`,
-      bundle: { compiledFiles: compiled.size, packages: packageList, missingEnv, notes },
+      bundle: { compiledFiles: compiled.size, packages: packageList, missingEnv, notes, stubbedPackages: [...stubbed].sort() },
     },
   };
 }
