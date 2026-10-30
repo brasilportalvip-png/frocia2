@@ -18,6 +18,19 @@ const productSite = /\bfroc(?:\.?ia|ia2)?\b|frocia2\.vercel\.app|brasilportalvip
 const ownSite = new RegExp(productSite.source + '|(?:meu|seu|nosso|proprio)\\s+(?:site|repositorio)|(?:seus|meus|nossos)\\s+agentes');
 const githubSpeech = (prompt: string) => normalize(prompt).replace(/\b(?:git[ -]*(?:hub|gub|ob)|gtop)\b/g, 'github');
 
+// Palavras-chave do recurso de autoevolucao da propria Froc.IA. Aditivo: so amplia
+// o reconhecimento; todas as regras anteriores continuam valendo. Os verbos de
+// execucao ficam em imperativo/infinitivo para nao confundir "executou" (passado,
+// pergunta de status) com "execute" (ordem).
+const evolutionNoun = /\b(?:auto[ -]?evolu\w*|auto[ -]?aperfeicoa\w*|auto[ -]?melhoria|auto[ -]?manutencao|auto[ -]?correcao|auto[ -]?atualiza\w*|auto[ -]?reparo|auto[ -]?aprimora\w*|self[ -]?(?:evolution|evolving|improvement|improving|maintenance|healing|repair|update)|evolucao (?:autonoma|supervisionada)|manutencao (?:autonoma|supervisionada)|ciclos? de (?:evolucao|autoevolucao)|(?:motor|modulo|runner|executor|worker|painel|rotina|fluxo|pipeline|processo) de (?:evolucao|autoevolucao)|agentes? de (?:evolucao|autoevolucao|inovacao)|comite de (?:evolucao|especialistas)|candidatos? de evolucao)\b/;
+const evolutionRunVerb = /\b(?:atualize|atualizar|evolua|evoluir|melhore|melhorar|aprimore|aprimorar|otimize|otimizar|aperfeicoe|aperfeicoar|execute|executar|rode|rodar|inicie|iniciar|dispare|disparar|acione|acionar|aplique|aplicar|faca|fazer|gere|gerar|lance|lancar|realize|realizar|comece|comecar|corrija|corrigir|conserte|consertar|arrume|arrumar|repare|reparar|resolva|resolver|implemente|implementar|utilize|utilizar|use|usar|puxe|puxar|solicite|solicitar|libere|liberar|trabalhe|trabalhar|dispense)\b|\b(?:quero|queria|preciso|peco|pedi|pedir|solicito|gostaria|desejo|necessito|vamos|bora|pode|podia|poderia|consegue)\b.{0,40}\b(?:atualizacao|atualizacoes|atualizar|evoluir|melhoria|melhorias|melhorar|aprimorar|otimizar|executar|rodar|iniciar|corrigir|gerar|fazer|aplicar|ativar)\b/;
+const evolutionStatusWord = /\b(?:status|estado|situacao|como (?:esta|foi|anda|andam)|funcion\w*|ativ[ao]s?|ligad[ao]s?|desligad[ao]s?|resultado|ultim[ao]s?|relatorio|historico|logs?|erros?|falh\w*|pendent\w*|fila|quando|qual|quais|quanto\w*|mostr\w*|veja|ver|verific\w*|confir\w*|consult\w*|list\w*|acesso|permiss\w*|conectad\w*|configurad\w*|habilitad\w*)\b/;
+const evolutionNegation = /\b(?:nao|nunca|sem|evite|pare de|deixe de)\b.{0,30}\b(?:atualiz|evolu|melhor|aprimor|otimiz|execut|rod|inici|dispar|acion|aplic|fac|fazer|ger|lanc|realiz|comec|corrij|corrig|consert|arrum|repar|resolv|implement|utiliz|us[ae]r?\b)/;
+const evolutionQuestionStart = /^\s*(?:como|por\s*que|o\s+que|qual|quais|quando|quanto\w*|onde|quem|sera que|voce sabe|me diga|me mostre|mostre|explique)\b/;
+export function isEvolutionRequest(prompt: string): boolean {
+  return evolutionNoun.test(githubSpeech(prompt));
+}
+
 export function isOwnSiteAgentQuestion(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = githubSpeech(prompt);
   if (/\b(?:adicione|acrescente|crie|construa|implemente|aumente|reduza|remova)\b/.test(text)) return false;
@@ -44,7 +57,8 @@ export function isOwnSiteChangesQuestion(prompt: string, recentMessages: OwnerMe
 
 export function isOwnSiteCapabilityQuestion(prompt: string): boolean {
   const text = githubSpeech(prompt);
-  return /^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text) ||
+  return (evolutionNoun.test(text) && evolutionStatusWord.test(text)) ||
+    /^(?:e\s+)?(?:no|na|o|a)?\s*(?:github|vercel)\s*[?!]*$/.test(text) ||
     /\b(?:memoria)\b.{0,35}\b(?:ativa|configurada|funcionando|capacidade|tamanho)\b|\b(?:qual|como esta)\b.{0,50}\bmemoria\b/.test(text) ||
     /\b(?:voce|vc)\b.{0,35}\b(?:tem|possui|consegue|pode)\b.{0,70}\b(?:github|vercel|commit|push|repositorio)\b/.test(text) ||
     (ownSite.test(text) && /\b(?:voce|vc)\b.{0,35}\b(?:consegue|pode)\b.{0,70}\b(?:escrever|gravar|alterar)\b/.test(text)) ||
@@ -60,7 +74,7 @@ export function isOwnSiteAccessFollowUp(prompt: string): boolean {
 
 export function isOwnSiteRequest(prompt: string, recentMessages: OwnerMessage[] = []): boolean {
   const text = normalize(prompt);
-  if (productSite.test(text)) return true;
+  if (productSite.test(text) || evolutionNoun.test(githubSpeech(prompt))) return true;
   if (/\b(?:outro|outra)\s+(?:site|empresa|repositorio|projeto)/.test(text) ||
       /github\.com\/(?!brasilportalvip-png\/frocia2(?:\b|\/))[\w.-]+\/[\w.-]+/.test(text)) return false;
   if (ownSite.test(text)) return true;
@@ -84,6 +98,9 @@ export function requestsOwnSiteAction(prompt: string, recentMessages: OwnerMessa
   if (!isOwnSiteRequest(prompt, recentMessages) ||
       /\b(?:nao|nunca)\b.{0,30}\b(?:corrij|corrige|corrigir|consert|arrum|repar|resolv|execut|faca|inici|rode|audit|apliq)/.test(text) ||
       /^\s*(?:como|por\s*que|o\s+que)\b/.test(text)) return false;
+  const evolutionText = githubSpeech(commandText(prompt));
+  if (evolutionNoun.test(evolutionText) && evolutionRunVerb.test(evolutionText) &&
+      !evolutionNegation.test(evolutionText) && !evolutionQuestionStart.test(evolutionText)) return true;
   return /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra)\b|\b(?:faca|execute|inicie|rode|aplique)\b.{0,70}\b(?:varredura|auditoria|correcao|correcoes|manutencao)\b|\b(?:quero|pode)\b.{0,30}\b(?:corrigir|consertar|reparar|arrumar)\b/.test(text);
 }
 
@@ -209,7 +226,7 @@ export class SelfSiteOwnerService {
     if (input.role !== 'admin') {
       // Um cliente pode pedir ajuda com seu proprio site. Esse pedido nao e
       // controle administrativo da Froc.IA e conserva o fluxo normal do chat.
-      const productTopic = agentValidationIntent(input.prompt, input.recentMessages) || productSite.test(normalize(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || isOwnSiteAgentQuestion(input.prompt, input.recentMessages) || (input.recentMessages || [])
+      const productTopic = agentValidationIntent(input.prompt, input.recentMessages) || productSite.test(normalize(input.prompt)) || evolutionNoun.test(githubSpeech(input.prompt)) || isOwnSiteCapabilityQuestion(input.prompt) || isOwnSiteAgentQuestion(input.prompt, input.recentMessages) || (input.recentMessages || [])
         .filter(message => message.role === 'user').slice(-4).some(message => productSite.test(normalize(message.content)) || isOwnSiteCapabilityQuestion(message.content));
       return productTopic ? {
         status: 'blocked', code: 'administrator_required',

@@ -18,7 +18,7 @@ const MODEL_DEFINITIONS: AIModelDefinition[] = [
       embeddings: false,
     },
     priority: 1,
-    timeoutMs: 30000,
+    timeoutMs: 90000,
     maxRetries: 2,
     costProfile: 'Standard Flash',
     pricing: {
@@ -44,7 +44,7 @@ const MODEL_DEFINITIONS: AIModelDefinition[] = [
       embeddings: false,
     },
     priority: 2,
-    timeoutMs: 15000,
+    timeoutMs: 45000,
     maxRetries: 2,
     costProfile: 'Fast Flash Lite',
     pricing: {
@@ -70,7 +70,7 @@ const MODEL_DEFINITIONS: AIModelDefinition[] = [
       embeddings: false,
     },
     priority: 4,
-    timeoutMs: 30000,
+    timeoutMs: 90000,
     maxRetries: 1,
     costProfile: 'Fallback Flash',
     pricing: {
@@ -96,7 +96,7 @@ const MODEL_DEFINITIONS: AIModelDefinition[] = [
       embeddings: false,
     },
     priority: 3,
-    timeoutMs: 60000,
+    timeoutMs: 120000,
     maxRetries: 1,
     costProfile: 'Pro Reasoning',
     pricing: {
@@ -167,7 +167,7 @@ export function getModelDefinition(modelId: string): AIModelDefinition {
       embeddings: false,
     },
     priority: 10,
-    timeoutMs: 30000,
+    timeoutMs: 90000,
     maxRetries: 1,
     costProfile: 'Custom Model',
     pricing: {

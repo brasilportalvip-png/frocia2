@@ -75,7 +75,7 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
     tone = 'Profissional',
     features = [],
     language = 'pt-BR',
-    modelName = env.GEMINI_DEFAULT_MODEL,
+    modelName: requestedModelName = env.GEMINI_DEFAULT_MODEL,
     attachments: rawAttachments = [],
     projectId,
     specificationVersion,
@@ -91,15 +91,11 @@ siteBuilderRouter.post('/generate-site', requireAuth, async (req: AuthenticatedR
     });
   }
 
-  if (!ALLOWED_SITE_MODELS.has(modelName)) {
-    return res.status(400).json({
-      error: {
-        code: 'invalid_model',
-        message: `O modelo de IA '${modelName}' não é permitido para geração de sites.`,
-        correlationId,
-      },
-    });
-  }
+  // Um modelo escolhido na tela que nao esteja na lista nao deve derrubar a criacao:
+  // usa o modelo padrao e a cadeia de failover cuida do resto.
+  const modelName = ALLOWED_SITE_MODELS.has(requestedModelName)
+    ? requestedModelName
+    : env.GEMINI_DEFAULT_MODEL;
 
   let factoryContext:
     | {
@@ -246,7 +242,7 @@ REGRAS OBRIGATÓRIAS:
 - Não mostre mensagens de sucesso antes de uma ação realmente válida.
 - Inclua validação com mensagens claras e atualização imediata da interface.
 - Não entregue apenas dashboard, protótipo, wireframe ou demonstração visual.
-- Entregue tudo dentro do único HTML retornado; não dependa de arquivos locais ausentes.`;
+- Entregue tudo dentro do único HTML retornado; não dependa de arquivos locais ausentes.\n\nPADRÃO DE ENTREGA PROFISSIONAL (o site deve sair pronto, sem o usuário precisar editar):\n- Escreva textos reais e específicos para o negócio pedido; nunca use lorem ipsum, 'Seu texto aqui' ou placeholders.\n- Layout responsivo (celular, tablet e desktop), com menu de navegação funcional, rolagem suave e rodapé completo.\n- Inclua <title>, meta description, meta viewport, lang correto, favicon em emoji e atributos alt/aria nos elementos interativos.\n- Use gradientes, SVG inline e emojis no lugar de imagens externas; não referencie imagens ou arquivos que não existam.\n- Hierarquia visual clara, bom contraste, espaçamento consistente, estados de hover/foco e animações sutis.\n- Formulários com validação real e mensagens claras; nada de botão sem ação.\n- Mantenha o código organizado e sem erros de console.`;
 
     let userPrompt = `Crie um site completo para: "${prompt.trim()}".
 Categoria: ${category}
@@ -407,7 +403,7 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
     currentHtml,
     instructions,
     prompt: altPrompt,
-    modelName = env.GEMINI_DEFAULT_MODEL,
+    modelName: requestedModelName = env.GEMINI_DEFAULT_MODEL,
     attachments: rawAttachments = []
   } = req.body;
 
@@ -433,15 +429,9 @@ siteBuilderRouter.post('/refine-site', requireAuth, async (req: AuthenticatedReq
     });
   }
 
-  if (!ALLOWED_SITE_MODELS.has(modelName)) {
-    return res.status(400).json({
-      error: {
-        code: 'invalid_model',
-        message: `O modelo de IA '${modelName}' não é permitido.`,
-        correlationId,
-      },
-    });
-  }
+  const modelName = ALLOWED_SITE_MODELS.has(requestedModelName)
+    ? requestedModelName
+    : env.GEMINI_DEFAULT_MODEL;
 
   let validatedAttachments;
   try {

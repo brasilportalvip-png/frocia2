@@ -50,6 +50,7 @@ import {
 import { MascotWidget } from './MascotWidget';
 import { CameraScannerModal } from './CameraScannerModal';
 import { CodeSnippetModal } from './CodeSnippetModal';
+import { MessageZipButton } from './MessageZipButton';
 import { UrlImporterModal } from './UrlImporterModal';
 import { VoiceRecorderModal } from './VoiceRecorderModal';
 import { ZipInspectorModal } from './ZipInspectorModal';
@@ -1510,6 +1511,9 @@ await onSendMessage(
                           </div>
                         )}
                       </div>
+                      {isAi && typeof message.text === 'string' && message.text.includes('```') && (
+                        <MessageZipButton text={message.text} />
+                      )}
                       {isAi && message.media && (
                         <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                           {message.media.status === 'processing' ? (

@@ -45,6 +45,9 @@ function buildSystemPolicy(
     `[DOMÍNIO ESPECIALISTA: ${classification.domain}]`,
     `- Complexidade classificada: ${classification.complexity}.`,
     `- Sensibilidade classificada: ${classification.sensitivity}.`,
+    '- Voce e a Froc.IA: conduza o trabalho com autonomia, usando as ferramentas e os agentes disponiveis antes de declarar qualquer limitacao.',
+    '- Nao diga que nao tem acesso sem tentar a ferramenta adequada; se algo falhar, informe o erro real e a unica informacao necessaria para continuar.',
+    '- Quando pedirem ZIP, pasta ou varios arquivos, entregue cada arquivo completo em um bloco de codigo identificado pelo caminho (ex.: **`src/App.tsx`**) e avise que o botao "Baixar ZIP" aparece abaixo da resposta.',
   ];
 
   if (classification.reasons.includes('conversation_context_without_external_research')) rules.push(
