@@ -766,6 +766,60 @@ function isEligibleGithubTextFile(item: GithubTreeItem): item is Required<Pick<G
   return GITHUB_TEXT_EXTENSIONS.has(githubFileExtension(item.path)) || GITHUB_TEXT_BASENAMES.has(base);
 }
 
+type GithubSkipReason = 'sensivel' | 'grande_demais' | 'binario_ou_midia' | 'limite_de_importacao';
+
+interface GithubImportCoverage {
+  complete: boolean;
+  totalFiles: number;
+  readFiles: number;
+  notRead: Record<GithubSkipReason, { count: number; examples: string[] }>;
+  fullDownloadUrl: string;
+  instructionForAssistant: string;
+}
+
+function classifyGithubSkip(item: GithubTreeItem): GithubSkipReason {
+  if (isSensitiveRepositoryPath(item.path || '')) return 'sensivel';
+  if (typeof item.size === 'number' && item.size > MAX_GITHUB_FILE_BYTES) return 'grande_demais';
+  const base = (item.path || '').toLowerCase().split('/').pop() || '';
+  const isText = GITHUB_TEXT_EXTENSIONS.has(githubFileExtension(item.path || '')) || GITHUB_TEXT_BASENAMES.has(base);
+  return isText ? 'limite_de_importacao' : 'binario_ou_midia';
+}
+
+function buildGithubImportCoverage(input: {
+  blobs: GithubTreeItem[];
+  readPaths: Set<string>;
+  fullDownloadUrl: string;
+  treeTruncated: boolean;
+}): GithubImportCoverage {
+  const notRead: GithubImportCoverage['notRead'] = {
+    sensivel: { count: 0, examples: [] },
+    grande_demais: { count: 0, examples: [] },
+    binario_ou_midia: { count: 0, examples: [] },
+    limite_de_importacao: { count: 0, examples: [] },
+  };
+  for (const item of input.blobs) {
+    if (!item.path || input.readPaths.has(item.path)) continue;
+    const reason = classifyGithubSkip(item);
+    notRead[reason].count += 1;
+    // Arquivos sensíveis são contados, mas nunca têm o caminho exposto.
+    if (reason !== 'sensivel' && notRead[reason].examples.length < 12) {
+      notRead[reason].examples.push(item.path);
+    }
+  }
+  const missing = Object.values(notRead).reduce((sum, entry) => sum + entry.count, 0);
+  const complete = missing === 0 && !input.treeTruncated;
+  return {
+    complete,
+    totalFiles: input.blobs.length,
+    readFiles: input.readPaths.size,
+    notRead,
+    fullDownloadUrl: input.fullDownloadUrl,
+    instructionForAssistant: complete
+      ? 'Todos os arquivos do repositório foram lidos.'
+      : 'IMPORTAÇÃO PARCIAL: avise o usuário claramente quais partes não foram lidas e nunca invente o conteúdo desses arquivos. Para o projeto completo, ele deve baixar o ZIP em fullDownloadUrl.',
+  };
+}
+
 function githubImportPriority(path: string): number {
   const normalized = path.toLowerCase();
   const rootPriorities: Record<string, number> = {
@@ -1057,7 +1111,17 @@ return {
     importedFiles.map((file) => ({ path: file.path, content: file.content }))
   );
 
+  const allBlobs = (tree.tree || []).filter((item) => item.type === 'blob' && item.path);
+  const fullDownloadUrl = `${(metadata.html_url || normalizedUrl).replace(/\/+$/, '')}/archive/refs/heads/${encodeURIComponent(metadata.default_branch)}.zip`;
+  const buildCoverage = () => buildGithubImportCoverage({
+    blobs: allBlobs,
+    readPaths: new Set(importedFiles.map((file) => file.path)),
+    fullDownloadUrl,
+    treeTruncated: Boolean(tree.truncated),
+  });
+
   const document = {
+    importCoverage: buildCoverage(),
     repository: metadata.full_name,
     url: metadata.html_url || normalizedUrl,
     description: metadata.description,
@@ -1113,6 +1177,7 @@ return {
   // grafo. Ajustar objetos completos, nunca cortar o JSON serializado.
   while (Buffer.byteLength(content, 'utf8') > MAX_EXTRACTED_CHARACTERS && importedFiles.length > 0) {
     importedFiles.pop(); // A ordenacao anterior preserva manifestos e arquivos prioritarios.
+    document.importCoverage = buildCoverage();
     document.contentLimits.summaryTruncated = true;
     document.contentFilesReturned = importedFiles.length;
     document.contentBytesReturned = importedFiles.reduce((sum, file) => sum + file.size, 0);
@@ -1147,9 +1212,14 @@ return {
     sourceUrl: normalizedUrl,
     finalUrl: metadata.html_url || normalizedUrl,
     title: metadata.full_name,
-    summary: `Repositório público importado com ${files.length} arquivos listados e conteúdo seguro de ${importedFiles.length} arquivos${
+    summary: `${document.importCoverage.complete ? 'Importação completa' : 'IMPORTAÇÃO PARCIAL'}: ${importedFiles.length} de ${document.importCoverage.totalFiles} arquivos lidos${
       tree.truncated ? ' (árvore parcial)' : ''
-    }.`,
+    }.${document.importCoverage.complete ? '' : ` Não lidos: ${[
+      ['binário/mídia', document.importCoverage.notRead.binario_ou_midia.count],
+      ['grandes demais', document.importCoverage.notRead.grande_demais.count],
+      ['acima do limite', document.importCoverage.notRead.limite_de_importacao.count],
+      ['protegidos', document.importCoverage.notRead.sensivel.count],
+    ].filter(([, count]) => Number(count) > 0).map(([label, count]) => `${count} ${label}`).join(', ')}. Projeto completo: ${document.importCoverage.fullDownloadUrl}`}`,
     content,
     mimeType: 'application/json',
     structure: files.slice(0, 30).map((file) => file.path),
