@@ -395,8 +395,21 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
               <span>{previewData.title}</span>
             </div>
             <p className="text-xs leading-relaxed text-white/70">
-              {previewData.summary}
+              {previewData.summary.replace(/\s*Projeto completo:\s*\S+$/, '')}
             </p>
+            {previewData.type === 'github' && previewData.summary.startsWith('IMPORTAÇÃO PARCIAL') && (
+              <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-xs leading-relaxed text-amber-100">
+                <strong>Atenção:</strong> nem todos os arquivos foram lidos pela IA. Ela vai te avisar o que ficou de fora e não vai inventar essas partes.
+                {(() => {
+                  const zip = previewData.summary.match(/https:\/\/\S+\.zip/);
+                  return zip ? (
+                    <a href={zip[0]} target="_blank" rel="noopener noreferrer" className="mt-2 block font-bold underline">
+                      Baixar o projeto completo (ZIP)
+                    </a>
+                  ) : null;
+                })()}
+              </div>
+            )}
 
             {previewData.structure.length > 0 && (
               <div className="border-t border-white/10 pt-2">

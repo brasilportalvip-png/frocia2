@@ -396,4 +396,72 @@ describe('public GitHub repository import', () => {
       status: 404,
     });
   });
+  it('informa cobertura parcial: o que foi lido, o que ficou de fora e o link do projeto completo', async () => {
+    const packageSha = 'a'.repeat(40);
+    const sourceSha = 'b'.repeat(40);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/repos/openai/cobertura')) {
+        return jsonResponse({
+          full_name: 'openai/cobertura', description: null, default_branch: 'main', language: 'TypeScript',
+          stargazers_count: 0, forks_count: 0, html_url: 'https://github.com/openai/cobertura',
+          private: false, archived: false, topics: [], license: null,
+        });
+      }
+      if (url.includes('/git/trees/main')) {
+        return jsonResponse({
+          truncated: false,
+          tree: [
+            { path: 'package.json', type: 'blob', size: 35, sha: packageSha },
+            { path: 'src/App.tsx', type: 'blob', size: 45, sha: sourceSha },
+            { path: 'public/logo.png', type: 'blob', size: 500, sha: 'c'.repeat(40) },
+            { path: 'public/video.mp4', type: 'blob', size: 900, sha: 'd'.repeat(40) },
+            { path: '.env', type: 'blob', size: 20, sha: 'e'.repeat(40) },
+          ],
+        });
+      }
+      if (url.endsWith('/readme')) return jsonResponse({}, 404);
+      if (url.endsWith(`/git/blobs/${packageSha}`)) return jsonResponse(encoded('{"name":"x"}'));
+      if (url.endsWith(`/git/blobs/${sourceSha}`)) return jsonResponse(encoded('export const A = 1;'));
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await ExternalImportService.import({ type: 'github', url: 'https://github.com/openai/cobertura' });
+    const document = JSON.parse(result.content);
+
+    expect(document.importCoverage.complete).toBe(false);
+    expect(document.importCoverage.totalFiles).toBe(5);
+    expect(document.importCoverage.readFiles).toBe(2);
+    expect(document.importCoverage.notRead.binario_ou_midia.count).toBe(2);
+    expect(document.importCoverage.notRead.binario_ou_midia.examples).toEqual(['public/logo.png', 'public/video.mp4']);
+    expect(document.importCoverage.notRead.sensivel.count).toBe(1);
+    expect(document.importCoverage.notRead.sensivel.examples).toEqual([]);
+    expect(document.importCoverage.fullDownloadUrl).toBe('https://github.com/openai/cobertura/archive/refs/heads/main.zip');
+    expect(result.summary).toContain('IMPORTAÇÃO PARCIAL: 2 de 5 arquivos lidos');
+    expect(result.summary).toContain('main.zip');
+  });
+
+  it('marca importação completa quando todos os arquivos foram lidos', async () => {
+    const packageSha = 'a'.repeat(40);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/repos/openai/inteiro')) {
+        return jsonResponse({
+          full_name: 'openai/inteiro', description: null, default_branch: 'main', language: null,
+          stargazers_count: 0, forks_count: 0, html_url: 'https://github.com/openai/inteiro',
+          private: false, archived: false, topics: [], license: null,
+        });
+      }
+      if (url.includes('/git/trees/main')) {
+        return jsonResponse({ truncated: false, tree: [{ path: 'package.json', type: 'blob', size: 12, sha: packageSha }] });
+      }
+      if (url.endsWith('/readme')) return jsonResponse({}, 404);
+      if (url.endsWith(`/git/blobs/${packageSha}`)) return jsonResponse(encoded('{"name":"x"}'));
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    const result = await ExternalImportService.import({ type: 'github', url: 'https://github.com/openai/inteiro' });
+    expect(JSON.parse(result.content).importCoverage.complete).toBe(true);
+    expect(result.summary).toContain('Importação completa: 1 de 1 arquivos lidos');
+  });
 });
