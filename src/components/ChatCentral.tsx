@@ -51,6 +51,8 @@ import { MascotWidget } from './MascotWidget';
 import { CameraScannerModal } from './CameraScannerModal';
 import { CodeSnippetModal } from './CodeSnippetModal';
 import { MessageZipButton } from './MessageZipButton';
+import { isProjectCreationRequest } from '../services/projectCreationIntent';
+import { extractGithubImportRequest } from '../services/githubImportIntent';
 import { UrlImporterModal } from './UrlImporterModal';
 import { VoiceRecorderModal } from './VoiceRecorderModal';
 import { ZipInspectorModal } from './ZipInspectorModal';
@@ -225,6 +227,7 @@ export const ChatCentral: React.FC<
   const [urlImporterType, setUrlImporterType] = useState<
     'url' | 'github' | null
   >(null);
+  const [urlImporterInitialUrl, setUrlImporterInitialUrl] = useState('');
   const [zipForInspection, setZipForInspection] =
     useState<UploadedFile | null>(null);
   const [isKnowledgeBaseOpen, setIsKnowledgeBaseOpen] =
@@ -1196,6 +1199,15 @@ export const ChatCentral: React.FC<
       normalizedText ||
       'Analise os arquivos que foram anexados.';
 
+    // Atalho: "importe https://github.com/dono/repo" abre o importador ja preenchido.
+    const githubImportUrl = extractGithubImportRequest(normalizedText);
+    if (githubImportUrl && attachedFiles.length === 0) {
+      setUrlImporterInitialUrl(githubImportUrl);
+      setUrlImporterType('github');
+      setInputText('');
+      return;
+    }
+
     try {
       if (voiceEnabledRef.current) {
         // Ignore uma mensagem antiga enquanto aguardamos a nova resposta.
@@ -1220,7 +1232,9 @@ const creationIntent =
 
 const requestedMode: ChatMode =
   modeOverride ??
-  (creationIntent &&
+  (isProjectCreationRequest(textToSend)
+    ? 'Criador de projetos'
+    : creationIntent &&
   /\b(video|videos|vidio|vidios|animacao|animacoes|filme|filmes|clipe|clipes|reel|reels|short|shorts)\b/.test(normalizedRequest)
     ? 'Vídeo'
     : creationIntent &&
@@ -2001,13 +2015,18 @@ await onSendMessage(
       />
 
       <UrlImporterModal
-        key={urlImporterType ?? 'closed-url-importer'}
+        key={`${urlImporterType ?? 'closed-url-importer'}-${urlImporterInitialUrl}`}
         isOpen={urlImporterType !== null}
         defaultType={urlImporterType ?? 'url'}
-        onClose={() => setUrlImporterType(null)}
+        initialUrl={urlImporterInitialUrl}
+        onClose={() => {
+          setUrlImporterType(null);
+          setUrlImporterInitialUrl('');
+        }}
         onImport={(file) => {
           appendAttachment(file);
           setUrlImporterType(null);
+          setUrlImporterInitialUrl('');
         }}
       />
 
