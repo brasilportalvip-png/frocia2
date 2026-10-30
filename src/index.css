@@ -34,6 +34,14 @@
 
   html {
     background: var(--froc-black);
+    overscroll-behavior: none;
+  }
+
+  /* iOS dá zoom ao focar campos menores que 16px. */
+  @media (max-width: 767px) {
+    input, textarea, select {
+      font-size: 16px !important;
+    }
   }
 
   body {

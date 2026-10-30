@@ -33,7 +33,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ site, isOpen, onClose 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg glass-panel rounded-[32px] p-6 shadow-2xl space-y-6 relative border border-white/20 text-white">
         <button
           onClick={onClose}

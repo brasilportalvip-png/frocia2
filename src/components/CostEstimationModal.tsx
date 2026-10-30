@@ -27,7 +27,7 @@ export const CostEstimationModal: React.FC<CostEstimationModalProps> = ({
   const hasEnoughBalance = userBalance >= estimatedCredits;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 select-none">
+    <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center overflow-y-auto p-4 select-none">
       <div className="w-full max-w-md glass-panel rounded-[32px] p-6 border border-amber-500/30 text-white space-y-5 relative shadow-2xl animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 pb-4">

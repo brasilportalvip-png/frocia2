@@ -28,6 +28,10 @@ interface DashboardProps {
   onSelectSite: (site: GeneratedSite) => void;
   onNewSite: () => void;
   onDeleteSite: (siteId: string) => void;
+  deletingSiteIds?: string[];
+  notice?: string | null;
+  onDismissNotice?: () => void;
+  onClearLocalProjects?: () => void;
   onToggleFavorite: (siteId: string) => void;
   user: UserProfile;
   onNavigateToPricing: () => void;
@@ -40,6 +44,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onSelectSite,
   onNewSite,
   onDeleteSite,
+  deletingSiteIds = [],
+  notice = null,
+  onDismissNotice,
+  onClearLocalProjects,
   onToggleFavorite,
   user,
   onNavigateToPricing,
@@ -51,6 +59,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('todos');
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<GeneratedSite | null>(null);
+  const [confirmClearLocal, setConfirmClearLocal] = useState(false);
+  const localOnlyCount = savedSites.filter((s) => s.id.startsWith('local-') || s.id.startsWith('tmpl-')).length;
 
   // Profile Edit State
   const [displayName, setDisplayName] = useState(user.name);
@@ -380,6 +391,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
+            {notice && (
+              <div role="alert" className="flex items-start gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200">
+                <span className="flex-1 break-words">{notice}</span>
+                {onDismissNotice && (
+                  <button onClick={onDismissNotice} aria-label="Fechar aviso" className="min-h-11 min-w-11 -m-3 shrink-0 text-red-200/80 hover:text-white">✕</button>
+                )}
+              </div>
+            )}
+
+            {onClearLocalProjects && localOnlyCount > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-white/70">
+                <span className="flex-1 min-w-[200px]">
+                  {localOnlyCount} projeto(s) existem só neste aparelho (importados ou modelos de teste).
+                </span>
+                <button
+                  onClick={() => setConfirmClearLocal(true)}
+                  className="min-h-11 px-4 rounded-xl border border-white/15 text-white/80 hover:bg-white/10 font-bold"
+                >
+                  Limpar projetos locais antigos
+                </button>
+              </div>
+            )}
+
             {/* Projects Grid */}
             {filteredSites.length === 0 ? (
               <div className="p-12 text-center rounded-[32px] glass-panel border border-white/10 space-y-4 max-w-md mx-auto my-12">
@@ -434,9 +468,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => onDeleteSite(site.id)}
-                          className="p-2 rounded-xl text-white/40 hover:text-red-400 hover:bg-white/5 transition-colors"
+                          onClick={() => setPendingDelete(site)}
+                          disabled={deletingSiteIds.includes(site.id)}
+                          className="min-h-11 min-w-11 flex items-center justify-center rounded-xl text-white/60 hover:text-red-400 hover:bg-white/5 transition-colors disabled:opacity-40"
                           title="Excluir Projeto"
+                          aria-label={`Excluir projeto ${site.title}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -457,6 +493,50 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </>
         )}
       </div>
+
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setPendingDelete(null)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setPendingDelete(null); }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-project-title"
+            className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b10] p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-project-title" className="text-lg font-bold text-white">Excluir projeto?</h3>
+            <p className="text-sm text-white/70 break-words">
+              “{pendingDelete.title}” será removido da sua lista. Esta ação não pode ser desfeita.
+              {pendingDelete.productionUrl ? ' O site já publicado continuará no ar até você removê-lo na Vercel.' : ''}
+            </p>
+            <div className="flex gap-3">
+              <button autoFocus onClick={() => setPendingDelete(null)} className="flex-1 min-h-11 rounded-xl border border-white/15 text-white font-bold text-sm">Cancelar</button>
+              <button
+                onClick={() => { const id = pendingDelete.id; setPendingDelete(null); onDeleteSite(id); }}
+                className="flex-1 min-h-11 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm"
+              >Excluir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmClearLocal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4" onClick={() => setConfirmClearLocal(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="clear-local-title" className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b10] p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 id="clear-local-title" className="text-lg font-bold text-white">Limpar projetos locais?</h3>
+            <p className="text-sm text-white/70">
+              Remove {localOnlyCount} projeto(s) que existem só neste aparelho. Projetos salvos na sua conta não são afetados.
+            </p>
+            <div className="flex gap-3">
+              <button autoFocus onClick={() => setConfirmClearLocal(false)} className="flex-1 min-h-11 rounded-xl border border-white/15 text-white font-bold text-sm">Cancelar</button>
+              <button onClick={() => { setConfirmClearLocal(false); onClearLocalProjects?.(); }} className="flex-1 min-h-11 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm">Limpar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
