@@ -22,7 +22,7 @@ const SITE_PART = new RegExp(
     'titulo', 'subtitulo', 'texto', 'cor', 'cores', 'fundo', 'botao', 'botoes', 'menu', 'logo', 'logotipo',
     'imagem', 'imagens', 'foto', 'fotos', 'secao', 'secoes', 'rodape', 'cabecalho', 'header', 'footer', 'hero',
     'banner', 'fonte', 'fontes', 'tipografia', 'layout', 'pagina', 'site', 'formulario', 'contato', 'preco', 'precos',
-    'depoimentos', 'faq', 'icone', 'icones', 'link', 'links', 'nome', 'slogan', 'tema', 'animacao', 'sombra', 'borda'
+    'depoimentos', 'faq', 'componente', 'componentes', 'tela', 'card', 'cards', 'cartao', 'lista', 'galeria', 'carrossel', 'navbar', 'sidebar', 'modal', 'campo', 'campos', 'idioma', 'descricao', 'icone', 'icones', 'link', 'links', 'nome', 'slogan', 'tema', 'animacao', 'sombra', 'borda'
   ].join('|') + ')\\b'
 );
 const QUESTION_START = /^\s*(?:como|qual|quais|por que|porque|o que|quando|onde|sera que|e possivel|da pra|posso|voce|vc)\b/;
