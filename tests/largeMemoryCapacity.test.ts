@@ -13,7 +13,7 @@ describe('Large memory capacity contract', () => {
     );
 
     expect(builder).toContain('const MAX_RECENT_MESSAGES = 24;');
-    expect(builder).toContain('maxContextTokens = 48000');
+    expect(builder).toContain('maxContextTokens = 144000');
     expect(conversation).toContain('const RECENT_MESSAGE_LIMIT = 32;');
     expect(conversation).toContain('const QUERY_LIMIT = 400;');
   });

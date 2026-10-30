@@ -687,7 +687,7 @@ export function parseGithubRepositoryUrl(sourceUrl: string): { owner: string; re
 
 async function githubApiJson<T>(path: string, timeoutMs: number): Promise<T> {
   const apiUrl = parsePublicHttpUrl(`https://api.github.com${path}`);
-  const token = process.env.GITHUB_TOKEN?.trim();
+  const token = (process.env.GITHUB_TOKEN || process.env.GITHUB_READ_TOKEN || '').trim();
   const { bytes } = await safeFetch(apiUrl, {
     allowedHosts: new Set(['api.github.com']),
     headers: {

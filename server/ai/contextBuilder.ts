@@ -310,7 +310,7 @@ requestPolicy,
 artifactMemoryContext,
 recentMessages = [],
       conversationSummary,
-      maxContextTokens = 48000
+      maxContextTokens = 144000
     } = params;
 
     const baseInstruction =

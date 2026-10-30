@@ -1301,11 +1301,6 @@ const handleGeneralChat = async (
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
-      {activeSite?.id && !activeSite.id.startsWith('local-') && (
-        <div className="flex justify-end border-b border-white/10 bg-slate-950 px-4 py-1">
-          <button type="button" onClick={() => activeSite.professionalBuildId ? setProfessionalBuildId(activeSite.professionalBuildId) : setIsProjectConfigurationOpen(true)} className="rounded-lg px-3 py-2 text-xs text-violet-200 hover:bg-white/5">Variáveis e entrega do projeto</button>
-        </div>
-      )}
       {professionalBuildId && activeSite?.id && (
         <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{const updated={...activeSite,professionalBuildId:id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(id);}} onReady={(url,title)=>{const updated={...activeSite,title,productionUrl:url};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));void refreshProfile();}}/>
       )}

@@ -2,7 +2,7 @@ import { agentValidationIntent, formatAgentValidation } from '../selfEvolution/a
 import { randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminDb } from '../lib/firebaseAdmin.js';
-import { SelfSiteOwnerService, isOwnSiteAccessFollowUp, isOwnSiteCapabilityQuestion, isOwnSiteAgentQuestion,
+import { SelfSiteOwnerService, isEvolutionRequest, isOwnSiteAccessFollowUp, isOwnSiteCapabilityQuestion, isOwnSiteAgentQuestion,
   isOwnSiteRequest, isOwnSiteChangesQuestion, requestedOwnSiteToggle, requestsOwnSiteAction } from '../selfEvolution/selfSiteOwnerService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
 import { ConversationContextService } from './conversationContextService.js';
@@ -112,7 +112,7 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
 export class SelfSiteChatControlService {
   static async respond(params: ExecutionParams, correlationId: string) {
     if (params.attachments?.length) return null;
-    const potential = /homologa[cç][aã]o|homologar|evid[eê]ncias|registros de execu[cç][aã]o/i.test(params.prompt) || isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
+    const potential = isEvolutionRequest(params.prompt) || /homologa[cç][aã]o|homologar|evid[eê]ncias|registros de execu[cç][aã]o/i.test(params.prompt) || isOwnSiteAgentQuestion(params.prompt) || isOwnSiteCapabilityQuestion(params.prompt) || isOwnSiteAccessFollowUp(params.prompt) || isOwnSiteChangesQuestion(params.prompt) ||
       /\bagentes?\b/i.test(params.prompt) ||
       /\b(?:melhorias|altera[cç][oõ]es|mudan[cç]as|commits|github|gitgub|gtop|git[ -]+ob)\b/i.test(params.prompt) ||
       /\b(?:corrija|corrige|conserte|conserta|arrume|arruma|repare|resolva|audite|varra|faca|faça|execute|inicie|rode|aplique|ative|retome|habilite|desative|pause|pare|quero|pode)\b/i.test(params.prompt);

@@ -126,9 +126,9 @@ function parseExecutionRequest(
       ? body.prompt.trim()
       : '';
 
-  if (!prompt || prompt.length > 50000) {
+  if (!prompt || prompt.length > 150000) {
     throw new InvalidAIRequestError([
-      'O prompt deve conter entre 1 e 50.000 caracteres.'
+      'O prompt deve conter entre 1 e 150.000 caracteres.'
     ]);
   }
 
