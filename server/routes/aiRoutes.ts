@@ -209,9 +209,15 @@ function parseExecutionRequest(
       ? body.modelOverride.trim()
       : undefined;
 
+  const activeProjectContext =
+    typeof body.activeProjectContext === 'string' && body.activeProjectContext.trim()
+      ? body.activeProjectContext.trim().slice(0, 40000)
+      : undefined;
+
   return {
     prompt,
     mode,
+    activeProjectContext,
     conversationId: optionalId(
       body.conversationId
     ),
@@ -341,6 +347,7 @@ aiRouter.post(
       knowledgeBaseIds = [],
       attachments: submittedAttachments = [],
       tools = [],
+      activeProjectContext,
       modelOverride,
       idempotencyKey: providedKey
     } = parsedRequest;
@@ -473,6 +480,7 @@ try {
         hasFiles: attachments.length > 0,
         requestedTools: tools,
         knowledgeBaseIds,
+        routingHint: activeProjectContext?.slice(0, 500),
         preferredModel: modelOverride
       });
     } catch (error) {
@@ -710,6 +718,7 @@ try {
           knowledgeBaseIds,
           requestPolicy: plan.systemPolicy,
 artifactMemoryContext,
+          activeProjectContext,
 recentMessages:
   conversationContext.recentMessages,
           conversationSummary:

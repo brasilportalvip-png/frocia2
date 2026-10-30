@@ -1,3 +1,4 @@
+import { buildSourceDigest } from './projectSourceDigest.js';
 import { unzipSync } from 'fflate';
 import { ExternalImportError, parseGithubRepositoryUrl } from './externalImportService.js';
 import { bundleStaticSite, normalizeFiles, type StaticSiteResult } from './staticSiteBundler.js';
@@ -57,6 +58,8 @@ async function readCapped(response: Response, maxBytes: number): Promise<Uint8Ar
 }
 
 export interface GithubSiteImportResult extends StaticSiteResult {
+  /** Resumo do código para a conversa saber do que se trata (sem arquivos .env). */
+  sourceDigest: string;
   repository: string;
   sourceUrl: string;
   branch: string;
@@ -128,6 +131,7 @@ export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImp
   }
   return {
     ...result,
+    sourceDigest: buildSourceDigest(normalized.files),
     repository: meta.full_name || `${owner}/${repository}`,
     sourceUrl: normalizedUrl,
     branch,

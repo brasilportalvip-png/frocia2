@@ -20,6 +20,8 @@ export class UnknownAIToolError extends Error {
 }
 
 interface RequestPlanInput {
+  /** Título/tema do projeto aberto no editor; ajuda a escolher os especialistas certos. */
+  routingHint?: string;
   mode: AIMode;
   prompt: string;
   hasImages?: boolean;
@@ -200,7 +202,8 @@ const effectiveMode: AIMode =
       sensitivity: classification.sensitivity,
       preferredModel: input.preferredModel,
     });
-    const team = intelligenceTeam(classification, input.prompt);
+    const routingText = input.routingHint ? `${input.prompt}\n${input.routingHint}` : input.prompt;
+    const team = intelligenceTeam(classification, routingText);
     return {
       specialistAgentIds: team.agents.map(agent => agent.id),
       classification,
@@ -208,7 +211,7 @@ const effectiveMode: AIMode =
       route,
       tools,
       systemPolicy:
-        [buildSystemPolicy(classification), team.policy, expertTeamPolicy(input.prompt)]
+        [buildSystemPolicy(classification), team.policy, expertTeamPolicy(routingText)]
           .filter(Boolean)
           .join("\n\n"),
     };

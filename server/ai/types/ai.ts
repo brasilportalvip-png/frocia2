@@ -147,6 +147,8 @@ export interface ExecutionParams {
   jsonSchema?: Record<string, any>;
   tools?: string[];
   knowledgeBaseIds?: string[];
+  /** Projeto aberto no editor (dados do usuário, não instruções). */
+  activeProjectContext?: string;
   modelOverride?: string;
   abortSignal?: AbortSignal;
 }

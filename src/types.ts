@@ -13,6 +13,10 @@ export interface GeneratedSite {
   colorPalette: string;
   tone: string;
   html: string;
+  /** Resumo do código/relatório de importação, usado pela conversa (nunca contém .env). */
+  contextDigest?: string;
+  /** Projeto compilado a partir de código-fonte: edições vão para o código, não para o HTML compilado. */
+  compiledFromSource?: boolean;
   createdAt: number;
   updatedAt: number;
   isFavorite?: boolean;

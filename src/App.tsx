@@ -21,6 +21,7 @@ import { useAuth } from './context/AuthContext';
 import { apiClient, ApiClientError } from './services/apiClient';
 import { streamApiEvents } from './services/sseClient';
 import { toAIAttachmentPayloads } from './services/attachmentService';
+import { isProjectEditRequest } from './services/projectEditIntent';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -613,7 +614,8 @@ const fetchConversations = async () => {
     const onOpenImportedSite = (event: Event) => {
       const detail = (event as CustomEvent).detail as {
         html: string; title: string; repository: string; sourceUrl: string; fullDownloadUrl: string;
-        report: { complete: boolean; message: string };
+        sourceDigest?: string;
+        report: { complete: boolean; message: string; kind?: string; bundle?: { packages?: string[]; missingEnv?: string[]; notes?: string[] } };
       } | undefined;
       if (!detail?.html) return;
       const importedSite: GeneratedSite = {
@@ -625,6 +627,16 @@ const fetchConversations = async () => {
         colorPalette: 'Original do projeto',
         tone: 'Original',
         html: detail.html,
+        compiledFromSource: detail.report.kind === 'react_bundled',
+        contextDigest: [
+          `Origem: ${detail.sourceUrl}`,
+          `Relatório da importação: ${detail.report.message}`,
+          detail.report.bundle?.packages?.length ? `Pacotes usados: ${detail.report.bundle.packages.join(', ')}` : '',
+          detail.report.bundle?.missingEnv?.length
+            ? `VARIÁVEIS DE AMBIENTE NECESSÁRIAS (valores não informados): ${detail.report.bundle.missingEnv.join(', ')}`
+            : '',
+          detail.sourceDigest || ''
+        ].filter(Boolean).join('\n\n').slice(0, 36000),
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -636,7 +648,11 @@ const fetchConversations = async () => {
           sender: 'ai',
           text: `Site "${importedSite.title}" aberto no editor.\n\n${detail.report.message}${
             detail.report.complete ? '\n\nTudo foi trazido. O que você quer alterar?' : `\n\nO que ficou de fora está listado acima. Projeto completo para download: ${detail.fullDownloadUrl}`
-          }`,
+          }${
+            detail.report.bundle?.missingEnv?.length
+              ? `\n\nEste projeto usa variáveis de ambiente: ${detail.report.bundle.missingEnv.join(', ')}. Na prévia elas ficam vazias (por segurança, chaves reais não vão para dentro da página). Me diga como quer configurá-las: eu explico onde colocar cada uma ao publicar.`
+              : ''
+          }\n\nPode conversar comigo sobre este projeto: eu e os especialistas já temos acesso ao código dele.`,
           timestamp: Date.now()
         }
       ]);
@@ -883,6 +899,22 @@ const fetchConversations = async () => {
 
 
 
+const buildActiveProjectContext = (site: GeneratedSite | null): string => {
+  if (!site) return '';
+  const strippedHtml = (site.html || '')
+    .replace(/data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, 'data:[binário-omitido]')
+    .replace(/<script[\s\S]*?<\/script>/gi, '<script>[omitido]</script>');
+  return [
+    `Título: ${site.title}`,
+    site.type ? `Tipo: ${site.type}` : '',
+    site.category ? `Categoria: ${site.category}` : '',
+    site.description ? `Descrição: ${site.description}` : '',
+    site.prompt ? `Pedido original: ${site.prompt.slice(0, 1500)}` : '',
+    site.contextDigest ? `\n${site.contextDigest}` : '',
+    site.contextDigest ? '' : `\nHTML da página (trecho):\n${strippedHtml.slice(0, 14000)}`
+  ].filter(Boolean).join('\n').slice(0, 38000);
+};
+
 const handleGeneralChat = async (
   text: string,
   mode: ChatMode,
@@ -1021,13 +1053,16 @@ const handleGeneralChat = async (
             .toString(36)
             .substring(2)}`;
 
+    const activeProjectContext = buildActiveProjectContext(activeSite);
+
      const requestBody = {
   prompt,
   mode: apiMode,
   conversationId: activeConvId,
   attachments,
   knowledgeBaseIds,
-  idempotencyKey: stableExecutionKey
+  idempotencyKey: stableExecutionKey,
+  ...(activeProjectContext ? { activeProjectContext } : {})
 };
 
     let result: AIExecutionResult;
@@ -1613,6 +1648,22 @@ const handleGeneralChat = async (
       },
       files
     );
+    return;
+  }
+
+  // Projeto aberto no editor: pedido de alteração no chat altera o projeto.
+  // (Projeto compilado de código-fonte não é editado no HTML compilado: segue para a conversa,
+  // onde os especialistas já têm o código.)
+  if (
+    activeSite &&
+    !activeSite.compiledFromSource &&
+    mode !== 'Imagem' &&
+    mode !== 'Vídeo' &&
+    mode !== 'Pesquisa' &&
+    files.length === 0 &&
+    isProjectEditRequest(text)
+  ) {
+    await handleRefineSite(text.trim());
     return;
   }
 
