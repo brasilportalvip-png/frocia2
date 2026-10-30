@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 import { ExternalImportError, parseGithubRepositoryUrl } from './externalImportService.js';
 import { bundleStaticSite, normalizeFiles, type StaticSiteResult } from './staticSiteBundler.js';
 import { bundleReactProject } from './reactProjectBundler.js';
+import { NpmInstaller, parseLock } from './npmInstaller.js';
 
 const ZIP_TIMEOUT_MS = 40_000;
 const META_TIMEOUT_MS = 12_000;
@@ -110,7 +111,17 @@ export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImp
   let result = bundleStaticSite(files, ctx, { normalized });
   // Projeto React/Vite/TypeScript: compila no servidor e abre pronto no editor.
   if (result.report.kind === 'build_required' && result.report.entry) {
-    const compiled = await bundleReactProject(normalized.files, ctx, result.report.entry);
+    const entryDir = result.report.entry.includes('/') ? result.report.entry.slice(0, result.report.entry.lastIndexOf('/')) : '';
+    const lockBytes = normalized.files.get(entryDir ? `${entryDir}/package-lock.json` : 'package-lock.json') || normalized.files.get('package-lock.json');
+    const lock = lockBytes ? parseLock(new TextDecoder().decode(lockBytes)) : null;
+    // Com package-lock.json: instala os pacotes de verdade (como um build normal). Sem ele: esm.sh.
+    const installer = lock ? new NpmInstaller(lock) : undefined;
+    let compiled: Awaited<ReturnType<typeof bundleReactProject>>;
+    try {
+      compiled = await bundleReactProject(normalized.files, ctx, result.report.entry, { installer });
+    } finally {
+      await installer?.cleanup();
+    }
     result = compiled.html
       ? { ...compiled, report: { ...compiled.report, protectedFilesSkipped: normalized.skipped } }
       : { ...result, report: { ...result.report, kind: 'build_failed', message: `${compiled.report.message} Baixe o ZIP completo para usar o projeto.` } };

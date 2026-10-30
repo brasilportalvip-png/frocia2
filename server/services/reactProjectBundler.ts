@@ -1,4 +1,5 @@
 import type { Plugin } from 'esbuild';
+import type { NpmInstaller } from './npmInstaller.js';
 import {
   decodeText,
   dirOf,
@@ -44,6 +45,8 @@ export interface ReactBundleOptions {
   retryDelayMs?: number;
   /** Injetável para testes. Padrão: import('esbuild'). */
   esbuild?: typeof import('esbuild');
+  /** Instalador de pacotes a partir do package-lock.json do projeto. Sem ele (ou sem o pacote no lock), usa o esm.sh. */
+  installer?: Pick<NpmInstaller, 'has' | 'ensure' | 'getDir'>;
 }
 
 function extOf(path: string): string {
@@ -123,6 +126,22 @@ function buildStubModule(spec: string, files: Map<string, Uint8Array>): string {
       }
     }
   }
+  const rejectLogin = '() => Promise.reject(Object.assign(new Error("Login indisponível na prévia"), { code: "auth/network-request-failed" }))';
+  const emptySnapshot = '{ exists: () => false, data: () => undefined, id: "", docs: [], empty: true, size: 0, forEach() {} }';
+  const behaviours: Record<string, string> = {
+    // O app deve concluir o carregamento como "ninguém logado" em vez de esperar para sempre.
+    onAuthStateChanged: '(_a, cb) => { if (typeof cb === "function") setTimeout(() => cb(null), 0); return () => {}; }',
+    onIdTokenChanged: '(_a, cb) => { if (typeof cb === "function") setTimeout(() => cb(null), 0); return () => {}; }',
+    getRedirectResult: '() => Promise.resolve(null)',
+    setPersistence: '() => Promise.resolve()',
+    signOut: '() => Promise.resolve()',
+    isSupported: '() => Promise.resolve(false)',
+    getDoc: `() => Promise.resolve(${emptySnapshot})`,
+    getDocs: `() => Promise.resolve(${emptySnapshot})`,
+    onSnapshot: `(_r, a) => { const cb = typeof a === "function" ? a : a && a.next; if (cb) setTimeout(() => cb(${emptySnapshot}), 0); return () => {}; }`,
+  };
+  const behaviourFor = (name: string): string =>
+    behaviours[name] ?? (/^(?:signIn|createUser|sendEmail|sendPassword|signInWith)/.test(name) ? rejectLogin : 'make()');
   return [
     'const make = () => new Proxy(function () {}, {',
     "  get: (_t, key) => (key === 'then' ? undefined : key === Symbol.toPrimitive ? () => '' : make()),",
@@ -130,7 +149,7 @@ function buildStubModule(spec: string, files: Map<string, Uint8Array>): string {
     '  construct: () => make(),',
     '});',
     'export default make();',
-    ...[...names].map((name) => `export const ${name} = make();`),
+    ...[...names].map((name) => `export const ${name} = ${behaviourFor(name)};`),
   ].join('\n');
 }
 
@@ -245,6 +264,7 @@ export async function bundleReactProject(
   const topLevelPackages = new Map<string, { name: string; spec: string }>();
   const stubbed = new Set<string>();
   const buildOnlySeen = new Set<string>();
+  const npmPackages = new Set<string>(); // instalados do npm (via package-lock.json)
   const pendingStub = new Set<string>(); // pacotes cujos arquivos internos não carregaram: na próxima tentativa viram versão vazia
   const compiled = new Set<string>();
   const packages = new Set<string>();
@@ -253,10 +273,13 @@ export async function bundleReactProject(
   const plugin: Plugin = {
     name: 'froc-project',
     setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
+      build.onResolve({ filter: /.*/ }, async (args) => {
         const spec = args.path;
 
         if (args.kind === 'entry-point') return { path: entryPath!, namespace: 'proj' };
+
+        // Arquivos de pacotes instalados em disco: o esbuild resolve sozinho (exports, browser, module...).
+        if (args.namespace === 'file' || (args.pluginData as { frocInner?: boolean } | undefined)?.frocInner) return undefined;
 
         // Dentro de módulos remotos (esm.sh).
         if (args.namespace === 'esm') {
@@ -300,6 +323,19 @@ export async function bundleReactProject(
         if (!versions.has(name)) {
           const local = resolveProjectFile(joinPath(srcRoot, clean));
           if (local) return { path: local, namespace: 'proj' };
+        }
+        if (options.installer?.has(name) && (await options.installer.ensure(name))) {
+          const resolved = await build.resolve(clean, {
+            kind: args.kind,
+            resolveDir: await options.installer.getDir(),
+            importer: args.importer,
+            pluginData: { frocInner: true }, // evita o plugin se chamar de novo
+          });
+          if (resolved.errors.length === 0 && !resolved.external) {
+            packages.add(name);
+            npmPackages.add(name);
+            return { path: resolved.path, namespace: resolved.namespace, sideEffects: resolved.sideEffects };
+          }
         }
         packages.add(name);
         if (pendingStub.has(name)) return { path: clean, namespace: 'stub' };
@@ -418,7 +454,8 @@ export async function bundleReactProject(
 
   const tailwindStyle = /@tailwind|@apply/.test(cssText);
   const styleTag = cssText.trim() ? `<style data-froc-source="bundle.css"${tailwindStyle ? ' type="text/tailwindcss"' : ''}>\n${cssText}\n</style>` : '';
-  const headExtra = `${usesTailwind ? '<script src="https://cdn.tailwindcss.com"></script>\n' : ''}${styleTag}`;
+  const errorOverlay = `<script data-froc-source="preview-errors">(function(){function show(m){var d=document.getElementById('froc-preview-error');if(!d){d=document.createElement('div');d.id='froc-preview-error';d.style.cssText='position:fixed;left:8px;right:8px;bottom:8px;z-index:2147483647;background:#7f1d1d;color:#fff;padding:10px 12px;border-radius:8px;font:12px/1.4 system-ui;max-height:40vh;overflow:auto';document.documentElement.appendChild(d)}d.textContent='Erro na prévia: '+m}window.addEventListener('error',function(e){show(e.message||'erro desconhecido')});window.addEventListener('unhandledrejection',function(e){show(String((e.reason&&e.reason.message)||e.reason))});setTimeout(function(){var r=document.getElementById('root');if(r&&!r.childNodes.length)show('a tela ficou vazia: o projeto não renderizou nada (pode depender de login ou de variáveis de ambiente não configuradas).')},4000)})();</script>\n`;
+  const headExtra = `${errorOverlay}${usesTailwind ? '<script src="https://cdn.tailwindcss.com"></script>\n' : ''}${styleTag}`;
   const scriptTag = `<script data-froc-source="bundle.js">\n${jsText.replace(/<\/script/gi, '<\\/script')}\n</script>`;
 
   page = /<\/head>/i.test(page) ? page.replace(/<\/head>/i, () => `${headExtra}\n</head>`) : `${headExtra}\n${page}`;
@@ -436,6 +473,11 @@ export async function bundleReactProject(
   if (usesTailwind) notes.push('Estilos Tailwind aplicados pela biblioteca oficial (CDN, versão 3). Classes exclusivas do Tailwind 4 e configurações personalizadas do tailwind.config podem aparecer diferentes.');
   if (stubbed.size) notes.push(`Pacotes opcionais que não puderam ser carregados e foram trocados por versão vazia: ${[...stubbed].sort().join(', ')}. Recursos que dependem deles (aplicativo de celular, analytics) ficam desligados na prévia.`);
   if (missingEnv.length) notes.push(`Variáveis de ambiente usadas e não configuradas: ${missingEnv.join(', ')}. Partes que dependem delas (APIs, login) podem não funcionar na prévia.`);
+  if (npmPackages.size) notes.unshift(`${npmPackages.size} pacotes instalados do npm a partir do package-lock.json do projeto (como num build normal).`);
+  if (options.installer && 'failures' in options.installer) {
+    const failed = [...((options.installer as unknown as { failures: Map<string, string> }).failures.keys())];
+    if (failed.length) notes.push(`Não consegui instalar do npm (usei o esm.sh no lugar): ${failed.sort().join(', ')}.`);
+  }
   notes.push('Rotas do navegador (React Router) funcionam melhor com HashRouter dentro da prévia.');
   const packageList = [...packages].sort();
   const missing = inlined.missing.slice(0, 30);
@@ -456,7 +498,7 @@ export async function bundleReactProject(
       complete: missing.length === 0,
       needsBuildReason: null,
       message: `Projeto React compilado e aberto: ${compiled.size} arquivos do projeto e ${packageList.length} pacotes (${packageList.slice(0, 8).join(', ')}${packageList.length > 8 ? '…' : ''}). ${notes.join(' ')}`,
-      bundle: { compiledFiles: compiled.size, packages: packageList, missingEnv, notes, stubbedPackages: [...stubbed].sort() },
+      bundle: { compiledFiles: compiled.size, packages: packageList, missingEnv, notes, stubbedPackages: [...stubbed].sort(), npmPackages: [...npmPackages].sort() },
     },
   };
 }
