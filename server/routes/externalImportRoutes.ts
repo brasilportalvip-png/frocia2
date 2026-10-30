@@ -8,7 +8,7 @@ import {
   ExternalImportService
 } from '../services/externalImportService.js';
 import { importGithubSite } from '../services/githubSiteImportService.js';
-import { editGithubProject, sanitizeOverrides } from '../services/projectAiEditService.js';
+import { editGithubProject, exportEditedProject, sanitizeOverrides } from '../services/projectAiEditService.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
 import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featureFlagService.js';
 import { GeminiFailoverService } from '../ai/geminiFailoverService.js';
@@ -243,6 +243,57 @@ externalImportRouter.post(
           message: error instanceof Error ? error.message : 'Não foi possível alterar o projeto agora.',
           correlationId
         }
+      });
+    }
+  }
+);
+
+const exportLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 4,
+  keyPrefix: 'external-import-project-export'
+});
+
+/**
+ * POST /api/imports/github-site/export
+ * Devolve o projeto completo (repositório + alterações feitas pela IA) em ZIP, com .env.example.
+ * Não consome créditos. Nenhum valor de variável passa por aqui.
+ */
+externalImportRouter.post(
+  '/github-site/export',
+  requireAuth,
+  exportLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    const correlationId = req.correlationId;
+    const parsed = z
+      .object({
+        url: z.string().trim().min(8).max(2048),
+        overrides: z.record(z.string(), z.string()).optional()
+      })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: { code: 'invalid_project_export_request', message: 'Informe o projeto que deve ser baixado.', correlationId }
+      });
+    }
+    try {
+      const exported = await exportEditedProject(parsed.data.url, sanitizeOverrides(parsed.data.overrides));
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({
+        filename: exported.filename,
+        zipBase64: Buffer.from(exported.zip).toString('base64'),
+        envVariables: exported.envVariables,
+        fileCount: exported.fileCount,
+        correlationId
+      });
+    } catch (error) {
+      if (error instanceof ExternalImportError) {
+        return res.status(error.status).json({ error: { code: error.code, message: error.message, correlationId } });
+      }
+      console.error('Falha ao exportar projeto importado:', { correlationId, userId: req.user?.uid, error });
+      return res.status(500).json({
+        error: { code: 'project_export_failed', message: 'Não foi possível montar o ZIP agora.', correlationId }
       });
     }
   }
