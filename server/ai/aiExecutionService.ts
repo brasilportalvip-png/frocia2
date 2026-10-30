@@ -100,6 +100,7 @@ export class AIExecutionService {
       responseFormat = 'text',
       idempotencyKey: providedKey,
       knowledgeBaseIds = [],
+      activeProjectContext,
       modelOverride,
     } = params;
 
@@ -185,6 +186,7 @@ const plan = AIRequestOrchestrator.plan({
       hasFiles: attachments.length > 0,
       requestedTools: params.tools,
       knowledgeBaseIds,
+      routingHint: activeProjectContext?.slice(0, 500),
       preferredModel: modelOverride
     });
        const route = plan.route;
@@ -349,6 +351,7 @@ if (params.abortSignal?.aborted) {
         systemInstructionOverride: systemInstruction,
 requestPolicy: plan.systemPolicy,
 artifactMemoryContext,
+        activeProjectContext,
 recentMessages: conversationContext.recentMessages,
         conversationSummary: conversationContext,
       });
