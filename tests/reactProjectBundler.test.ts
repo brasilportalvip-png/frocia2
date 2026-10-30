@@ -120,6 +120,23 @@ describe('bundleReactProject', () => {
     expect(result.report.bundle?.stubbedPackages).toEqual(['lucide-react']);
   });
 
+  it('mostra erros na própria prévia e deixa o app concluir o carregamento sem login quando o Firebase é trocado', async () => {
+    const files = project();
+    files.set('src/main.tsx', enc("import React from 'react';import {createRoot} from 'react-dom/client';import {getAuth, onAuthStateChanged} from 'firebase/auth';const auth = getAuth(); onAuthStateChanged(auth, () => {}); createRoot(document.getElementById('root')!).render(<div/>);"));
+    const result = await bundleReactProject(files, ctx, 'index.html', {
+      retryDelayMs: 0,
+      fetchText: async (url) => {
+        if (url.includes('firebase')) throw new Error('esm.sh respondeu 500');
+        if (!(url in modules)) throw new Error(`404 ${url}`);
+        return modules[url];
+      },
+    });
+    expect(result.report.kind).toBe('react_bundled');
+    expect(result.report.bundle?.stubbedPackages).toEqual(['firebase']);
+    expect(result.html).toContain('froc-preview-error');
+    expect(result.html).toContain('cb(null)');
+  });
+
   it('recusa quando o arquivo de entrada não existe', async () => {
     const files = new Map<string, Uint8Array>([['index.html', enc('<div id="root"></div><script type="module" src="/src/nada.tsx"></script>')]]);
     const result = await bundleReactProject(files, ctx, 'index.html', { fetchText: async () => '' });
