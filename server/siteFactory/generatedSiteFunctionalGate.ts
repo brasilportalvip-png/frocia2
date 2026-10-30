@@ -30,6 +30,10 @@ export function validateGeneratedSiteFunctionality(
     issues.push('Implementar JavaScript real para todos os botões, formulários e navegação; não entregar controles decorativos.');
   }
 
+  if (/lorem ipsum|seu texto aqui|texto de exemplo|insira seu texto|your text here/.test(source)) {
+    issues.push('Substituir textos de exemplo (lorem ipsum, "seu texto aqui") por conteúdo real e específico do negócio.');
+  }
+
   if (requested(prompt, /persist|apos atualizar|depois de atualizar|f5|permanec/)) {
     if (!/localstorage|indexeddb/.test(source)) {
       issues.push('Persistir os dados no navegador com localStorage ou IndexedDB e restaurá-los ao carregar a página.');

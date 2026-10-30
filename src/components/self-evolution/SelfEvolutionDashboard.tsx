@@ -267,8 +267,8 @@ export const SelfEvolutionDashboard: React.FC = () => {
       {/* Catalogo real de agentes; nao declara execucao sem evidencia. */}
       <section className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <h3 className="text-lg font-bold">Equipe Froc.IA: 85 agentes especializados</h3>
-          <span className="text-xs text-white/50">20 existentes + 15 de inteligência + 50 de criação</span>
+          <h3 className="text-lg font-bold">Equipe Froc.IA: 300 agentes (85 base + 215 especialistas)</h3>
+          <span className="text-xs text-white/50">20 existentes + 15 de inteligência + 50 de criação + 215 especialistas por área</span>
         </div>
         <p className="text-xs text-white/55">
           Catalogo configurado no codigo. O trabalho dos agentes depende das execucoes reais do GitHub Actions;

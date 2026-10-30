@@ -9,6 +9,7 @@ import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featur
 import { getSiteSpecificationService } from '../siteFactory/siteFactoryRuntime.js';
 import { selectOfficialArchitecture } from '../siteFactory/siteArchitectureCatalog.js';
 import { env } from '../config/env.js';
+import { expertTeamPolicy } from '../../shared/expertAgentCatalog.js';
 import { validateGeneratedSiteFunctionality } from '../siteFactory/generatedSiteFunctionalGate.js';
 import {
   configuredGeminiFailoverChain,
@@ -242,7 +243,7 @@ REGRAS OBRIGATÓRIAS:
 - Não mostre mensagens de sucesso antes de uma ação realmente válida.
 - Inclua validação com mensagens claras e atualização imediata da interface.
 - Não entregue apenas dashboard, protótipo, wireframe ou demonstração visual.
-- Entregue tudo dentro do único HTML retornado; não dependa de arquivos locais ausentes.\n\nPADRÃO DE ENTREGA PROFISSIONAL (o site deve sair pronto, sem o usuário precisar editar):\n- Escreva textos reais e específicos para o negócio pedido; nunca use lorem ipsum, 'Seu texto aqui' ou placeholders.\n- Layout responsivo (celular, tablet e desktop), com menu de navegação funcional, rolagem suave e rodapé completo.\n- Inclua <title>, meta description, meta viewport, lang correto, favicon em emoji e atributos alt/aria nos elementos interativos.\n- Use gradientes, SVG inline e emojis no lugar de imagens externas; não referencie imagens ou arquivos que não existam.\n- Hierarquia visual clara, bom contraste, espaçamento consistente, estados de hover/foco e animações sutis.\n- Formulários com validação real e mensagens claras; nada de botão sem ação.\n- Mantenha o código organizado e sem erros de console.`;
+- Entregue tudo dentro do único HTML retornado; não dependa de arquivos locais ausentes.\n\nPADRÃO DE ENTREGA PROFISSIONAL (o site deve sair pronto, sem o usuário precisar editar):\n- Escreva textos reais e específicos para o negócio pedido; nunca use lorem ipsum, 'Seu texto aqui' ou placeholders.\n- Layout responsivo (celular, tablet e desktop), com menu de navegação funcional, rolagem suave e rodapé completo.\n- Inclua <title>, meta description, meta viewport, lang correto, favicon em emoji e atributos alt/aria nos elementos interativos.\n- Use gradientes, SVG inline e emojis no lugar de imagens externas; não referencie imagens ou arquivos que não existam.\n- Hierarquia visual clara, bom contraste, espaçamento consistente, estados de hover/foco e animações sutis.\n- Formulários com validação real e mensagens claras; nada de botão sem ação.\n- Mantenha o código organizado e sem erros de console.\n\nQUANDO O PEDIDO FOR UM APLICATIVO, SISTEMA OU PAINEL (app, plataforma, gerenciador, controle, agenda, CRM, estoque):\n- Entregue um app de página única com várias telas reais (navegação por abas ou menu lateral), estado em JavaScript e persistência em localStorage.\n- Inclua dados de exemplo plausíveis, estados vazios com orientação, confirmação antes de excluir e feedback visual (toasts) após cada ação.\n- Inclua busca, filtros, ordenação e um resumo com indicadores calculados dos dados reais da tela.\n- Layout de app: barra lateral no desktop e barra inferior no celular.\n\nEFEITOS E ANIMAÇÕES (discretos e profissionais, nunca atrapalham a leitura):\n- Entrada suave das seções ao rolar (IntersectionObserver), hover com elevação nos cartões e botões, transições de 150 a 300 ms e skeleton ou spinner quando algo carrega.\n- Use CSS puro sempre que possível e respeite @media (prefers-reduced-motion: reduce) desativando as animações.\n- Nunca use animações que dependam de arquivos externos.`;
 
     let userPrompt = `Crie um site completo para: "${prompt.trim()}".
 Categoria: ${category}
@@ -280,7 +281,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
 
     const generation = await GeminiFailoverService.generate({
       model: modelName,
-      systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
+      systemInstruction: [systemInstruction, creationTeamPolicy(), expertTeamPolicy(prompt)].filter(Boolean).join("\n\n"),
       userMessage: userPrompt,
       attachments: providerAttachments,
       responseFormat: 'json',
@@ -299,7 +300,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
       const retryResponse = await GeminiFailoverService.generate({
         model: generation.model,
         userMessage: `Instrução: Corrija e retorne ESTRITAMENTE no formato JSON com "siteTitle", "description", "html" (código HTML completo) e "suggestedRefinements".\n\nTexto original:\n${rawText}`,
-        systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
+        systemInstruction: [systemInstruction, creationTeamPolicy(), expertTeamPolicy(prompt)].filter(Boolean).join("\n\n"),
         responseFormat: 'json',
         temperature: 0.3,
         timeoutMs: SITE_FORMAT_REPAIR_TIMEOUT_MS,
@@ -317,7 +318,7 @@ Recursos Desejados: ${Array.isArray(features) ? features.join(', ') : features}`
     if (!functionalGate.passed) {
       const repairResponse = await GeminiFailoverService.generate({
         model: generation.model,
-        systemInstruction: [systemInstruction, creationTeamPolicy()].join("\n\n"),
+        systemInstruction: [systemInstruction, creationTeamPolicy(), expertTeamPolicy(prompt)].filter(Boolean).join("\n\n"),
         userMessage: [
           'O projeto abaixo foi reprovado pelo gate funcional.',
           'Corrija TODOS os problemas listados e devolva ESTRITAMENTE o JSON completo com siteTitle, description, html e suggestedRefinements.',

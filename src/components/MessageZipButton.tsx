@@ -25,7 +25,7 @@ export const MessageZipButton: React.FC<MessageZipButtonProps> = ({ text }) => {
             setError('Não foi possível gerar o ZIP.');
           }
         }}
-        className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-300/20"
+        className="froc-pop froc-lift froc-shine froc-glow rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-300/20"
       >
         Baixar ZIP ({files.length} {files.length === 1 ? 'arquivo' : 'arquivos'})
       </button>

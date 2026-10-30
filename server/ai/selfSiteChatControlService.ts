@@ -29,6 +29,8 @@ export function formatSelfSiteControlReceipt(control: Record<string, unknown>, p
       'Os especialistas de inteligência são selecionados para a conversa. Os 50 de criação participam em dez disciplinas, com cinco contribuições registradas por disciplina na construção profissional.',
       'Esta contagem vem do código em execução, sem precisar que você cole arquivos. Ela confirma os perfis instalados; a aprovação de produção de cada projeto depende dos recibos de testes, integrações e publicação. Não executei uma homologação completa nesta consulta.',
     ];
+    if (typeof inventory.expertAgents === 'number' && inventory.expertAgents > 0)
+      paragraphs.push(`Além desses ${total}, há ${inventory.expertAgents} agentes especialistas por área (engenharia, design, negócios, conteúdo, dados, segurança, finanças, saúde, educação e setores para sites e apps), somando ${total + inventory.expertAgents} perfis. Para cada pedido, o roteador aciona apenas os mais relevantes, sem aumentar o custo da conversa.`);
     const intelligenceOnly = /intelig[eê]ncia/i.test(prompt);
     if (intelligenceOnly || /\b(?:liste|listar|quais|nomes)\b/i.test(prompt)) paragraphs.push(agents
       .filter(agent => !intelligenceOnly || agent.kind === 'intelligence')

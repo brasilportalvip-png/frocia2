@@ -1,4 +1,5 @@
 import { ADVANCED_AGENTS } from '../../shared/advancedAgentCatalog.js';
+import { EXPERT_AGENT_COUNT } from '../../shared/expertAgentCatalog.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -44,6 +45,8 @@ export function installedSelfSiteAgentInventory() {
     groups: Object.fromEntries(['review', 'innovation', 'intelligence', 'creation']
       .map(kind => [kind, agents.filter(agent => agent.kind === kind).length])),
     agents,
+    expertAgents: EXPERT_AGENT_COUNT,
+    totalWithExperts: agents.length + EXPERT_AGENT_COUNT,
     productionValidation: 'not_established_by_catalog',
   };
 }
