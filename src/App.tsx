@@ -18,7 +18,7 @@ import { Dashboard } from './components/Dashboard';
 import { ChatCentral } from './components/ChatCentral';
 import { ArtifactCanvasPanel } from './components/ArtifactCanvasPanel';
 import { useAuth } from './context/AuthContext';
-import { apiClient } from './services/apiClient';
+import { apiClient, ApiClientError } from './services/apiClient';
 import { streamApiEvents } from './services/sseClient';
 import { toAIAttachmentPayloads } from './services/attachmentService';
 
@@ -1264,9 +1264,19 @@ const handleGeneralChat = async (
     setErrorMsg(null);
 
     try {
-      await apiClient(`/api/projects/${encodeURIComponent(siteId)}`, {
-        method: 'DELETE'
-      });
+      // Projetos que só existem neste navegador (importados, modelos, locais) não estão no
+      // servidor: excluir é remover da lista local. O servidor só é chamado para projetos salvos.
+      const isLocalOnly = siteId.startsWith('local-') || siteId.startsWith('tmpl-');
+      if (!isLocalOnly) {
+        try {
+          await apiClient(`/api/projects/${encodeURIComponent(siteId)}`, {
+            method: 'DELETE'
+          });
+        } catch (deleteError) {
+          // 404 = o projeto já não existe no servidor; a lista local deve acompanhar.
+          if (!(deleteError instanceof ApiClientError && deleteError.status === 404)) throw deleteError;
+        }
+      }
 
       const updatedList = savedSites.filter(
         (site) => site.id !== siteId
