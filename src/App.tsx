@@ -811,6 +811,42 @@ const fetchConversations = async () => {
 
 
   // Refine Site with froc.ia AI
+  const handleDownloadImportedProject = async () => {
+    const site = activeSite;
+    if (!site?.sourceUrl) return;
+    setErrorMsg(null);
+    try {
+      const res = await apiClient<{ filename: string; zipBase64: string; envVariables: string[]; fileCount: number }>('/api/imports/github-site/export', {
+        method: 'POST',
+        body: JSON.stringify({ url: site.sourceUrl, overrides: site.sourceOverrides || {} })
+      });
+      const bytes = Uint8Array.from(atob(res.zipBase64), (char) => char.charCodeAt(0));
+      const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = res.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-${Date.now()}`,
+          sender: 'ai',
+          text: `Baixei o projeto completo com as suas alterações (${res.fileCount} arquivos).${
+            res.envVariables.length > 0
+              ? `\n\nPara publicar (Vercel, Netlify ou outro), cadastre estas variáveis de ambiente com os seus valores: ${res.envVariables.join(', ')}. Elas estão listadas no arquivo .env.example do ZIP. Nunca me envie os valores no chat.`
+              : '\n\nEste projeto não usa variáveis de ambiente: é só importar o ZIP no serviço de hospedagem.'
+          }`,
+          timestamp: Date.now()
+        }
+      ]);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Não foi possível baixar o projeto.');
+    }
+  };
+
   const handleEditImportedProject = async (instruction: string) => {
     const site = activeSite;
     if (!site?.sourceUrl) return;
@@ -829,6 +865,7 @@ const fetchConversations = async () => {
           explanation: string;
           overrides: Record<string, string>;
           changedFiles: string[];
+          reviewNotes?: string[];
           sourceDigest: string;
         };
       }>('/api/imports/github-site/edit', {
@@ -857,7 +894,11 @@ const fetchConversations = async () => {
         {
           id: `ai-${Date.now()}`,
           sender: 'ai',
-          text: `${res.site.explanation}\n\nArquivos alterados: ${res.site.changedFiles.join(', ')}. A prévia já foi atualizada.`,
+          text: `${res.site.explanation}\n\nArquivos alterados: ${res.site.changedFiles.join(', ')}. A prévia já foi atualizada.${
+            res.site.reviewNotes && res.site.reviewNotes.length > 0
+              ? `\n\nA revisão de qualidade ainda aponta: ${res.site.reviewNotes.join('; ')}. Posso corrigir se você pedir.`
+              : '\n\nRevisão de qualidade: aprovada.'
+          }`,
           timestamp: Date.now(),
           isHtmlUpdate: true
         }
@@ -2022,6 +2063,16 @@ const handleGeneralChat = async (
               <main className={`${mobilePane === 'chat' ? 'hidden' : 'flex'} lg:flex flex-col w-full flex-1 lg:flex-none min-h-0 lg:w-[45%] xl:w-1/2 lg:h-full border-l border-white/10 overflow-hidden bg-slate-950`}>
                 <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-slate-900 px-3">
                   <span className="truncate text-xs font-bold text-white/80" title={activeSite.title}>{activeSite.title}</span>
+                  {activeSite.sourceUrl && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadImportedProject()}
+                      className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-purple-500"
+                      title="Baixar o projeto completo com as alterações (pronto para publicar)"
+                    >
+                      <span>Baixar projeto</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {

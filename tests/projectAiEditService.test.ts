@@ -80,3 +80,65 @@ describe('editGithubProject', () => {
     ).rejects.toThrow(/não permitido/);
   });
 });
+
+import { detectEnvVariables, exportEditedProject, parseReview } from '../server/services/projectAiEditService';
+import { unzipSync } from 'fflate';
+
+describe('revisão de qualidade', () => {
+  it('só aprova quando approved=true e sem problemas', () => {
+    expect(parseReview({ approved: true, issues: [] }).approved).toBe(true);
+    expect(parseReview({ approved: true, issues: ['botão sem contraste'] }).approved).toBe(false);
+    expect(parseReview({ approved: false, issues: ['x'] }).issues).toEqual(['x']);
+    expect(parseReview(null).approved).toBe(false);
+  });
+
+  it('reprova uma tentativa, corrige e devolve a versão aprovada', async () => {
+    const bad = '<html><body><h1>Ruim</h1></body></html>';
+    const good = '<html><body><h1>Bom</h1></body></html>';
+    const calls: string[] = [];
+    const result = await editGithubProject(
+      { url: 'https://github.com/dono/repo', instruction: 'mude o título' },
+      async ({ system }) => {
+        const isReview = system.includes('revisora de qualidade');
+        calls.push(isReview ? 'review' : 'edit');
+        if (isReview) {
+          const reviewCount = calls.filter((c) => c === 'review').length;
+          return JSON.stringify(reviewCount === 1 ? { approved: false, issues: ['título sem destaque'] } : { approved: true, issues: [] });
+        }
+        const editCount = calls.filter((c) => c === 'edit').length;
+        return JSON.stringify({ explanation: 'ok', files: [{ path: 'index.html', content: editCount === 1 ? bad : good }] });
+      },
+    );
+    expect(calls).toEqual(['edit', 'review', 'edit', 'review']);
+    expect(result.html).toContain('Bom');
+    expect(result.reviewNotes).toEqual([]);
+  });
+
+  it('se a revisão continuar reprovando na última tentativa, entrega com avisos', async () => {
+    const result = await editGithubProject(
+      { url: 'https://github.com/dono/repo', instruction: 'mude o título' },
+      async ({ system }) =>
+        system.includes('revisora de qualidade')
+          ? JSON.stringify({ approved: false, issues: ['pouco contraste'] })
+          : JSON.stringify({ explanation: 'ok', files: [{ path: 'index.html', content: '<html><body><h1>Teste</h1></body></html>' }] }),
+    );
+    expect(result.reviewNotes).toEqual(['pouco contraste']);
+  });
+});
+
+describe('exportação do projeto', () => {
+  it('detecta variáveis de ambiente sem valores', () => {
+    const files = new Map<string, Uint8Array>([
+      ['src/firebase.ts', enc('const k = import.meta.env.VITE_FIREBASE_API_KEY; const m = import.meta.env.MODE; const p = process.env.STRIPE_KEY;')],
+    ]);
+    expect(detectEnvVariables(files)).toEqual(['STRIPE_KEY', 'VITE_FIREBASE_API_KEY']);
+  });
+
+  it('gera o ZIP com as alterações aplicadas e .env.example', async () => {
+    const exported = await exportEditedProject('https://github.com/dono/repo', { 'index.html': '<html><body>EDITADO</body></html>' });
+    const files = unzipSync(exported.zip);
+    expect(new TextDecoder().decode(files['index.html'])).toContain('EDITADO');
+    expect(files['README.md']).toBeDefined();
+    expect(exported.filename).toBe('repo-editado.zip');
+  });
+});
