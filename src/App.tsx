@@ -351,7 +351,6 @@ const fetchConversations = async () => {
           const parsed: GeneratedSite[] = JSON.parse(stored);
           if (parsed && parsed.length > 0) {
             setSavedSites(parsed);
-            setActiveSite(parsed[0]);
           }
         }
       } catch (storageError) {
@@ -387,7 +386,6 @@ const fetchConversations = async () => {
         const parsed: GeneratedSite[] = JSON.parse(stored);
         if (parsed && parsed.length > 0) {
           setSavedSites(parsed);
-          setActiveSite(parsed[0]);
         }
       }
     } catch (e) {
@@ -644,9 +642,6 @@ const fetchConversations = async () => {
         const res = await apiClient<{ projects: GeneratedSite[] }>('/api/projects');
         if (res.projects && res.projects.length > 0) {
           setSavedSites(res.projects);
-          if (!activeSite) {
-            setActiveSite(res.projects[0]);
-          }
         }
       } catch (e) {
         console.warn('Erro ao buscar projetos do servidor:', e);
@@ -1774,7 +1769,24 @@ const handleGeneralChat = async (
 
             {/* Right Workspace Canvas / Preview Frame / Artifact Workspace */}
             {activeSite && (
-              <main className="hidden lg:flex w-1/2 h-full border-l border-white/10 overflow-hidden bg-slate-950">
+              <main className="hidden lg:flex flex-col w-1/2 h-full border-l border-white/10 overflow-hidden bg-slate-950">
+                <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-slate-900 px-3">
+                  <span className="truncate text-xs font-bold text-white/80" title={activeSite.title}>{activeSite.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveSite(null);
+                      setProfessionalBuildId(null);
+                    }}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-red-500/80"
+                    title="Fechar o editor (o projeto continua salvo em Meus projetos)"
+                    aria-label="Fechar o editor"
+                  >
+                    <X className="h-4 w-4" />
+                    <span>Fechar</span>
+                  </button>
+                </div>
+                <div className="flex min-h-0 flex-1 overflow-hidden">
                 {viewMode === 'preview' && (
                   <PreviewFrame
                     site={activeSite}
@@ -1811,6 +1823,7 @@ const handleGeneralChat = async (
                     </div>
                   </div>
                 )}
+                </div>
               </main>
             )}
 
