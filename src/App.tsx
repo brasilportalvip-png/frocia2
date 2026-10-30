@@ -628,6 +628,7 @@ const fetchConversations = async () => {
         tone: 'Original',
         html: detail.html,
         compiledFromSource: detail.report.kind === 'react_bundled',
+        sourceUrl: detail.sourceUrl,
         contextDigest: [
           `Origem: ${detail.sourceUrl}`,
           `Relatório da importação: ${detail.report.message}`,
@@ -810,6 +811,73 @@ const fetchConversations = async () => {
 
 
   // Refine Site with froc.ia AI
+  const handleEditImportedProject = async (instruction: string) => {
+    const site = activeSite;
+    if (!site?.sourceUrl) return;
+    if (!isAuthenticated) {
+      setIsAuthOpen(true);
+      setErrorMsg('É necessário fazer login para alterar projetos com a Froc.IA.');
+      return;
+    }
+    setIsRefining(true);
+    setErrorMsg(null);
+    setChatMessages((prev) => [...prev, { id: `usr-${Date.now()}`, sender: 'user', text: instruction, timestamp: Date.now() }]);
+    try {
+      const res = await apiClient<{
+        site: {
+          html: string | null;
+          explanation: string;
+          overrides: Record<string, string>;
+          changedFiles: string[];
+          sourceDigest: string;
+        };
+      }>('/api/imports/github-site/edit', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: site.sourceUrl,
+          instruction,
+          overrides: site.sourceOverrides || {},
+          idempotencyKey: `edit-${crypto.randomUUID()}`
+        })
+      });
+      if (!res.site.html) throw new Error('A alteração não gerou uma prévia.');
+      const digestHeader = (site.contextDigest || '').split('ARQUIVOS DO PROJETO:')[0];
+      const updated: GeneratedSite = {
+        ...site,
+        html: res.site.html,
+        sourceOverrides: res.site.overrides,
+        contextDigest: `${digestHeader}${res.site.sourceDigest}`.slice(0, 36000),
+        updatedAt: Date.now()
+      };
+      setActiveSite(updated);
+      saveSitesToStorage(savedSites.map((s) => (s.id === updated.id ? updated : s)));
+      await refreshProfile();
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-${Date.now()}`,
+          sender: 'ai',
+          text: `${res.site.explanation}\n\nArquivos alterados: ${res.site.changedFiles.join(', ')}. A prévia já foi atualizada.`,
+          timestamp: Date.now(),
+          isHtmlUpdate: true
+        }
+      ]);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Não foi possível alterar o projeto.');
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `ai-${Date.now()}`,
+          sender: 'ai',
+          text: `Não consegui aplicar essa alteração: ${err instanceof Error ? err.message : 'erro desconhecido'}. Nada foi alterado no projeto e nenhum crédito foi cobrado.`,
+          timestamp: Date.now()
+        }
+      ]);
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
   const handleRefineSite = async (instruction: string) => {
     if (!activeSite) return;
 
@@ -1651,9 +1719,21 @@ const handleGeneralChat = async (
     return;
   }
 
+  // Projeto importado do GitHub: a IA altera o código-fonte e o servidor recompila.
+  if (
+    activeSite?.compiledFromSource &&
+    activeSite.sourceUrl &&
+    mode !== 'Imagem' &&
+    mode !== 'Vídeo' &&
+    mode !== 'Pesquisa' &&
+    files.length === 0 &&
+    isProjectEditRequest(text)
+  ) {
+    await handleEditImportedProject(text.trim());
+    return;
+  }
+
   // Projeto aberto no editor: pedido de alteração no chat altera o projeto.
-  // (Projeto compilado de código-fonte não é editado no HTML compilado: segue para a conversa,
-  // onde os especialistas já têm o código.)
   if (
     activeSite &&
     !activeSite.compiledFromSource &&

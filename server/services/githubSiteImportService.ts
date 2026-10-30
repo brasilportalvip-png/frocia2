@@ -66,7 +66,16 @@ export interface GithubSiteImportResult extends StaticSiteResult {
   fullDownloadUrl: string;
 }
 
-export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImportResult> {
+export interface LoadedGithubRepo {
+  files: Record<string, Uint8Array>;
+  ctx: { owner: string; repo: string; branch: string };
+  repository: string;
+  sourceUrl: string;
+  branch: string;
+  fullDownloadUrl: string;
+}
+
+export async function loadGithubRepo(sourceUrl: string): Promise<LoadedGithubRepo> {
   const { owner, repository, normalizedUrl } = parseGithubRepositoryUrl(sourceUrl);
   const repoPath = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
 
@@ -109,8 +118,22 @@ export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImp
     throw new ExternalImportError('github_zip_invalid', 'O arquivo baixado do GitHub não pôde ser lido.', 502);
   }
 
-  const ctx = { owner, repo: repository, branch };
-  const normalized = normalizeFiles(files);
+  return {
+    files,
+    ctx: { owner, repo: repository, branch },
+    repository: meta.full_name || `${owner}/${repository}`,
+    sourceUrl: normalizedUrl,
+    branch,
+    fullDownloadUrl: `${normalizedUrl}/archive/refs/heads/${encodeURIComponent(branch)}.zip`,
+  };
+}
+
+/** Abre o projeto: site estático é montado direto; React/Vite/TS é compilado no servidor. */
+export async function compileRepoFiles(
+  files: Record<string, Uint8Array>,
+  ctx: { owner: string; repo: string; branch: string },
+  normalized: ReturnType<typeof normalizeFiles>,
+): Promise<StaticSiteResult> {
   let result = bundleStaticSite(files, ctx, { normalized });
   // Projeto React/Vite/TypeScript: compila no servidor e abre pronto no editor.
   if (result.report.kind === 'build_required' && result.report.entry) {
@@ -129,12 +152,19 @@ export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImp
       ? { ...compiled, report: { ...compiled.report, protectedFilesSkipped: normalized.skipped } }
       : { ...result, report: { ...result.report, kind: 'build_failed', message: `${compiled.report.message} Baixe o ZIP completo para usar o projeto.` } };
   }
+  return result;
+}
+
+export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImportResult> {
+  const loaded = await loadGithubRepo(sourceUrl);
+  const normalized = normalizeFiles(loaded.files);
+  const result = await compileRepoFiles(loaded.files, loaded.ctx, normalized);
   return {
     ...result,
     sourceDigest: buildSourceDigest(normalized.files),
-    repository: meta.full_name || `${owner}/${repository}`,
-    sourceUrl: normalizedUrl,
-    branch,
-    fullDownloadUrl: `${normalizedUrl}/archive/refs/heads/${encodeURIComponent(branch)}.zip`,
+    repository: loaded.repository,
+    sourceUrl: loaded.sourceUrl,
+    branch: loaded.branch,
+    fullDownloadUrl: loaded.fullDownloadUrl,
   };
 }

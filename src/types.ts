@@ -17,6 +17,9 @@ export interface GeneratedSite {
   contextDigest?: string;
   /** Projeto compilado a partir de código-fonte: edições vão para o código, não para o HTML compilado. */
   compiledFromSource?: boolean;
+  /** Repositório de origem e alterações feitas pela IA sobre ele (só arquivos editados). */
+  sourceUrl?: string;
+  sourceOverrides?: Record<string, string>;
   createdAt: number;
   updatedAt: number;
   isFavorite?: boolean;
