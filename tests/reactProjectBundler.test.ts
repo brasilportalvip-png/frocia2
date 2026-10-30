@@ -59,6 +59,30 @@ describe('bundleReactProject', () => {
     expect(result.report.message).toContain('Não consegui compilar o projeto');
   });
 
+  it('troca por versão vazia um pacote opcional que o esm.sh não consegue montar', async () => {
+    const result = await bundleReactProject(project(), ctx, 'index.html', {
+      fetchText: async (url) => {
+        if (url.includes('lucide-react')) throw new Error('esm.sh respondeu 500');
+        if (!(url in modules)) throw new Error(`404 ${url}`);
+        return modules[url];
+      },
+    });
+    expect(result.report.kind).toBe('react_bundled');
+    expect(result.html).toBeTruthy();
+    expect(result.report.bundle?.stubbedPackages).toEqual(['lucide-react']);
+    expect(result.report.message).toContain('versão vazia');
+  });
+
+  it('nunca troca o React por versão vazia', async () => {
+    const result = await bundleReactProject(project(), ctx, 'index.html', {
+      fetchText: async (url) => {
+        if (url.startsWith('https://esm.sh/react@')) throw new Error('esm.sh respondeu 500');
+        return modules[url] ?? '';
+      },
+    });
+    expect(result.report.kind).toBe('build_failed');
+  });
+
   it('recusa quando o arquivo de entrada não existe', async () => {
     const files = new Map<string, Uint8Array>([['index.html', enc('<div id="root"></div><script type="module" src="/src/nada.tsx"></script>')]]);
     const result = await bundleReactProject(files, ctx, 'index.html', { fetchText: async () => '' });
