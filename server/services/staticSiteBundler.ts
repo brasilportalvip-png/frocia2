@@ -16,7 +16,13 @@ export interface StaticSiteContext {
 }
 
 export interface StaticSiteReport {
-  kind: 'static' | 'build_required' | 'no_html';
+  kind: 'static' | 'build_required' | 'no_html' | 'react_bundled' | 'build_failed';
+  bundle?: {
+    compiledFiles: number;
+    packages: string[];
+    missingEnv: string[];
+    notes: string[];
+  };
   entry: string | null;
   totalFiles: number;
   inlined: { css: number; js: number; assetsAsDataUri: number };
@@ -71,12 +77,12 @@ function extOf(path: string): string {
   return dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';
 }
 
-function dirOf(path: string): string {
+export function dirOf(path: string): string {
   const index = path.lastIndexOf('/');
   return index >= 0 ? path.slice(0, index) : '';
 }
 
-function joinPath(dir: string, relative: string): string | null {
+export function joinPath(dir: string, relative: string): string | null {
   const parts = (dir ? dir.split('/') : []).concat(relative.split('/'));
   const out: string[] = [];
   for (const part of parts) {
@@ -91,7 +97,7 @@ function joinPath(dir: string, relative: string): string | null {
   return out.join('/');
 }
 
-function decodeText(bytes: Uint8Array): string {
+export function decodeText(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
@@ -104,7 +110,7 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function getAttr(tag: string, name: string): string | null {
+export function getAttr(tag: string, name: string): string | null {
   const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
   if (!match) return null;
   return match[1] ?? match[2] ?? match[3] ?? '';
@@ -132,7 +138,7 @@ function safeDecode(value: string): string {
   }
 }
 
-function normalizeFiles(input: Record<string, Uint8Array>): { files: Map<string, Uint8Array>; skipped: number } {
+export function normalizeFiles(input: Record<string, Uint8Array>): { files: Map<string, Uint8Array>; skipped: number } {
   const entries = Object.keys(input)
     .map((path) => path.replace(/\\/g, '/').replace(/^\/+/, ''))
     .filter((path) => path && !path.endsWith('/'));
@@ -354,8 +360,12 @@ function runBundle(entry: string, html: string, state: RunState): string {
   return out;
 }
 
-export function bundleStaticSite(rawFiles: Record<string, Uint8Array>, ctx: StaticSiteContext): StaticSiteResult {
-  const { files, skipped } = normalizeFiles(rawFiles);
+export function bundleStaticSite(
+  rawFiles: Record<string, Uint8Array>,
+  ctx: StaticSiteContext,
+  options: { normalized?: { files: Map<string, Uint8Array>; skipped: number } } = {},
+): StaticSiteResult {
+  const { files, skipped } = options.normalized ?? normalizeFiles(rawFiles);
   const emptyReport = (kind: StaticSiteReport['kind'], message: string, reason: string | null = null, entry: string | null = null): StaticSiteReport => ({
     kind, entry, totalFiles: files.size,
     inlined: { css: 0, js: 0, assetsAsDataUri: 0 },
@@ -430,5 +440,33 @@ export function bundleStaticSite(rawFiles: Record<string, Uint8Array>, ctx: Stat
       firstBuildReason,
       firstBuildEntry,
     ),
+  };
+}
+
+/** Reescreve CSS/JS/imagens locais de um HTML de entrada (usado também pelo bundler de projetos React). */
+export function inlineEntryHtml(
+  files: Map<string, Uint8Array>,
+  ctx: StaticSiteContext,
+  entry: string,
+  html: string,
+): { html: string; missing: string[]; otherPages: string[]; assetsAsDataUri: number; assetsViaCdn: number } {
+  let last: { out: string; state: RunState } | null = null;
+  for (const budgetBytes of OUTPUT_BUDGETS) {
+    const state: RunState = {
+      files, ctx, budget: { remaining: budgetBytes },
+      inlinedCss: new Set(), inlinedJs: new Set(), dataUriAssets: new Set(), cdnAssets: new Set(),
+      missing: new Set(), otherPages: new Set(),
+    };
+    const out = runBundle(entry, html, state);
+    last = { out, state };
+    if (new TextEncoder().encode(out).length <= MAX_OUTPUT_BYTES) break;
+  }
+  const { out, state } = last!;
+  return {
+    html: out,
+    missing: [...state.missing],
+    otherPages: [...state.otherPages],
+    assetsAsDataUri: state.dataUriAssets.size,
+    assetsViaCdn: state.cdnAssets.size,
   };
 }
