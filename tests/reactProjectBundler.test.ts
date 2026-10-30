@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { bundleReactProject } from '../server/services/reactProjectBundler.js';
 
@@ -135,6 +136,28 @@ describe('bundleReactProject', () => {
     expect(result.report.bundle?.stubbedPackages).toEqual(['firebase']);
     expect(result.html).toContain('froc-preview-error');
     expect(result.html).toContain('cb(null)');
+  });
+
+  it('a prévia declara IndexedDB como inexistente e dá armazenamento em memória quando o navegador nega', async () => {
+    const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
+      fetchText: async (url) => {
+        if (!(url in modules)) throw new Error(`404 ${url}`);
+        return modules[url];
+      },
+    });
+    const script = result.html!.match(/<script data-froc-source="sandbox-compat">([\s\S]*?)<\/script>/)![1];
+    const sandbox: Record<string, unknown> = {};
+    sandbox.window = sandbox;
+    Object.defineProperty(sandbox, 'indexedDB', { value: { open() { throw new Error('denied'); } }, configurable: true, writable: true });
+    Object.defineProperty(sandbox, 'sessionStorage', { get() { throw new Error('denied'); }, configurable: true });
+    vm.runInNewContext(script, sandbox);
+    expect(sandbox.indexedDB).toBeUndefined();
+    const storage = sandbox.sessionStorage as Storage;
+    storage.setItem('a', '1');
+    expect(storage.getItem('a')).toBe('1');
+    expect(storage.getItem('b')).toBeNull();
+    expect(storage.length).toBe(1);
   });
 
   it('recusa quando o arquivo de entrada não existe', async () => {
