@@ -29,6 +29,7 @@ describe('bundleReactProject', () => {
   it('compila React + TypeScript + CSS + imagens em um HTML único, com uma só cópia do React', async () => {
     const fetched: string[] = [];
     const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
       fetchText: async (url) => {
         fetched.push(url);
         if (!(url in modules)) throw new Error(`404 ${url}`);
@@ -52,6 +53,7 @@ describe('bundleReactProject', () => {
 
   it('falha com mensagem clara quando um pacote não carrega', async () => {
     const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
       fetchText: async (url) => { throw new Error(`404 ${url}`); },
     });
     expect(result.html).toBeNull();
@@ -61,6 +63,7 @@ describe('bundleReactProject', () => {
 
   it('troca por versão vazia um pacote opcional que o esm.sh não consegue montar', async () => {
     const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
       fetchText: async (url) => {
         if (url.includes('lucide-react')) throw new Error('esm.sh respondeu 500');
         if (!(url in modules)) throw new Error(`404 ${url}`);
@@ -75,12 +78,46 @@ describe('bundleReactProject', () => {
 
   it('nunca troca o React por versão vazia', async () => {
     const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
       fetchText: async (url) => {
         if (url.startsWith('https://esm.sh/react@')) throw new Error('esm.sh respondeu 500');
         return modules[url] ?? '';
       },
     });
     expect(result.report.kind).toBe('build_failed');
+  });
+
+  it('ignora ferramentas de build como `@import "tailwindcss"` e não tenta baixá-las', async () => {
+    const files = project();
+    files.set('src/index.css', enc('@import "tailwindcss";\n.x{color:red}'));
+    const fetched: string[] = [];
+    const result = await bundleReactProject(files, ctx, 'index.html', {
+      retryDelayMs: 0,
+      fetchText: async (url) => {
+        fetched.push(url);
+        if (!(url in modules)) throw new Error(`404 ${url}`);
+        return modules[url];
+      },
+    });
+    expect(result.report.kind).toBe('react_bundled');
+    expect(fetched.some((u) => u.includes('tailwindcss'))).toBe(false);
+    expect(result.report.message).toContain('Ferramentas de build ignoradas');
+  });
+
+  it('se um arquivo interno de um pacote não carrega, refaz com a versão vazia desse pacote', async () => {
+    const result = await bundleReactProject(project(), ctx, 'index.html', {
+      retryDelayMs: 0,
+      fetchText: async (url) => {
+        if (url === 'https://esm.sh/lucide-react@0.400.0?external=react,react-dom') {
+          return 'import "/lucide-react@0.400.0/es2022/chunk-X.mjs"; export const Star = () => 1;';
+        }
+        if (url.includes('/lucide-react@0.400.0/es2022/chunk-X.mjs')) throw new Error('esm.sh respondeu 500');
+        if (!(url in modules)) throw new Error(`404 ${url}`);
+        return modules[url];
+      },
+    });
+    expect(result.report.kind).toBe('react_bundled');
+    expect(result.report.bundle?.stubbedPackages).toEqual(['lucide-react']);
   });
 
   it('recusa quando o arquivo de entrada não existe', async () => {
