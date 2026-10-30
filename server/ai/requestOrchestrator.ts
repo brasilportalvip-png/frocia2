@@ -1,4 +1,5 @@
 import { intelligenceTeam } from '../agents/intelligenceTeamService.js';
+import { expertTeamPolicy } from '../../shared/expertAgentCatalog.js';
 import { AIRouter } from './aiRouter.js';
 import { AIRequestClassifier } from './requestClassifier.js';
 import { ToolRegistry } from './toolRegistry.js';
@@ -207,7 +208,9 @@ const effectiveMode: AIMode =
       route,
       tools,
       systemPolicy:
-        [buildSystemPolicy(classification), team.policy].join("\n\n"),
+        [buildSystemPolicy(classification), team.policy, expertTeamPolicy(input.prompt)]
+          .filter(Boolean)
+          .join("\n\n"),
     };
   }
 }

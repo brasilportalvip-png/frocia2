@@ -694,6 +694,46 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Efeitos premium (aditivos). O bloco de movimento reduzido abaixo desliga todos. */
+@keyframes froc-pop-in {
+  0% { opacity: 0; transform: translateY(6px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(-1px) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes froc-shine-sweep {
+  0% { transform: translateX(-120%) skewX(-18deg); }
+  100% { transform: translateX(220%) skewX(-18deg); }
+}
+
+@keyframes froc-glow-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+  50% { box-shadow: 0 0 18px 0 rgba(251, 191, 36, 0.28); }
+}
+
+.froc-pop { animation: froc-pop-in 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.froc-lift {
+  transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+  will-change: transform;
+}
+.froc-lift:hover { transform: translateY(-2px); box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.55); }
+.froc-lift:active { transform: translateY(0) scale(0.98); }
+
+.froc-shine { position: relative; overflow: hidden; }
+.froc-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: translateX(-120%) skewX(-18deg);
+  pointer-events: none;
+}
+.froc-shine:hover::after { animation: froc-shine-sweep 700ms ease; }
+
+.froc-glow { animation: froc-glow-breathe 3.2s ease-in-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
