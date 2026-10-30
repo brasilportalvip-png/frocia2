@@ -586,6 +586,44 @@ const fetchConversations = async () => {
     }
   };
 
+  // Abre no editor um site estático importado do GitHub (evento vindo do importador).
+  useEffect(() => {
+    const onOpenImportedSite = (event: Event) => {
+      const detail = (event as CustomEvent).detail as {
+        html: string; title: string; repository: string; sourceUrl: string; fullDownloadUrl: string;
+        report: { complete: boolean; message: string };
+      } | undefined;
+      if (!detail?.html) return;
+      const importedSite: GeneratedSite = {
+        id: `local-gh-${Date.now()}`,
+        title: detail.title || detail.repository,
+        description: `Importado de ${detail.sourceUrl}`,
+        prompt: `Site importado do GitHub: ${detail.sourceUrl}`,
+        category: 'Importado do GitHub',
+        colorPalette: 'Original do projeto',
+        tone: 'Original',
+        html: detail.html,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      setActiveSite(importedSite);
+      saveSitesToStorage([importedSite, ...savedSites.filter(s => s.id !== importedSite.id)]);
+      setChatMessages([
+        {
+          id: `msg-${Date.now()}`,
+          sender: 'ai',
+          text: `Site "${importedSite.title}" aberto no editor.\n\n${detail.report.message}${
+            detail.report.complete ? '\n\nTudo foi trazido. O que você quer alterar?' : `\n\nO que ficou de fora está listado acima. Projeto completo para download: ${detail.fullDownloadUrl}`
+          }`,
+          timestamp: Date.now()
+        }
+      ]);
+    };
+    window.addEventListener('froc:open-imported-site', onOpenImportedSite);
+    return () => window.removeEventListener('froc:open-imported-site', onOpenImportedSite);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSites, currentUser?.id]);
+
   const handleStartStudioWithPrompt = (prompt: string) => {
     setNavMode('studio');
     handleGenerateSite({

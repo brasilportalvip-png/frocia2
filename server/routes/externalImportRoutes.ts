@@ -7,6 +7,7 @@ import {
   ExternalImportError,
   ExternalImportService
 } from '../services/externalImportService.js';
+import { importGithubSite } from '../services/githubSiteImportService.js';
 
 export const externalImportRouter = Router();
 
@@ -80,6 +81,49 @@ externalImportRouter.post(
           message: 'Não foi possível concluir a importação externa.',
           correlationId: req.correlationId
         }
+      });
+    }
+  }
+);
+
+const githubSiteLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 4,
+  keyPrefix: 'external-import-github-site'
+});
+
+/**
+ * POST /api/imports/github-site
+ * Baixa o repositório público inteiro e devolve um site HTML pronto para o
+ * editor, com relatório do que foi (e do que não foi) trazido.
+ */
+externalImportRouter.post(
+  '/github-site',
+  requireAuth,
+  githubSiteLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = z
+      .object({ url: z.string().trim().min(8).max(2048) })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: { code: 'invalid_import_request', message: 'Informe o endereço do repositório.', correlationId: req.correlationId }
+      });
+    }
+    try {
+      const site = await importGithubSite(parsed.data.url);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ site });
+    } catch (error) {
+      if (error instanceof ExternalImportError) {
+        return res.status(error.status).json({
+          error: { code: error.code, message: error.message, correlationId: req.correlationId }
+        });
+      }
+      console.error('Falha inesperada ao importar site do GitHub:', { correlationId: req.correlationId, userId: req.user?.uid, error });
+      return res.status(500).json({
+        error: { code: 'github_site_import_failed', message: 'Não foi possível abrir o site do GitHub agora.', correlationId: req.correlationId }
       });
     }
   }
