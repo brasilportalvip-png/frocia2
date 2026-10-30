@@ -33,11 +33,15 @@ const MAX_REMOTE_TOTAL_BYTES = 20_000_000;
 const MAX_HTML_BYTES = 4_200_000;
 const FETCH_TIMEOUT_MS = 20_000;
 const CORE_PACKAGES = new Set(['react', 'react-dom']);
+// Ferramentas de build: nunca viram código do site (ex.: `@import "tailwindcss"` no CSS).
+const BUILD_ONLY = /^(?:tailwindcss|@tailwindcss\/.+|postcss(?:-.+)?|autoprefixer|vite|@vitejs\/.+|vitest|typescript|eslint(?:-.+)?|@eslint\/.+|prettier|@types\/.+)$/;
 
 
 export interface ReactBundleOptions {
   /** Injetável para testes. Padrão: fetch real, restrito ao esm.sh. */
   fetchText?: (url: string) => Promise<string>;
+  /** Espera entre tentativas de compilação após falha momentânea. Padrão: 2500 ms (testes usam 0). */
+  retryDelayMs?: number;
   /** Injetável para testes. Padrão: import('esbuild'). */
   esbuild?: typeof import('esbuild');
 }
@@ -232,6 +236,7 @@ export async function bundleReactProject(
         if (remoteBytes > MAX_REMOTE_TOTAL_BYTES) throw new Error('Os pacotes do projeto somam mais do que o limite permitido.');
         return text;
       });
+      cached.catch(() => remoteCache.delete(url));
       remoteCache.set(url, cached);
     }
     return cached;
@@ -239,6 +244,8 @@ export async function bundleReactProject(
 
   const topLevelPackages = new Map<string, { name: string; spec: string }>();
   const stubbed = new Set<string>();
+  const buildOnlySeen = new Set<string>();
+  const pendingStub = new Set<string>(); // pacotes cujos arquivos internos não carregaram: na próxima tentativa viram versão vazia
   const compiled = new Set<string>();
   const packages = new Set<string>();
   const envUsed = new Set<string>();
@@ -256,6 +263,7 @@ export async function bundleReactProject(
           if (/^https?:\/\//.test(spec)) return { path: new URL(spec).href, namespace: 'esm' };
           if (spec.startsWith('/') || spec.startsWith('.')) return { path: new URL(spec, args.importer).href, namespace: 'esm' };
           packages.add(splitPackage(spec).name);
+          if (pendingStub.has(splitPackage(spec).name)) return { path: spec, namespace: 'stub' };
           topLevelPackages.set(esmUrl(spec), { name: splitPackage(spec).name, spec });
           return { path: esmUrl(spec), namespace: 'esm' };
         }
@@ -264,6 +272,10 @@ export async function bundleReactProject(
         if (/^(?:data|blob):/.test(spec)) return { path: spec, external: true };
 
         const clean = spec.split('#')[0].split('?')[0];
+        if (!clean.startsWith('.') && !clean.startsWith('/') && !clean.startsWith('@/') && !clean.startsWith('~/') && BUILD_ONLY.test(splitPackage(clean).name)) {
+          buildOnlySeen.add(splitPackage(clean).name);
+          return { path: clean, namespace: args.kind === 'import-rule' ? 'empty-css' : 'empty-js' };
+        }
         const importerDir = args.namespace === 'proj' ? dirOf(args.importer) : baseDir;
 
         let projectPath: string | null = null;
@@ -290,6 +302,7 @@ export async function bundleReactProject(
           if (local) return { path: local, namespace: 'proj' };
         }
         packages.add(name);
+        if (pendingStub.has(name)) return { path: clean, namespace: 'stub' };
         topLevelPackages.set(esmUrl(clean), { name, spec: clean });
         return { path: esmUrl(clean), namespace: 'esm' };
       });
@@ -304,6 +317,9 @@ export async function bundleReactProject(
         const loader = ext === 'tsx' ? 'tsx' : ext === 'ts' ? 'ts' : ext === 'jsx' ? 'jsx' : ext === 'json' ? 'json' : ext === 'css' ? 'css' : /^m?js$/.test(ext) ? 'jsx' : 'text';
         return { contents: text, loader };
       });
+
+      build.onLoad({ filter: /.*/, namespace: 'empty-css' }, () => ({ contents: '', loader: 'css' }));
+      build.onLoad({ filter: /.*/, namespace: 'empty-js' }, () => ({ contents: 'export default {};', loader: 'js' }));
 
       build.onLoad({ filter: /.*/, namespace: 'asset' }, (args) => ({
         contents: `export default ${JSON.stringify(assetUrl(args.path))};`,
@@ -323,8 +339,15 @@ export async function bundleReactProject(
             stubbed.add(info.name);
             return { contents: buildStubModule(info.spec, files), loader: 'js' };
           }
+          const inner = new URL(args.path).pathname.match(/^\/((?:@[^/@]+\/)?[^/@]+)@/);
+          if (inner && !CORE_PACKAGES.has(inner[1])) pendingStub.add(inner[1]);
           throw error;
         }
+      });
+
+      build.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => {
+        stubbed.add(splitPackage(args.path).name);
+        return { contents: buildStubModule(args.path, files), loader: 'js' };
       });
     },
   };
@@ -338,39 +361,54 @@ export async function bundleReactProject(
 
   let jsText = '';
   let cssText = '';
-  try {
-    const result = await esbuild.build({
-      entryPoints: [entryPath],
-      bundle: true,
-      write: false,
-      outdir: '/out',
-      format: 'iife',
-      platform: 'browser',
-      target: 'es2020',
-      jsx: 'automatic',
-      logLevel: 'silent',
-      legalComments: 'none',
-      plugins: [plugin],
-      define: {
-        'process.env.NODE_ENV': '"production"',
-        'import.meta.env': '{"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/","SSR":false}',
-        'import.meta.env.MODE': '"production"',
-        'import.meta.env.DEV': 'false',
-        'import.meta.env.PROD': 'true',
-        'import.meta.env.BASE_URL': '"/"',
-        global: 'globalThis',
-      },
-    });
-    for (const output of result.outputFiles || []) {
-      if (output.path.endsWith('.js')) jsText = output.text;
-      else if (output.path.endsWith('.css')) cssText = output.text;
+  const TRANSIENT = /esm\.sh respondeu (?:5\d\d|429)|aborted|fetch failed|ECONNRESET|ETIMEDOUT/i;
+  let lastFailure = '';
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const stubsBefore = pendingStub.size;
+    try {
+        const result = await esbuild.build({
+        entryPoints: [entryPath],
+        bundle: true,
+        write: false,
+        outdir: '/out',
+        format: 'iife',
+        platform: 'browser',
+        target: 'es2020',
+        jsx: 'automatic',
+        logLevel: 'silent',
+        legalComments: 'none',
+        plugins: [plugin],
+        define: {
+          'process.env.NODE_ENV': '"production"',
+          'import.meta.env': '{"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/","SSR":false}',
+          'import.meta.env.MODE': '"production"',
+          'import.meta.env.DEV': 'false',
+          'import.meta.env.PROD': 'true',
+          'import.meta.env.BASE_URL': '"/"',
+          global: 'globalThis',
+        },
+      });
+      for (const output of result.outputFiles || []) {
+        if (output.path.endsWith('.js')) jsText = output.text;
+        else if (output.path.endsWith('.css')) cssText = output.text;
+      }
+      lastFailure = '';
+      break;
+    } catch (error) {
+      const errors = (error as { errors?: Array<{ text: string; location?: { file: string; line: number } | null }> }).errors || [];
+      const detail = errors.slice(0, 3).map((e) => `${e.text}${e.location ? ` (${e.location.file}:${e.location.line})` : ''}`).join(' | ')
+        || (error instanceof Error ? error.message : 'erro desconhecido');
+      lastFailure = detail;
+      // Falha momentânea do esm.sh: o que já baixou fica guardado e só o que faltou é pedido de novo.
+      if (attempt < 3 && pendingStub.size > stubsBefore) continue; // pacote com arquivo interno fora do ar: refaz com versão vazia dele
+      if (attempt < 3 && TRANSIENT.test(detail)) {
+        await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 2_500));
+        continue;
+      }
+      break;
     }
-  } catch (error) {
-    const errors = (error as { errors?: Array<{ text: string; location?: { file: string; line: number } | null }> }).errors || [];
-    const detail = errors.slice(0, 3).map((e) => `${e.text}${e.location ? ` (${e.location.file}:${e.location.line})` : ''}`).join(' | ')
-      || (error instanceof Error ? error.message : 'erro desconhecido');
-    return fail(`Não consegui compilar o projeto: ${detail}`);
   }
+  if (lastFailure) return fail(`Não consegui compilar o projeto: ${lastFailure}`);
   if (!jsText) return fail('A compilação não gerou nenhum código.');
 
   // 6. Monta o HTML final.
@@ -394,7 +432,8 @@ export async function bundleReactProject(
   const title = (page.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim() || ctx.repo;
   const missingEnv = [...envUsed].sort();
   const notes: string[] = [];
-  if (usesTailwind) notes.push('Estilos Tailwind aplicados pela biblioteca oficial (CDN). Configurações personalizadas do tailwind.config não são lidas.');
+  if (buildOnlySeen.size) notes.push(`Ferramentas de build ignoradas na prévia (não fazem parte do site): ${[...buildOnlySeen].sort().join(', ')}.`);
+  if (usesTailwind) notes.push('Estilos Tailwind aplicados pela biblioteca oficial (CDN, versão 3). Classes exclusivas do Tailwind 4 e configurações personalizadas do tailwind.config podem aparecer diferentes.');
   if (stubbed.size) notes.push(`Pacotes opcionais que não puderam ser carregados e foram trocados por versão vazia: ${[...stubbed].sort().join(', ')}. Recursos que dependem deles (aplicativo de celular, analytics) ficam desligados na prévia.`);
   if (missingEnv.length) notes.push(`Variáveis de ambiente usadas e não configuradas: ${missingEnv.join(', ')}. Partes que dependem delas (APIs, login) podem não funcionar na prévia.`);
   notes.push('Rotas do navegador (React Router) funcionam melhor com HashRouter dentro da prévia.');
