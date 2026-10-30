@@ -146,12 +146,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-2xl flex items-center justify-center p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-2xl flex items-center justify-center overflow-y-auto p-4 animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
     >
-      <div className="w-full max-w-md glass-panel rounded-[32px] p-7 shadow-[0_16px_60px_rgba(0,0,0,0.6)] border border-white/15 text-white space-y-6 relative overflow-hidden">
+      <div className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-md glass-panel rounded-[32px] p-7 shadow-[0_16px_60px_rgba(0,0,0,0.6)] border border-white/15 text-white space-y-6 relative">
         {/* Glow backdrop effects */}
         <div className="absolute -top-24 -left-24 w-48 h-48 bg-purple-600/30 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-amber-400/20 rounded-full blur-3xl pointer-events-none" />

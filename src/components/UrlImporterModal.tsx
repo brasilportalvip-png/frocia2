@@ -125,6 +125,17 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
     onClose();
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // handleClose só usa refs/setters estáveis; reanexar a cada abertura basta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   const handleTypeChange = (type: 'url' | 'github' | 'site-audit') => {
     requestControllerRef.current?.abort();
     setImportType(type);
@@ -269,8 +280,16 @@ export const UrlImporterModal: React.FC<UrlImporterModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xl">
-      <div className="relative w-full max-w-lg space-y-5 rounded-[32px] border border-amber-400/20 bg-zinc-950 p-6 text-white shadow-2xl shadow-amber-500/10">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/85 p-4 max-sm:backdrop-blur-none sm:backdrop-blur-xl"
+      onClick={handleClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Importar projeto"
+        onClick={(event) => event.stopPropagation()}
+        className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg space-y-5 overflow-y-auto rounded-[32px] border border-amber-400/20 bg-zinc-950 p-6 text-white shadow-2xl shadow-amber-500/10">
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-200 text-black shadow-lg shadow-amber-500/20">

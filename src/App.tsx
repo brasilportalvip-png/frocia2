@@ -21,14 +21,16 @@ import { useAuth } from './context/AuthContext';
 import { apiClient, ApiClientError } from './services/apiClient';
 import { streamApiEvents } from './services/sseClient';
 import { toAIAttachmentPayloads } from './services/attachmentService';
+import { lazyWithRetry } from './utils/lazyWithRetry';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
-const ExportModal = lazy(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
-const PricingPage = lazy(() => import('./components/PricingPage').then(m => ({ default: m.PricingPage })));
-const IntegrationsPage = lazy(() => import('./components/IntegrationsPage').then(m => ({ default: m.IntegrationsPage })));
-const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
-const AuthModal = lazy(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
-const CostEstimationModal = lazy(() => import('./components/CostEstimationModal').then(m => ({ default: m.CostEstimationModal })));
-const MediaGenerationModal = lazy(() =>
+const ExportModal = lazyWithRetry(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
+const PricingPage = lazyWithRetry(() => import('./components/PricingPage').then(m => ({ default: m.PricingPage })));
+const IntegrationsPage = lazyWithRetry(() => import('./components/IntegrationsPage').then(m => ({ default: m.IntegrationsPage })));
+const AdminPanel = lazyWithRetry(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
+const AuthModal = lazyWithRetry(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
+const CostEstimationModal = lazyWithRetry(() => import('./components/CostEstimationModal').then(m => ({ default: m.CostEstimationModal })));
+const MediaGenerationModal = lazyWithRetry(() =>
   import('./components/MediaGenerationModal').then((module) => ({
     default: module.MediaGenerationModal,
   }))
@@ -171,6 +173,8 @@ export default function App() {
 
   const [navMode, setNavMode] = useState<AppNavigationMode>(() => committeeNavigation(window.location.href).openAdmin ? 'admin' : 'studio');
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
+  // Celular/tablet em pé: um painel por vez (Chat | Prévia | Código).
+  const [mobilePane, setMobilePane] = useState<'chat' | 'preview' | 'code'>('chat');
   const [deviceView, setDeviceView] = useState<DeviceView>('desktop');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.6-flash');
 
@@ -189,6 +193,10 @@ const activeResearchJobIdRef =
 
 const [isRefining, setIsRefining] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [projectsNotice, setProjectsNotice] = useState<string | null>(null);
+  const [deletingSiteIds, setDeletingSiteIds] = useState<string[]>([]);
 
   const [selectedChatMode, setSelectedChatMode] = useState<ChatMode>('Inteligente');
   const [activeArtifact, setActiveArtifact] = useState<ArtifactData | null>(null);
@@ -574,6 +582,22 @@ const fetchConversations = async () => {
     onConfirm: () => {}
   });
 
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    setMobilePane(activeSite ? 'preview' : 'chat');
+    if (activeSite) setViewMode((mode) => (mode === 'split' ? 'preview' : mode));
+  }, [activeSite?.id]);
+
   const saveSitesToStorage = (sites: GeneratedSite[]) => {
     setSavedSites(sites);
     const savedSitesKey = getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, currentUser.id);
@@ -637,19 +661,43 @@ const fetchConversations = async () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     
+    let cancelled = false;
     const fetchUserProjects = async () => {
       try {
         const res = await apiClient<{ projects: GeneratedSite[] }>('/api/projects');
-        if (res.projects && res.projects.length > 0) {
-          setSavedSites(res.projects);
-        }
+        if (cancelled) return;
+        const serverProjects = Array.isArray(res.projects) ? res.projects : [];
+        // O servidor é a fonte da verdade dos projetos salvos. Só sobrevivem localmente os
+        // projetos que existem apenas neste navegador (importados do GitHub e modelos).
+        setSavedSites((current) => {
+          const serverIds = new Set(serverProjects.map((p) => p.id));
+          const localOnly = current.filter(
+            (p) => (p.id.startsWith('local-') || p.id.startsWith('tmpl-')) && !serverIds.has(p.id)
+          );
+          const merged = [...serverProjects, ...localOnly];
+          try {
+            localStorage.setItem(
+              getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, currentUser.id),
+              JSON.stringify(merged)
+            );
+          } catch (storageError) {
+            console.warn('Erro ao salvar no localStorage:', storageError);
+          }
+          return merged;
+        });
       } catch (e) {
         console.warn('Erro ao buscar projetos do servidor:', e);
+        if (!cancelled) {
+          setProjectsNotice('Não foi possível atualizar seus projetos do servidor. Mostrando a cópia salva neste aparelho.');
+        }
       }
     };
 
     fetchUserProjects();
-  }, [isAuthenticated]);
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, currentUser.id]);
 
   // Generate Site with froc.ia AI
 
@@ -1255,39 +1303,74 @@ const handleGeneralChat = async (
     setErrorMsg(null);
   };
 
-  const handleDeleteSite = async (siteId: string) => {
-    setErrorMsg(null);
-
+  const persistSitesLocally = (sites: GeneratedSite[]) => {
     try {
-      // Projetos que só existem neste navegador (importados, modelos, locais) não estão no
-      // servidor: excluir é remover da lista local. O servidor só é chamado para projetos salvos.
-      const isLocalOnly = siteId.startsWith('local-') || siteId.startsWith('tmpl-');
+      localStorage.setItem(
+        getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, currentUser.id),
+        JSON.stringify(sites)
+      );
+    } catch (storageError) {
+      console.warn('Erro ao salvar no localStorage:', storageError);
+    }
+  };
+
+  const handleDeleteSite = async (siteId: string) => {
+    if (deletingSiteIds.includes(siteId)) return;
+    setErrorMsg(null);
+    setDeleteError(null);
+
+    const removed = savedSites.find((site) => site.id === siteId);
+    if (!removed) return;
+
+    // Remoção imediata na tela; volta atrás se o servidor recusar.
+    setDeletingSiteIds((ids) => [...ids, siteId]);
+    const remaining = savedSites.filter((site) => site.id !== siteId);
+    setSavedSites(remaining);
+    persistSitesLocally(remaining);
+    if (activeSite?.id === siteId) {
+      setActiveSite(null);
+      setProfessionalBuildId(null);
+    }
+
+    // Projetos que só existem neste navegador (importados, modelos, locais) não estão no
+    // servidor: excluir é remover da lista local. O servidor só é chamado para projetos salvos.
+    const isLocalOnly = siteId.startsWith('local-') || siteId.startsWith('tmpl-');
+    try {
       if (!isLocalOnly) {
         try {
-          await apiClient(`/api/projects/${encodeURIComponent(siteId)}`, {
-            method: 'DELETE'
-          });
+          await apiClient(`/api/projects/${encodeURIComponent(siteId)}`, { method: 'DELETE' });
         } catch (deleteError) {
           // 404 = o projeto já não existe no servidor; a lista local deve acompanhar.
           if (!(deleteError instanceof ApiClientError && deleteError.status === 404)) throw deleteError;
         }
       }
-
-      const updatedList = savedSites.filter(
-        (site) => site.id !== siteId
-      );
-      saveSitesToStorage(updatedList);
-
-      if (activeSite?.id === siteId) {
-        setActiveSite(updatedList[0] || null);
-      }
     } catch (error) {
-      setErrorMsg(
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível excluir o projeto.'
+      setSavedSites((current) => {
+        if (current.some((site) => site.id === removed.id)) return current;
+        const restored = [removed, ...current];
+        persistSitesLocally(restored);
+        return restored;
+      });
+      setDeleteError(
+        `Não foi possível excluir "${removed.title || 'o projeto'}": ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }. Ele foi mantido na lista.`
       );
+    } finally {
+      setDeletingSiteIds((ids) => ids.filter((id) => id !== siteId));
     }
+  };
+
+  // Remove da lista apenas projetos que existem só neste aparelho (nunca chama o servidor).
+  const handleClearLocalProjects = () => {
+    const remaining = savedSites.filter((site) => !(site.id.startsWith('local-') || site.id.startsWith('tmpl-')));
+    setSavedSites(remaining);
+    persistSitesLocally(remaining);
+    if (activeSite && !remaining.some((site) => site.id === activeSite.id)) {
+      setActiveSite(null);
+      setProfessionalBuildId(null);
+    }
+    setDeleteError(null);
   };
 
   const handleToggleFavorite = (siteId: string) => {
@@ -1311,7 +1394,7 @@ const handleGeneralChat = async (
 
   if (loading) {
     return (
-      <div className="froc-app-background h-screen w-screen flex flex-col items-center justify-center bg-[#050505] text-white space-y-4">
+      <div className="froc-app-background h-dvh w-full flex flex-col items-center justify-center bg-[#050505] text-white space-y-4">
         <Loader2 className="w-10 h-10 animate-spin text-purple-500" />
         <p className="text-sm font-medium text-white/70">Carregando Froc.IA...</p>
       </div>
@@ -1319,7 +1402,7 @@ const handleGeneralChat = async (
   }
 
   return (
-    <div id="froc-app-root" className="froc-app-background h-screen w-screen flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased">
+    <div id="froc-app-root" className="froc-app-background h-dvh w-full flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased">
 
 
 
@@ -1365,6 +1448,12 @@ const handleGeneralChat = async (
         </div>
       )}
 
+      {isOffline && (
+        <div role="status" className="shrink-0 bg-amber-500 px-4 py-2 text-center text-xs font-bold text-black">
+          Você está sem internet. Algumas ações só funcionam quando a conexão voltar.
+        </div>
+      )}
+
       {/* Main Container View Switcher */}
       <div className="flex-1 flex overflow-hidden relative">
         
@@ -1382,6 +1471,10 @@ const handleGeneralChat = async (
               setNavMode('studio');
             }}
             onDeleteSite={handleDeleteSite}
+            deletingSiteIds={deletingSiteIds}
+            notice={deleteError || projectsNotice}
+            onDismissNotice={() => { setDeleteError(null); setProjectsNotice(null); }}
+            onClearLocalProjects={handleClearLocalProjects}
             onToggleFavorite={handleToggleFavorite}
             user={currentUser}
             onNavigateToPricing={() => setNavMode('pricing')}
@@ -1390,6 +1483,7 @@ const handleGeneralChat = async (
           />
         )}
 
+        <ErrorBoundary>
         <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-purple-400" /></div>}>
           {navMode === 'pricing' && (
             <PricingPage
@@ -1426,9 +1520,10 @@ const handleGeneralChat = async (
             )
           )}
         </Suspense>
+        </ErrorBoundary>
 
         {navMode === 'studio' && (
-          <div className="flex-1 flex w-full h-full overflow-hidden relative">
+          <div className="flex-1 flex flex-col lg:flex-row w-full h-full overflow-hidden relative">
             {/* Left Collapsible Sidebar */}
             <Sidebar
               onGenerateSite={handleGenerateSite}
@@ -1473,7 +1568,30 @@ const handleGeneralChat = async (
               isAdmin={isAdmin}
             />
 
+            {activeSite && (
+              <div role="tablist" aria-label="Painéis do estúdio" className="lg:hidden flex shrink-0 border-b border-white/10 bg-slate-900">
+                {([['chat', 'Chat'], ['preview', 'Prévia'], ['code', 'Código']] as const).map(([pane, label]) => (
+                  <button
+                    key={pane}
+                    role="tab"
+                    aria-selected={mobilePane === pane}
+                    onClick={() => {
+                      setMobilePane(pane);
+                      if (pane === 'preview') setViewMode('preview');
+                      if (pane === 'code') setViewMode('code');
+                    }}
+                    className={`flex-1 min-h-11 text-sm font-bold transition-colors ${
+                      mobilePane === pane ? 'text-white border-b-2 border-purple-500 bg-white/5' : 'text-white/60 border-b-2 border-transparent'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Central Conversation Hub */}
+            <div className={`${!activeSite || mobilePane === 'chat' ? 'flex' : 'hidden'} lg:flex min-h-0 min-w-0 flex-1`}>
             <ChatCentral
               messages={chatMessages}
              
@@ -1766,10 +1884,11 @@ const handleGeneralChat = async (
                 });
               }}
             />
+            </div>
 
             {/* Right Workspace Canvas / Preview Frame / Artifact Workspace */}
             {activeSite && (
-              <main className="hidden lg:flex flex-col w-1/2 h-full border-l border-white/10 overflow-hidden bg-slate-950">
+              <main className={`${mobilePane === 'chat' ? 'hidden' : 'flex'} lg:flex flex-col w-full flex-1 lg:flex-none min-h-0 lg:w-[45%] xl:w-1/2 lg:h-full border-l border-white/10 overflow-hidden bg-slate-950`}>
                 <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-slate-900 px-3">
                   <span className="truncate text-xs font-bold text-white/80" title={activeSite.title}>{activeSite.title}</span>
                   <button
@@ -1846,6 +1965,7 @@ const handleGeneralChat = async (
         )}
       </div>
 
+      <ErrorBoundary>
       <Suspense fallback={null}>
   {/* Image and Video Generation Modal */}
   {mediaModal.isOpen && (
@@ -1899,6 +2019,7 @@ const handleGeneralChat = async (
           />
         )}
       </Suspense>
+      </ErrorBoundary>
 
       {/* Fullscreen Preview Modal */}
       {isFullscreen && activeSite && (

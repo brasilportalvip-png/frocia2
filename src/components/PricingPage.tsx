@@ -286,11 +286,12 @@ export const PricingPage: React.FC<PricingPageProps> = ({ user, onRefreshProfile
 
       {/* Mercado Pago Real Pix Modal */}
       {isCheckoutOpen && selectedPkg && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-[32px] p-6 shadow-2xl border border-white/20 text-white space-y-6 relative">
+        <div className="fixed inset-0 z-50 bg-black/80 max-sm:backdrop-blur-none sm:backdrop-blur-xl flex items-center justify-center overflow-y-auto p-4" onClick={() => setIsCheckoutOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-label="Pagamento" onClick={(event) => event.stopPropagation()} className="max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-md glass-panel rounded-[32px] p-6 shadow-2xl border border-white/20 text-white space-y-6 relative">
             <button
               onClick={() => setIsCheckoutOpen(false)}
-              className="absolute top-5 right-5 text-white/50 hover:text-white p-2 rounded-full glass-button"
+              aria-label="Fechar pagamento"
+              className="absolute top-3 right-3 flex min-h-11 min-w-11 items-center justify-center text-white/50 hover:text-white rounded-full glass-button"
             >
               <X className="w-4 h-4" />
             </button>

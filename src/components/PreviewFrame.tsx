@@ -71,9 +71,9 @@ export const PreviewFrame: React.FC<PreviewFrameProps> = ({
   const getContainerWidthClass = () => {
     switch (deviceView) {
       case 'mobile':
-        return 'w-[375px] h-[720px] my-auto rounded-[38px] border-[10px] border-white/20 shadow-2xl relative overflow-hidden bg-black';
+        return 'w-full max-w-[375px] h-[min(720px,100%)] my-auto rounded-[38px] border-[10px] border-white/20 shadow-2xl relative overflow-hidden bg-black';
       case 'tablet':
-        return 'w-[768px] h-[880px] my-auto rounded-[28px] border-[8px] border-white/20 shadow-2xl relative overflow-hidden bg-black';
+        return 'w-full max-w-[768px] h-[min(880px,100%)] my-auto rounded-[28px] border-[8px] border-white/20 shadow-2xl relative overflow-hidden bg-black';
       case 'desktop':
       default:
         return 'w-full h-full rounded-[32px] border border-white/10 shadow-2xl overflow-hidden flex flex-col bg-white/5 backdrop-blur-xl';
