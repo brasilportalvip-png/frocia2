@@ -6,6 +6,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { SafetyService } from '../ai/safetyService.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
+import { persistMediaConversation, saveVideoToPrivateBucket, streamStoredVideo, parseConversationId } from '../services/mediaPersistence.js';
 import { FeatureFlagService } from '../services/featureFlagService.js';
 
 export const mediaRouter = Router();
@@ -188,7 +189,9 @@ mediaRouter.post(
       prompt,
       aspectRatio: requestedAspectRatio = '1:1',
       idempotencyKey,
+      conversationId: requestedConversationId,
     } = req.body || {};
+    const conversationId = parseConversationId(requestedConversationId);
 
     if (
       typeof prompt !== 'string' ||
@@ -337,6 +340,7 @@ mediaRouter.post(
           ? 'private_bucket'
           : 'temporary_browser_delivery',
         ...(storagePath ? { storagePath } : {}),
+        ...(conversationId ? { conversationId } : {}),
         creditsSpent: IMAGE_COST,
         createdAt,
         updatedAt: createdAt,
@@ -347,6 +351,24 @@ mediaRouter.post(
           .collection('media_generations')
           .doc(docId)
           .set(mediaRecord);
+
+        await persistMediaConversation({
+          db: adminDb,
+          userId: uid,
+          tenantId: req.user!.tenantId,
+          conversationId,
+          prompt: sanitizedPrompt,
+          media: {
+            id: docId,
+            type: 'image',
+            prompt: sanitizedPrompt,
+            status: 'completed',
+            aspectRatio,
+            creditsSpent: IMAGE_COST,
+            persisted: Boolean(storagePath),
+          },
+          createdAt,
+        });
       }
 
       await CreditWalletService.confirmConsumption({
@@ -413,7 +435,9 @@ mediaRouter.post(
       durationSeconds: requestedDuration = 8,
       quality: requestedQuality = 'lite',
       idempotencyKey,
+      conversationId: requestedConversationId,
     } = req.body || {};
+    const conversationId = parseConversationId(requestedConversationId);
 
     if (
       typeof prompt !== 'string' ||
@@ -524,6 +548,8 @@ mediaRouter.post(
         operationName,
         type: 'video',
         prompt: sanitizedPrompt,
+        ...(conversationId ? { conversationId } : {}),
+        tenantId: req.user!.tenantId || null,
         aspectRatio,
         durationSeconds,
         quality,
@@ -754,6 +780,32 @@ if (operation.error) {
               updatedAt: completedAt,
             });
 
+          // Registra na conversa e guarda o MP4 num bucket privado (o link do provedor expira).
+          await persistMediaConversation({
+            db: adminDb,
+            userId: job.userId,
+            tenantId: typeof job.tenantId === 'string' ? job.tenantId : undefined,
+            conversationId: parseConversationId(job.conversationId),
+            prompt: job.prompt,
+            media: {
+              id: jobId,
+              type: 'video',
+              prompt: job.prompt,
+              status: 'completed',
+              aspectRatio: job.aspectRatio,
+              creditsSpent: job.creditsReserved || VIDEO_COSTS.lite,
+              persisted: true,
+            },
+            createdAt: job.createdAt,
+          });
+          await saveVideoToPrivateBucket({
+            db: adminDb,
+            userId: job.userId,
+            jobId,
+            providerUrl: videoUri,
+            apiKey: getMediaApiKey(),
+          });
+
           job.status = 'completed';
           job.progress = 100;
           job.videoUrl = videoUri;
@@ -892,6 +944,14 @@ mediaRouter.get(
       return res.status(409).json({
         error: 'O vídeo ainda não está disponível.',
       });
+    }
+
+    if (
+      job.storageStatus === 'private_bucket' &&
+      job.storagePath === `media/${job.userId}/videos/${jobId}.mp4`
+    ) {
+      const served = await streamStoredVideo(res, job.storagePath, jobId);
+      if (served) return;
     }
 
     let providerUrl: URL;

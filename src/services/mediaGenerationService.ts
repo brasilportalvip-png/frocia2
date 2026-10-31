@@ -99,6 +99,28 @@ function fileExtensionFromMimeType(
 }
 
 export class MediaGenerationService {
+  /** Conversa ativa: a mídia gerada é gravada nela para reaparecer ao atualizar a página. */
+  private static conversationProvider: (() => string | null) | null = null;
+
+  static setConversationProvider(provider: (() => string | null) | null): void {
+    this.conversationProvider = provider;
+  }
+
+  private static activeConversationId(): string | null {
+    try {
+      return this.conversationProvider?.() ?? null;
+    } catch (providerError) {
+      console.warn('Conversa ativa indisponível para gravar a mídia:', providerError);
+      return null;
+    }
+  }
+
+  static async getStoredVideoUrl(jobId: string, signal?: AbortSignal): Promise<string> {
+    if (!jobId) throw new Error('Identificador do vídeo inválido.');
+    const blob = await apiClientBlob(`/api/ai/media/video/${encodeURIComponent(jobId)}/content`, { signal });
+    return URL.createObjectURL(blob);
+  }
+
 
 
   private static async attachPlayableVideo(
@@ -130,6 +152,7 @@ export class MediaGenerationService {
       body: JSON.stringify({
         prompt: input.prompt,
         aspectRatio: input.aspectRatio,
+        conversationId: MediaGenerationService.activeConversationId(),
         idempotencyKey:
           input.idempotencyKey ||
           createIdempotencyKey('image'),
@@ -186,6 +209,7 @@ export class MediaGenerationService {
         aspectRatio: input.aspectRatio,
         durationSeconds: input.durationSeconds,
         quality: input.quality,
+        conversationId: MediaGenerationService.activeConversationId(),
         idempotencyKey:
           input.idempotencyKey ||
           createIdempotencyKey('video'),

@@ -1541,6 +1541,10 @@ await onSendMessage(
                             <p className="text-sm text-red-300">
                               Não foi possível concluir a geração.
                             </p>
+                          ) : message.media.unavailable ? (
+                            <p className="text-sm text-amber-200">
+                              Este arquivo não está mais disponível (o link expirou ou o armazenamento de mídia não está configurado no servidor).
+                            </p>
                           ) : message.media.url ? (
                             message.media.type === 'image' ? (
                               <img
