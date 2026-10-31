@@ -333,6 +333,7 @@ conversationRouter.get('/:id/messages', requireAuth, async (req: AuthenticatedRe
         content: d.content,
         attachments: d.attachments || [],
         citations: d.citations || [],
+        media: d.media || null,
         executionId: d.executionId || null,
         model: d.model || null,
         createdAt: d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate().toISOString() : new Date(d.createdAt).toISOString()) : new Date().toISOString(),

@@ -45,6 +45,10 @@ export interface ChatMessage {
     status: 'processing' | 'completed' | 'failed';
     progress?: number;
     creditsSpent?: number;
+    /** Id da mídia gravada no servidor (para recarregar o arquivo depois). */
+    mediaId?: string;
+    /** Arquivo não está mais disponível (expirou ou o armazenamento não foi configurado). */
+    unavailable?: boolean;
   };
   citations?: Array<{
     index?: number;

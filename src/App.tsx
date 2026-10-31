@@ -234,6 +234,33 @@ const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
     setCurrentConversationId(conversationId);
   };
 
+  // Garante uma conversa no servidor antes de gerar mídia, para a imagem/vídeo ficar gravada nela.
+  const ensureConversationForMedia = async (prompt: string) => {
+    if (currentConversationIdRef.current || !isAuthenticated) return;
+    try {
+      const created = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ title: prompt.slice(0, 30) || 'Nova Conversa', mode: 'smart' })
+      });
+      if (created?.conversation?.id) {
+        updateCurrentConversationId(created.conversation.id);
+        setConversations((previous) => [created.conversation, ...previous]);
+      }
+    } catch (conversationError) {
+      console.warn('A mídia será gerada sem gravar na conversa:', conversationError);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void import('./services/mediaGenerationService').then(({ MediaGenerationService }) => {
+      if (!cancelled) MediaGenerationService.setConversationProvider(() => currentConversationIdRef.current);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 const handleStopGeneration = () => {
   const controller =
     activeRequestControllerRef.current;
@@ -284,6 +311,32 @@ const fetchConversations = async () => {
     }
   };
 
+  // Recarrega do servidor os arquivos de imagem/vídeo das mensagens restauradas.
+  const hydrateStoredMedia = async (messages: ChatMessage[]) => {
+    const pending = messages.filter((m) => m.media?.mediaId && !m.media.url).slice(-12);
+    if (pending.length === 0) return;
+    const { MediaGenerationService } = await import('./services/mediaGenerationService');
+    await Promise.all(
+      pending.map(async (message) => {
+        const media = message.media!;
+        try {
+          const url =
+            media.type === 'image'
+              ? await MediaGenerationService.getStoredImageUrl(media.mediaId!)
+              : await MediaGenerationService.getStoredVideoUrl(media.mediaId!);
+          setChatMessages((current) =>
+            current.map((item) => (item.id === message.id && item.media ? { ...item, media: { ...item.media, url } } : item))
+          );
+        } catch (mediaError) {
+          console.warn('Arquivo de mídia indisponível:', mediaError);
+          setChatMessages((current) =>
+            current.map((item) => (item.id === message.id && item.media ? { ...item, media: { ...item.media, unavailable: true } } : item))
+          );
+        }
+      })
+    );
+  };
+
   const loadMessagesForConversation = async (convId: string): Promise<boolean> => {
     setMessagesLoading(true);
     try {
@@ -294,6 +347,7 @@ const fetchConversations = async () => {
           content: string;
           createdAt: string;
           citations?: ChatMessage['citations'];
+          media?: { id: string; type: 'image' | 'video'; prompt: string; creditsSpent?: number } | null;
         }>;
       }>(`/api/conversations/${convId}/messages`);
 
@@ -303,9 +357,21 @@ const fetchConversations = async () => {
           sender: m.role === 'user' ? 'user' : 'ai',
           text: m.content,
           timestamp: new Date(m.createdAt).getTime(),
-          citations: m.citations
+          citations: m.citations,
+          ...(m.media
+            ? {
+                media: {
+                  type: m.media.type,
+                  prompt: m.media.prompt,
+                  status: 'completed' as const,
+                  creditsSpent: m.media.creditsSpent,
+                  mediaId: m.media.id
+                }
+              }
+            : {})
         }));
         setChatMessages(mapped);
+        void hydrateStoredMedia(mapped);
         return true;
       }
       return false;
@@ -1837,6 +1903,7 @@ const handleGeneralChat = async (
 
         void (async () => {
           try {
+            await ensureConversationForMedia(prompt);
             const { MediaGenerationService } =
               await import('./services/mediaGenerationService');
 
@@ -1944,6 +2011,7 @@ const handleGeneralChat = async (
 
         void (async () => {
           try {
+            await ensureConversationForMedia(prompt);
             const { MediaGenerationService } =
               await import('./services/mediaGenerationService');
 
