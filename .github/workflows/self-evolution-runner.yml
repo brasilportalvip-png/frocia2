@@ -338,7 +338,15 @@ jobs:
 
       - name: Registrar destinos bloqueados pelo proxy
         if: ${{ always() }}
-        run: bash scripts/worker-egress-firewall.sh logs 300 | grep '"deny"' || echo "Nenhum destino bloqueado."
+        run: |
+          denied="$(bash scripts/worker-egress-firewall.sh logs 5000 | grep '"decision":"deny"' | grep -vE '"target":"(example\.com|1\.1\.1\.1)(:[0-9]+)?"' | sed -n 's/.*"target":"\([^"]*\)".*/\1/p' | sort | uniq -c | sort -rn | head -n 25 | awk '{print $2" ("$1"x)"}' | paste -sd ',' - | sed 's/,/, /g')"
+          # example.com e 1.1.1.1 sao as sondas propositais do teste de isolamento.
+          if [ -n "$denied" ]; then
+            # Anotacao visivel no resumo publico: inclua destinos legitimos em worker/egress-allowlist.mjs.
+            echo "::warning title=Destinos bloqueados pelo proxy do worker::${denied}"
+          else
+            echo "Nenhum destino bloqueado."
+          fi
 
       - name: Rodada diaria finalizada
         if: ${{ steps.cycle.outputs.daily_complete == 'true' }}

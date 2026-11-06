@@ -280,3 +280,21 @@ O isolamento passa a nao depender de servico externo:
   destino legitimo novo deve ser incluido em `worker/egress-allowlist.mjs`.
 
 Limite conhecido: a resolucao DNS do Docker continua disponivel ao worker.
+
+## Diagnostico da auditoria parcial em 06/11/2026
+
+A rodada #309 entregou apenas uma melhoria interna (PR #134) porque a auditoria
+do site terminou parcial e sem falhas registradas; o ciclo caiu no agente de
+inovacao. O aviso publico nao dizia o motivo.
+
+- `auditPartialReasons` (productionSiteAuditDiscoveryService) lista cada causa
+  objetiva: URLs pendentes, crawler bloqueado, robots, cenarios bloqueados,
+  vistas nao cobertas e arquivos sem leitura. O resultado e o documento da
+  auditoria passam a guardar `partialReasons`.
+- O executor publica esses motivos na anotacao "Auditoria do site parcial",
+  visivel no resumo da execucao sem abrir o log.
+- A etapa do proxy publica a anotacao "Destinos bloqueados pelo proxy do worker"
+  (sem as sondas propositais do teste de isolamento).
+- A allowlist do worker inclui os recursos declarados na CSP do site
+  (`cdn.tailwindcss.com`, `cdnjs.cloudflare.com`) e o login do Firebase
+  (`apis.google.com`, `*.firebaseapp.com`, `*.firebaseio.com`).
