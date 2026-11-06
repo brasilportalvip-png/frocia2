@@ -107,7 +107,9 @@ export function extractCanonicalGithubRepository(
 
 export function shouldResearchGithub(prompt: string): boolean {
   if (!extractCanonicalGithubRepository(prompt)) return false;
-  return /\b(analis|audit|arquitet|pesquis|investig|examin|revis|issue|problema|bug|commit|pull\s*request|\bpr\b|release|workflow|github|reposit[oó]rio|c[oó]digo|documenta)/i.test(prompt);
+  // A URL não conta: "https://github.com/..." contém "github" e tornava isto sempre verdadeiro.
+  const words = prompt.replace(/https?:\/\/\S+/gi, ' ');
+  return /\b(analis|audit|arquitet|pesquis|investig|examin|revis|issue|problema|bug|commit|pull\s*request|\bpr\b|release|workflow|github|reposit[oó]rio|c[oó]digo|documenta|corrig|erro|falh|test|entend|olh)/i.test(words);
 }
 
 function headers(): Record<string, string> {
