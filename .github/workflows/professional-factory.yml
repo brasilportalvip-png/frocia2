@@ -46,13 +46,17 @@ jobs:
       - name: Construir executor isolado
         if: steps.queue.outputs.has_jobs == 'true'
         run: docker build -t frocia-factory-worker ./worker
+      - name: Isolar rede do executor (firewall + proxy com allowlist)
+        if: steps.queue.outputs.has_jobs == 'true'
+        run: sudo bash scripts/worker-egress-firewall.sh up frocia-factory-worker
       - name: Iniciar executor
         if: steps.queue.outputs.has_jobs == 'true'
         env:
           SELF_EVOLUTION_WORKER_TOKEN: ${{ secrets.SELF_EVOLUTION_WORKER_TOKEN }}
           SELF_EVOLUTION_WORKER_SIGNING_SECRET: ${{ secrets.SELF_EVOLUTION_WORKER_SIGNING_SECRET }}
         run: |
-          docker run -d --name frocia-factory-worker --read-only \
+          mapfile -t egress_args < <(bash scripts/worker-egress-firewall.sh worker-args)
+          docker run -d --name frocia-factory-worker --read-only "${egress_args[@]}" \
             --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g \
             --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add KILL --cap-add SETUID --cap-add SETGID \
             --security-opt no-new-privileges --pids-limit 256 --memory 4g --cpus 2 \
@@ -66,7 +70,9 @@ jobs:
           exit 1
       - name: Conferir binarios e isolamento
         if: steps.queue.outputs.has_jobs == 'true'
-        run: docker exec frocia-factory-worker node /worker/sandbox-preflight.mjs
+        run: |
+          docker exec frocia-factory-worker node /worker/sandbox-preflight.mjs
+          bash scripts/verify-worker-egress.sh frocia-factory-worker
       - name: Executar fabrica
         if: steps.queue.outputs.has_jobs == 'true'
         env:

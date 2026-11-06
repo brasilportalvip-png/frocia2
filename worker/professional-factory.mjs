@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { run } from "./sandbox-process.mjs";
+import { browserProxyOptions } from "./egress-env.mjs";
 const hash = (x) => crypto.createHash("sha256").update(x).digest("hex");
 const digest = (files) =>
   hash(
@@ -137,6 +138,7 @@ export async function browseFactory(body, chromium, AxeBuilder) {
   const browser = await chromium.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    ...browserProxyOptions(),
   });
   const timer = setTimeout(() => browser.close().catch(() => {}), 360000);
   const results = [];

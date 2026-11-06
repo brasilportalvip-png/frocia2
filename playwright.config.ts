@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const externalBaseUrl = process.env.E2E_BASE_URL?.trim();
 const localBaseUrl = 'http://127.0.0.1:4173';
+// No worker isolado nao ha rota direta para a internet; o Chromium precisa do proxy de saida.
+const egressProxy = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim();
 
 export default defineConfig({
   testDir: './e2e',
@@ -24,6 +26,7 @@ export default defineConfig({
     video: 'retain-on-failure',
     locale: 'pt-BR',
     timezoneId: 'America/Sao_Paulo',
+    ...(egressProxy ? { proxy: { server: egressProxy, bypass: process.env.NO_PROXY || 'localhost,127.0.0.1' } } : {}),
   },
   projects: [
     {

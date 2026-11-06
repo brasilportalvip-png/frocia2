@@ -19,6 +19,7 @@ import { auditSelfSiteViews } from './site-navigation-audit.mjs';
 import { authenticateSelfSite } from './site-session-audit.mjs';
 import { safeDiagnosticText, commandDiagnosticExcerpt, compilerDiagnosticLines, workerFailurePayload } from './worker-failure.mjs';
 import { run } from './sandbox-process.mjs';
+import { browserProxyOptions } from './egress-env.mjs';
 import { generateStructuredPatch, safeRepoPath } from './patch-generation.mjs';
 
 const app = express();
@@ -272,7 +273,7 @@ app.post('/api/worker/browser-validate', authenticate, async (req, res) => {
   let browser;
   try {
     const body = req.body || {}; const target = publicHttps(body.previewUrl);
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, ...browserProxyOptions() });
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const previewSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || '';
     await installPreviewProtection(context, target, previewSecret);
