@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { proxyEnv } from './egress-env.mjs';
 
 const MAX_OUTPUT = 2_000_000;
 
@@ -14,6 +15,8 @@ export async function run(command, args, cwd, timeoutMs, extraEnv = {}, isolated
     npm_config_audit: 'false',
     npm_config_fund: 'false',
     npm_config_registry: 'https://registry.npmjs.org',
+    // Sem rota direta para a internet: git, npm e Node saem pelo proxy de saida.
+    ...proxyEnv(),
     ...extraEnv,
   };
   return new Promise((resolve, reject) => {

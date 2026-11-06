@@ -53,6 +53,11 @@ da ultima geracao e os testes nao sao apresentados como aprovados.
 3. Aplique política de saída real no provedor: permita somente GitHub, registro npm,
    APIs Gemini e previews autorizados. `SANDBOX_NETWORK_POLICY=restricted` é uma
    declaração verificada pelo protocolo, não cria firewall sozinho.
+   No GitHub Actions isso é feito por `scripts/worker-egress-firewall.sh`: o worker
+   fica na rede Docker `frocia-egress`, o firewall do runner descarta toda saída
+   direta dela e a única rota é o `egress-proxy.mjs`, que só abre túneis HTTPS
+   para os nomes de `egress-allowlist.mjs` (IPs internos e de metadados são
+   recusados). `scripts/verify-worker-egress.sh` prova o bloqueio a cada execução.
 4. Use filesystem efêmero e não monte Docker socket, chaves SSH, diretórios do host
    ou credenciais de produção.
 5. Configure segredos no cofre do provedor; não os entregue aos subprocessos.

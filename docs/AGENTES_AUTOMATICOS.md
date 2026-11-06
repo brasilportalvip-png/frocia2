@@ -255,3 +255,28 @@ sistema, sem simular uma montagem Docker neste ambiente.
 Nao ha Docker disponivel neste ambiente. O teste local nao comprova o
 conjunto de restricoes do container; o preflight reforcado devera comprovar
 essa parte numa nova rodada real, antes de iniciar a geracao do reparo.
+
+## Isolamento de rede proprio em 06/11/2026
+
+As rodadas de 06/11 pararam em "Verificar isolamento de rede do worker": o
+worker acessou `https://example.com`. O resumo do job mostrou a causa: o
+Harden-Runner nao aplica `egress-policy: block` em repositorio privado sem
+assinatura StepSecurity, entao a rede estava aberta e o teste agiu corretamente.
+
+O isolamento passa a nao depender de servico externo:
+
+- `scripts/worker-egress-firewall.sh up <imagem>` cria a rede `frocia-egress`,
+  insere em `DOCKER-USER` o descarte de todo pacote dessa rede com destino fora
+  dela, bloqueia a rede no `INPUT` do runner (salvo respostas) e inicia o
+  container `frocia-egress-proxy`.
+- `worker/egress-proxy.mjs` aceita apenas `CONNECT` na porta 443 para nomes de
+  `worker/egress-allowlist.mjs`; recusa IP literal, HTTP em texto puro e nomes
+  que resolvem para enderecos internos ou de metadados. Cada decisao vai ao log.
+- O worker recebe `HTTPS_PROXY` e `NODE_USE_ENV_PROXY=1`; `sandbox-process.mjs`
+  repassa essas variaveis a git/npm e o Chromium recebe o proxy no `launch`.
+- `scripts/verify-worker-egress.sh` exige: saida liberada pelo proxy, bloqueio
+  de destinos fora da lista e bloqueio de conexao direta sem proxy.
+- A etapa "Registrar destinos bloqueados pelo proxy" lista os bloqueios; um
+  destino legitimo novo deve ser incluido em `worker/egress-allowlist.mjs`.
+
+Limite conhecido: a resolucao DNS do Docker continua disponivel ao worker.
