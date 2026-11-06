@@ -29,6 +29,12 @@ export const ALLOWED_EGRESS_HOSTS = Object.freeze([
   'www.gstatic.com',
   'fonts.gstatic.com',
   '*.gstatic.com',
+  // Recursos que o site declara na CSP (vercel.json) e login do Firebase
+  'cdn.tailwindcss.com',
+  'cdnjs.cloudflare.com',
+  'apis.google.com',
+  '*.firebaseapp.com',
+  '*.firebaseio.com',
   // Site e previews
   'portalvipbrasil.com.br',
   'vercel.com',

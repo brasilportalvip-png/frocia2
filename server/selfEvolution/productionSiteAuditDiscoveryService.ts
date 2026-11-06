@@ -112,6 +112,7 @@ export class ProductionSiteAuditDiscoveryService {
     const data = saved.data();
     const coverageComplete = data?.repositorySha === repositorySha && data?.status === 'complete';
     return { status: 'cached_audit', findings: Number(data?.findingsCount || 0), coverageComplete, requiresResume: !coverageComplete,
+      partialReasons: Array.isArray(data?.partialReasons) ? data.partialReasons.map(String) : [],
       blockedCandidates: Array.isArray(data?.blockedCandidates) ? data.blockedCandidates as Array<{ candidateId: string; state: string; reason: string }> : [],
       limitations: [...(data?.limitations || []), 'Retomada da entrega usa a auditoria registrada; uma nova varredura pertence ao ciclo diario.'] };
   }
@@ -122,6 +123,7 @@ export class ProductionSiteAuditDiscoveryService {
     candidateIds?: string[];
     blockedCandidates?: Array<{ candidateId: string; state: string; reason: string }>;
     limitations?: string[];
+    partialReasons?: string[];
     requiresResume?: boolean;
     coverageComplete?: boolean;
   }> {
@@ -215,12 +217,15 @@ export class ProductionSiteAuditDiscoveryService {
         'O SHA registrado identifica o checkout; a versao publicada depende de confirmacao na Vercel.',
         'A varredura de URLs nao comprova todos os fluxos de negocio nem todas as conversas possiveis.',
       ];
-      const renderedViewsCovered = navigationCatalog.every(view =>
-        navigation.some(observed => observed.view === view && observed.status !== 'external_blocker'));
       const urlsPending = (html.checkpoint?.pendingUrls.length || 0) + (html.checkpoint?.pendingSitemaps.length || 0);
-      const partial = urlsPending > 0 || html.status === 'blocked' || html.discovery.robotsBlockedUrls > 0 ||
-        browser.scenarios.some(s => s.status === 'external_blocker') || !renderedViewsCovered ||
-        Boolean(options.knowledge?.incompleteFiles.length);
+      const partialReasons = auditPartialReasons({
+        urlsPending, crawlerBlocked: html.status === 'blocked', robotsBlockedUrls: html.discovery.robotsBlockedUrls,
+        blockedScenarios: browser.scenarios.filter(s => s.status === 'external_blocker').map(s => ({ id: s.id, details: clean(s.details) })),
+        uncoveredViews: navigationCatalog.filter(view => !navigation.some(observed => observed.view === view && observed.status !== 'external_blocker'))
+          .map(view => ({ view, details: clean(navigation.find(observed => observed.view === view)?.details || 'nao visitada') })),
+        incompleteFiles: options.knowledge?.incompleteFiles.length || 0,
+      });
+      const partial = partialReasons.length > 0;
       const queue = await SiteAuditQueueService.enqueue(findings, {
         origin: target.origin, auditId: id, generation, commitSha, now, manual: options.force === true,
       });
@@ -234,14 +239,14 @@ export class ProductionSiteAuditDiscoveryService {
           viewsObserved: navigation.filter(v => v.status !== 'external_blocker').length, viewsTotal: navigationCatalog.length,
           sourceFiles: options.knowledge?.sourceFilesCount || 0, repositoryFiles: options.knowledge?.filesCount || 0 },
         scenarios: browser.scenarios.map(s => ({ id: s.id, status: s.status, traceSha256: s.traceSha256, details: clean(s.details) })),
-        navigation: navigation.map(view => ({ ...view, details: clean(view.details) })), navigationCatalog, limitations,
+        navigation: navigation.map(view => ({ ...view, details: clean(view.details) })), navigationCatalog, limitations, partialReasons,
       });
       await AuditService.logEvent({ actor: 'production-site-auditor', action: 'scan_production_site', resource: id,
         riskLevel: 'R0', result: findings.length || partial ? 'failure' : 'success', deployUrl: target.toString(),
         reason: `${html.pages.length} paginas; ${browser.scenarios.length} cenarios; ${findings.length} falhas; ${candidateIds.length} tarefas. Cobertura ${partial ? 'parcial' : 'publica concluida'}.` });
       return { status: queue.createdCount ? 'created' : partial ? 'partial' : findings.length ? 'findings_recorded' : 'no_findings',
         ...(candidateIds.length ? { candidateId: candidateIds[0] } : {}), findings: findings.length, candidateIds, blockedCandidates, limitations,
-        coverageComplete: !partial, requiresResume: partial };
+        partialReasons, coverageComplete: !partial, requiresResume: partial };
     } catch (error) {
       await ref.set({ status: 'failed', completedAt: new Date().toISOString(),
         error: clean(error instanceof Error ? error.message : String(error)) }, { merge: true });
@@ -250,4 +255,24 @@ export class ProductionSiteAuditDiscoveryService {
       await LockService.releaseLock(`site-audit-${id}`, owner);
     }
   }
+}
+
+/** Motivos objetivos que impedem declarar a cobertura completa; vazio significa auditoria completa. */
+export function auditPartialReasons(input: {
+  urlsPending: number; crawlerBlocked: boolean; robotsBlockedUrls: number;
+  blockedScenarios: Array<{ id: string; details: string }>;
+  uncoveredViews: Array<{ view: string; details: string }>;
+  incompleteFiles: number;
+}): string[] {
+  const reasons: string[] = [];
+  if (input.urlsPending > 0) reasons.push(`urls_pendentes: ${input.urlsPending} URL(s) ainda nao visitada(s)`);
+  if (input.crawlerBlocked) reasons.push('crawler_bloqueado: o site recusou a varredura de URLs');
+  if (input.robotsBlockedUrls > 0) reasons.push(`robots: ${input.robotsBlockedUrls} URL(s) bloqueada(s)`);
+  for (const scenario of input.blockedScenarios) reasons.push(`cenario_bloqueado ${scenario.id}: ${scenario.details}`.slice(0, 240));
+  if (input.uncoveredViews.length) {
+    const sample = input.uncoveredViews.slice(0, 6).map(v => `${v.view} (${v.details})`.slice(0, 120)).join('; ');
+    reasons.push(`vistas_nao_cobertas ${input.uncoveredViews.length}: ${sample}${input.uncoveredViews.length > 6 ? '; ...' : ''}`);
+  }
+  if (input.incompleteFiles > 0) reasons.push(`arquivos_incompletos: ${input.incompleteFiles} arquivo(s) do repositorio sem leitura`);
+  return reasons;
 }

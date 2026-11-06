@@ -102,7 +102,11 @@ async function main(): Promise<void> {
     throw new Error(`Auditoria do site nao configurada: ${siteAudit.limitations?.join(' ')}`);
   }
   if (siteAudit.coverageComplete === false || siteAudit.status === 'partial') {
-    console.warn('::warning::A auditoria do site foi parcial. Consulte as limitacoes; isto nao comprova ausencia de erros.');
+    // A anotacao aparece no resumo publico da execucao: traz o motivo exato para quem corrige.
+    const { RedactionService } = await import('../server/selfEvolution/redactionService.js');
+    const reasons = (siteAudit.partialReasons?.length ? siteAudit.partialReasons : ['motivo nao registrado pela auditoria'])
+      .map(reason => RedactionService.redactSensitiveData(String(reason)).replace(/[\r\n%]+/g, ' ')).join(' | ').slice(0, 1800);
+    console.warn(`::warning title=Auditoria do site parcial::${reasons}`);
   }
 
   const requestedId = process.env.SELF_EVOLUTION_REQUESTED_CANDIDATE_ID?.trim();
