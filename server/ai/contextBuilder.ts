@@ -6,6 +6,8 @@ import {
 import {
   PromptRegistry
 } from './promptRegistry.js';
+import { memoryTruthPolicy } from './artifactChunks.js';
+import { env } from '../config/env.js';
 import {
   MemoryService
 } from './memoryService.js';
@@ -533,8 +535,11 @@ recentMessages = [],
       sections.push(`[NOVA MENSAGEM DO USUÁRIO]:\n${prompt}`);
       return sections.join('\n\n');
     };
+    // Sempre presente no uso real (144 mil tokens); só sai primeiro se o orçamento for mínimo.
+    let includeMemoryPolicy = true;
     const buildSystemInstruction = () =>
       `${TRUST_AND_PERSONALITY_POLICY}\n\n` +
+      (includeMemoryPolicy ? `${memoryTruthPolicy(Boolean(env.MEMORY_ENCRYPTION_KEY?.trim()))}\n\n` : '') +
       (mode === 'code'
         ? `${UNIVERSAL_OPERATOR_POLICY}\n\n`
         : '') +
@@ -565,7 +570,9 @@ buildRagSection();
 
     while (tokenCountEstimate > maxContextTokens) {
       contextTruncated = true;
-      if (safeLongTermSegments.length > 0) {
+      if (includeMemoryPolicy) {
+        includeMemoryPolicy = false;
+      } else if (safeLongTermSegments.length > 0) {
         safeLongTermSegments = safeLongTermSegments.slice(0, -1);
       } else if (safeMemories.length > 0) {
         safeMemories = safeMemories.slice(0, -1);
