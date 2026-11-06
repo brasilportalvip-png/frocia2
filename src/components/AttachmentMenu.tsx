@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { ATTACHMENT_ACCEPT } from '../services/attachmentService';
 import {
   Camera,
   Code2,
@@ -150,7 +151,7 @@ export const AttachmentMenu: React.FC<
       <input
         ref={fileInputRef}
         type="file"
-        accept=".txt,.md,.csv,.json,.html,.css,.js,.jsx,.ts,.tsx,.sql,.py,.xml,.yaml,.yml,.pdf"
+        accept={ATTACHMENT_ACCEPT.documents}
         onChange={(event) => void handleNativeChange(event)}
         className="hidden"
       />
@@ -158,7 +159,7 @@ export const AttachmentMenu: React.FC<
         ref={multipleInputRef}
         type="file"
         multiple
-        accept=".txt,.md,.csv,.json,.html,.css,.js,.jsx,.ts,.tsx,.sql,.py,.xml,.yaml,.yml,.pdf,image/jpeg,image/png,image/webp,image/gif,audio/mpeg,audio/mp4,audio/ogg,audio/webm,audio/wav,video/mp4,video/webm"
+        accept={ATTACHMENT_ACCEPT.all}
         onChange={(event) =>
           void handleNativeChange(event, true)
         }
@@ -187,21 +188,21 @@ export const AttachmentMenu: React.FC<
       <input
         ref={imageInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif"
+        accept={ATTACHMENT_ACCEPT.images}
         onChange={(event) => void handleNativeChange(event)}
         className="hidden"
       />
       <input
         ref={audioInputRef}
         type="file"
-        accept="audio/mpeg,audio/mp4,audio/ogg,audio/webm,audio/wav"
+        accept={ATTACHMENT_ACCEPT.audio}
         onChange={(event) => void handleNativeChange(event)}
         className="hidden"
       />
       <input
         ref={videoInputRef}
         type="file"
-        accept="video/mp4,video/webm"
+        accept={ATTACHMENT_ACCEPT.video}
         onChange={(event) => void handleNativeChange(event)}
         className="hidden"
       />

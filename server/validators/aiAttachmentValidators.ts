@@ -24,13 +24,18 @@ const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/webp',
   'image/gif',
+  'image/heic',
+  'image/heif',
   'audio/mpeg',
   'audio/mp4',
   'audio/ogg',
   'audio/webm',
   'audio/wav',
+  'audio/aac',
+  'audio/flac',
   'video/mp4',
-  'video/webm'
+  'video/webm',
+  'video/mov'
 ]);
 
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
