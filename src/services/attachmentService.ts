@@ -34,7 +34,25 @@ const TEXT_EXTENSIONS = new Set([
   'yml',
   'toml',
   'ini',
-  'env'
+  'env',
+  'log',
+  'tsv',
+  'sh',
+  'c',
+  'h',
+  'cpp',
+  'hpp',
+  'cs',
+  'kt',
+  'swift',
+  'vue',
+  'svelte',
+  'scss',
+  'less',
+  'conf',
+  'cfg',
+  'properties',
+  'gradle'
 ]);
 
 const DIRECT_BINARY_MIME_TYPES = new Set([
@@ -43,14 +61,121 @@ const DIRECT_BINARY_MIME_TYPES = new Set([
   'image/png',
   'image/webp',
   'image/gif',
+  'image/heic',
+  'image/heif',
   'audio/mpeg',
   'audio/mp4',
   'audio/ogg',
   'audio/webm',
   'audio/wav',
+  'audio/aac',
+  'audio/flac',
   'video/mp4',
-  'video/webm'
+  'video/webm',
+  'video/mov'
 ]);
+
+/**
+ * Tipo de cada arquivo de texto decidido pela EXTENSÃO, nunca pelo navegador.
+ * O navegador inventa tipos que o servidor recusava: no Windows ".ts" chega como
+ * "video/mp2t" (vídeo!), ".xml" como "text/xml", ".yaml" como "application/x-yaml",
+ * ".js" como "application/javascript", ".php"/".java"/".sql" com tipos próprios.
+ * Todos os valores abaixo estão na lista aceita pelo servidor.
+ */
+const TEXT_MIME_BY_EXTENSION: Record<string, string> = {
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  csv: 'text/csv',
+  json: 'application/json',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'text/javascript',
+  jsx: 'text/javascript',
+  ts: 'text/typescript',
+  tsx: 'text/typescript-jsx',
+  sql: 'text/x-sql',
+  py: 'text/x-python',
+  xml: 'application/xml',
+  yaml: 'text/yaml',
+  yml: 'text/yaml',
+};
+
+/** Mídia: o navegador manda "audio/x-m4a", "audio/mp3", "audio/x-wav", "video/quicktime"... */
+const MEDIA_MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  weba: 'audio/webm',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/mov',
+};
+
+const MEDIA_MIME_ALIASES: Record<string, string> = {
+  'image/jpg': 'image/jpeg',
+  'image/pjpeg': 'image/jpeg',
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-mp3': 'audio/mpeg',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+  'audio/x-aac': 'audio/aac',
+  'audio/x-flac': 'audio/flac',
+  'audio/opus': 'audio/ogg',
+  'video/quicktime': 'video/mov',
+};
+
+/** Imagens que a IA não lê direto, mas o navegador consegue converter para PNG/JPEG. */
+const CONVERTIBLE_IMAGE_MIME_TYPES = new Set(['image/gif', 'image/bmp', 'image/avif', 'image/x-ms-bmp']);
+
+/** Filtros dos seletores de arquivo (antes .docx/.xlsx, .m4a, .mov e .heic nem apareciam). */
+const ACCEPT_TEXT_AND_DOCS = [...TEXT_EXTENSIONS].map((ext) => `.${ext}`).concat(['.pdf', '.docx', '.xlsx']).join(',');
+export const ATTACHMENT_ACCEPT = {
+  documents: ACCEPT_TEXT_AND_DOCS,
+  images: 'image/*,.heic,.heif',
+  audio: 'audio/*,.mp3,.m4a,.wav,.ogg,.oga,.opus,.weba,.aac,.flac',
+  video: '.mp4,.m4v,.webm,.mov,video/mp4,video/webm,video/quicktime',
+  all: '',
+};
+ATTACHMENT_ACCEPT.all = [ATTACHMENT_ACCEPT.documents, ATTACHMENT_ACCEPT.images, ATTACHMENT_ACCEPT.audio, ATTACHMENT_ACCEPT.video].join(',');
+
+/** Tipo canônico (aceito pelo servidor e pela IA) para qualquer arquivo. Exportado para testes. */
+export function canonicalAttachmentMime(filename: string, browserType: string): string {
+  const extension = extensionOf(filename);
+  const declared = String(browserType || '').toLowerCase().split(';')[0].trim();
+  if (extension === 'docx') return DOCX_MIME;
+  if (extension === 'xlsx') return XLSX_MIME;
+  if (extension === 'pdf') return 'application/pdf';
+  if (TEXT_EXTENSIONS.has(extension)) return TEXT_MIME_BY_EXTENSION[extension] || 'text/plain';
+  if (MEDIA_MIME_ALIASES[declared]) return MEDIA_MIME_ALIASES[declared];
+  if (DIRECT_BINARY_MIME_TYPES.has(declared) || CONVERTIBLE_IMAGE_MIME_TYPES.has(declared)) {
+    // "video/webm" de um arquivo .weba/.webm só de áudio fica com a extensão.
+    if (extension === 'weba' && declared.startsWith('video/')) return 'audio/webm';
+    return declared;
+  }
+  if (MEDIA_MIME_BY_EXTENSION[extension]) return MEDIA_MIME_BY_EXTENSION[extension];
+  if (extension === 'bmp') return 'image/bmp';
+  if (extension === 'avif') return 'image/avif';
+  if (declared.startsWith('text/')) return 'text/plain';
+  if (declared === 'application/zip' || extension === 'zip') return 'application/zip';
+  return declared || 'application/octet-stream';
+}
 
 const DOCX_MIME =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -58,6 +183,9 @@ const XLSX_MIME =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_OFFICE_UNCOMPRESSED_BYTES = 15_000_000;
 const MAX_EXTRACTED_TEXT_BYTES = 750_000;
+/** Fotos de celular (2 a 8 MB) são reduzidas no próprio aparelho para caber no limite de 1 MB. */
+const MAX_IMAGE_SOURCE_BYTES = 25_000_000;
+const MAX_IMAGE_SIDE = 2048;
 
 export class AttachmentValidationError extends Error {
   readonly code: string;
@@ -89,24 +217,7 @@ function isTextFile(file: File): boolean {
 }
 
 function normalizedMimeType(file: File): string {
-  const extension = extensionOf(file.name);
-  if (extension === 'docx') return DOCX_MIME;
-  if (extension === 'xlsx') return XLSX_MIME;
-  if (extension === 'csv') return 'text/csv';
-  if (extension === 'pdf') return 'application/pdf';
-  if (file.type) {
-    return file.type.toLowerCase();
-  }
-
-  if (isTextFile(file)) {
-    return 'text/plain';
-  }
-
-  if (isZipFile(file)) {
-    return 'application/zip';
-  }
-
-  return 'application/octet-stream';
+  return canonicalAttachmentMime(file.name, file.type);
 }
 
 function decodeXmlEntities(value: string): string {
@@ -362,20 +473,23 @@ function assertSupportedFile(file: File): void {
     );
   }
 
-  if (file.size > MAX_DIRECT_ATTACHMENT_BYTES) {
-    throw new AttachmentValidationError(
-      'file_too_large',
-      `O arquivo “${file.name}” excede o limite de 1 MB para envio direto à IA.`
-    );
-  }
-
   const mimeType = normalizedMimeType(file);
+
+  if (file.size > MAX_DIRECT_ATTACHMENT_BYTES) {
+    if (!(isReducibleImage(mimeType) && file.size <= MAX_IMAGE_SOURCE_BYTES && canTranscodeImages())) {
+      throw new AttachmentValidationError(
+        'file_too_large',
+        `O arquivo “${file.name}” excede o limite de 1 MB para envio direto à IA.`
+      );
+    }
+  }
 
   if (
     !isTextFile(file) &&
     extension !== 'docx' &&
     extension !== 'xlsx' &&
-    !DIRECT_BINARY_MIME_TYPES.has(mimeType)
+    !DIRECT_BINARY_MIME_TYPES.has(mimeType) &&
+    !(CONVERTIBLE_IMAGE_MIME_TYPES.has(mimeType) && canTranscodeImages())
   ) {
     throw new AttachmentValidationError(
       'unsupported_file_type',
@@ -400,8 +514,9 @@ export async function prepareNativeFiles(
 
   files.forEach(assertSupportedFile);
 
+  // Imagens grandes são reduzidas antes do envio: o total real é conferido depois.
   const directTotal = files
-    .filter((file) => !isZipFile(file))
+    .filter((file) => !isZipFile(file) && !needsImageTranscode(file, normalizedMimeType(file)))
     .reduce((sum, file) => sum + file.size, 0);
 
   if (directTotal > MAX_DIRECT_PAYLOAD_BYTES) {
@@ -411,10 +526,17 @@ export async function prepareNativeFiles(
     );
   }
 
-  return Promise.all(
+  const prepared = await Promise.all(
     files.map(async (file, index) => {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const originalMimeType = normalizedMimeType(file);
+      let bytes = new Uint8Array(await file.arrayBuffer());
+      let originalMimeType = normalizedMimeType(file);
+      let displayName = file.name;
+      if (needsImageTranscode(file, originalMimeType)) {
+        const converted = await transcodeImage(file, originalMimeType);
+        bytes = converted.bytes;
+        originalMimeType = converted.mimeType;
+        displayName = converted.name;
+      }
       const extension = extensionOf(file.name);
       if (extension === 'pdf') assertPdfSignature(bytes);
       const extractedText = extension === 'docx'
@@ -429,7 +551,7 @@ export async function prepareNativeFiles(
         ? new TextEncoder().encode(extractedText)
         : bytes;
       const mimeType = convertedOffice ? 'text/plain' : originalMimeType;
-      const payloadName = convertedOffice ? `${file.name}.txt` : file.name;
+      const payloadName = convertedOffice ? `${file.name}.txt` : displayName;
       const type = convertedOffice
         ? 'document'
         : uploadedType(mimeType, payloadName);
@@ -456,6 +578,93 @@ export async function prepareNativeFiles(
         source: 'local'
       } satisfies UploadedFile;
     })
+  );
+
+  const preparedTotal = prepared.reduce((sum, file) => sum + file.size, 0);
+  if (preparedTotal > MAX_DIRECT_PAYLOAD_BYTES) {
+    throw new AttachmentValidationError(
+      'payload_too_large',
+      'O conjunto de arquivos excede o limite seguro de envio. Reduza a quantidade ou o tamanho.'
+    );
+  }
+  return prepared;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Imagens: GIF não é lido pela IA (só PNG, JPEG, WebP, HEIC) e fotos de celular passam de 1 MB.
+// As duas coisas eram recusadas ou falhavam. Agora a imagem é convertida no próprio aparelho.
+// ---------------------------------------------------------------------------------------------
+function isReducibleImage(mimeType: string): boolean {
+  return mimeType.startsWith('image/');
+}
+
+function canTranscodeImages(): boolean {
+  return typeof createImageBitmap === 'function' &&
+    (typeof OffscreenCanvas !== 'undefined' || typeof document !== 'undefined');
+}
+
+function needsImageTranscode(file: File, mimeType: string): boolean {
+  if (!isReducibleImage(mimeType)) return false;
+  return CONVERTIBLE_IMAGE_MIME_TYPES.has(mimeType) || file.size > MAX_DIRECT_ATTACHMENT_BYTES;
+}
+
+function renamedImage(filename: string, extension: string): string {
+  const dot = filename.lastIndexOf('.');
+  return `${dot > 0 ? filename.slice(0, dot) : filename}.${extension}`;
+}
+
+async function transcodeImage(
+  file: File,
+  mimeType: string
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; mimeType: string; name: string }> {
+  if (!canTranscodeImages()) {
+    throw new AttachmentValidationError(
+      'image_conversion_unavailable',
+      `Este navegador não consegue converter “${file.name}”. Envie a imagem em PNG ou JPG com até 1 MB.`
+    );
+  }
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new AttachmentValidationError(
+      'image_decode_failed',
+      `Não foi possível abrir a imagem “${file.name}” neste navegador${mimeType === 'image/heic' || mimeType === 'image/heif' ? ' (HEIC só abre no Safari)' : ''}. Envie em PNG ou JPG.`
+    );
+  }
+  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const offscreen = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : null;
+  const canvas = offscreen ?? Object.assign(document.createElement('canvas'), { width, height });
+  const context = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!context) {
+    bitmap.close?.();
+    throw new AttachmentValidationError('image_conversion_unavailable', `Não foi possível converter “${file.name}”.`);
+  }
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+  const encode = async (type: string, quality?: number): Promise<Blob | null> =>
+    offscreen
+      ? offscreen.convertToBlob({ type, quality })
+      : new Promise<Blob | null>((resolve) => (canvas as HTMLCanvasElement).toBlob(resolve, type, quality));
+
+  // GIF e PNG com transparência: tenta PNG primeiro; se ficar grande, JPEG.
+  if (CONVERTIBLE_IMAGE_MIME_TYPES.has(mimeType) || mimeType === 'image/png') {
+    const png = await encode('image/png');
+    if (png && png.size <= MAX_DIRECT_ATTACHMENT_BYTES) {
+      return { bytes: new Uint8Array(await png.arrayBuffer()), mimeType: 'image/png', name: renamedImage(file.name, 'png') };
+    }
+  }
+  for (const quality of [0.86, 0.76, 0.64, 0.5]) {
+    const jpeg = await encode('image/jpeg', quality);
+    if (jpeg && jpeg.size <= MAX_DIRECT_ATTACHMENT_BYTES) {
+      return { bytes: new Uint8Array(await jpeg.arrayBuffer()), mimeType: 'image/jpeg', name: renamedImage(file.name, 'jpg') };
+    }
+  }
+  throw new AttachmentValidationError(
+    'file_too_large',
+    `Mesmo reduzida, a imagem “${file.name}” passou de 1 MB.`
   );
 }
 

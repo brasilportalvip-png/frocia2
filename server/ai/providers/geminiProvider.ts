@@ -80,6 +80,7 @@ export interface GeminiGenerateOptions {
   userMessage: string;
   attachments?: Array<{
     type: string;
+    name?: string;
     data?: string;
     mimeType?: string;
     url?: string;
@@ -103,6 +104,61 @@ export interface GeminiResponse {
   toolCalls?: any[];
 }
 
+/**
+ * Arquivos de texto (código, JSON, CSV, Markdown, YAML, XML, HTML...) vão como TEXTO, com o
+ * nome do arquivo. Antes iam como inlineData com o tipo original: a API do Gemini só garante
+ * PDF, imagem, áudio e vídeo nesse formato (JSON e CSV costumam ser recusados) e o nome do
+ * arquivo se perdia — a IA não sabia qual anexo era qual, nem o repositório importado do GitHub.
+ */
+export function isTextualAttachmentMime(mimeType: string): boolean {
+  const mime = String(mimeType || '').toLowerCase().split(';')[0].trim();
+  return mime.startsWith('text/') || mime === 'application/json' || mime === 'application/xml';
+}
+
+const MIME_SUPPORTED_INLINE: Record<string, string> = {
+  'image/jpg': 'image/jpeg',
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'video/quicktime': 'video/mov',
+};
+
+export function buildGeminiContents(
+  userMessage: string,
+  attachments: GeminiGenerateOptions['attachments'] = []
+): any[] {
+  const contents: any[] = [];
+  let index = 0;
+  for (const attachment of attachments) {
+    if (!attachment.data || !attachment.mimeType) {
+      continue;
+    }
+    index += 1;
+    const name = String(attachment.name || `anexo-${index}`).replace(/[\r\n\]]/g, ' ').slice(0, 180);
+    if (isTextualAttachmentMime(attachment.mimeType)) {
+      const text = Buffer.from(attachment.data, 'base64').toString('utf8');
+      contents.push({
+        text: `[ANEXO ${index}: ${name} | ${attachment.mimeType}]\n${text}\n[/ANEXO ${index}: ${name}]`,
+      });
+      continue;
+    }
+    const mime = attachment.mimeType.toLowerCase();
+    contents.push({ text: `[ANEXO ${index}: ${name} | ${mime}]` });
+    contents.push({
+      inlineData: {
+        data: attachment.data,
+        mimeType: MIME_SUPPORTED_INLINE[mime] || mime,
+      },
+    });
+  }
+
+  contents.push({
+    text: userMessage,
+  });
+
+  return contents;
+}
+
 export class GeminiProvider {
   private static getClient(): GoogleGenAI {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -123,30 +179,12 @@ export class GeminiProvider {
     });
   }
 
-  private static buildContents(
+  /** Exposto para testes: as partes exatas que a IA recebe. */
+  static buildContents(
     userMessage: string,
     attachments: GeminiGenerateOptions['attachments'] = []
   ): any[] {
-    const contents: any[] = [];
-
-    for (const attachment of attachments) {
-      if (!attachment.data || !attachment.mimeType) {
-        continue;
-      }
-
-      contents.push({
-        inlineData: {
-          data: attachment.data,
-          mimeType: attachment.mimeType,
-        },
-      });
-    }
-
-    contents.push({
-      text: userMessage,
-    });
-
-    return contents;
+    return buildGeminiContents(userMessage, attachments);
   }
 
   static async generate(
