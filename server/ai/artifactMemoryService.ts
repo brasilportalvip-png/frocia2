@@ -10,6 +10,17 @@ import {
   encryptPersonalMemory
 } from './memoryCryptoService.js';
 import { RedactionService } from '../selfEvolution/redactionService.js';
+import {
+  ArtifactChunk,
+  ARTIFACT_EXCERPT_BUDGET_CHARS,
+  MAX_ARTIFACT_FULL_TEXT_CHARS,
+  artifactExcerptsContext,
+  selectArtifactExcerpts,
+  splitArtifactText,
+} from './artifactChunks.js';
+
+/** Quantos anexos lembrados podem trazer conteúdo completo para uma pergunta. */
+const MAX_ARTIFACTS_WITH_EXCERPTS = 3;
 
 const MAX_PREVIEW_CHARS = 24_000;
 const MAX_CANDIDATES = 750;
@@ -46,6 +57,10 @@ export interface ArtifactMemoryRecord {
     | 'preview'
     | 'metadata_only';
   originalBytesPersisted: boolean;
+  /** Trechos do texto completo guardados (0 = só a prévia antiga). */
+  chunkCount?: number;
+  /** Trechos escolhidos para a pergunta atual (preenchido na recuperação). */
+  excerpts?: ArtifactChunk[];
   modesSeen: AIMode[];
   lastMode: AIMode | null;
   lastUsedAt: string;
@@ -204,6 +219,21 @@ function extractTextPreview(
         MAX_PREVIEW_CHARS
       );
   } catch {
+    return '';
+  }
+}
+
+/** Texto completo (até 750 mil caracteres), já sem dados sensíveis, para guardar em trechos. */
+function extractFullText(attachment: ArtifactMemoryInput): string {
+  if (!attachment.data) return '';
+  const mimeType = cleanText(attachment.mimeType, 120).toLowerCase();
+  const isText = mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'application/xml';
+  if (!isText) return '';
+  try {
+    const decoded = Buffer.from(attachment.data, 'base64').toString('utf8').replace(/\u0000/g, '').trim();
+    return RedactionService.redactSensitiveData(decoded).slice(0, MAX_ARTIFACT_FULL_TEXT_CHARS);
+  } catch (error) {
+    console.warn('Texto completo do anexo indisponível; fica só a prévia.', error);
     return '';
   }
 }
@@ -506,6 +536,7 @@ function mapDocument(
     originalBytesPersisted:
       data.originalBytesPersisted ===
       true,
+    chunkCount: Number(data.chunkCount || 0),
     modesSeen:
       Array.isArray(
         data.modesSeen
@@ -684,7 +715,73 @@ export class ArtifactMemoryService {
           merge: true
         }
       );
+
+      // Guarda o texto INTEIRO em trechos (uma vez por conteúdo; o id vem do SHA-256).
+      const alreadyChunked = Number(existingArtifact.data()?.chunkCount || 0) > 0;
+      if (!alreadyChunked) {
+        const chunks = splitArtifactText(name, extractFullText(attachment));
+        if (chunks.length > 0) {
+          const batch = adminDb.batch();
+          for (const chunk of chunks) {
+            batch.set(reference.collection('chunks').doc(String(chunk.index).padStart(4, '0')), {
+              index: chunk.index,
+              label: chunk.label,
+              ...encryptPersonalMemory(chunk.content, input.tenantId, input.userId),
+            });
+          }
+          batch.set(reference, { chunkCount: chunks.length, contentAvailability: 'full_text' }, { merge: true });
+          await batch.commit();
+        }
+      }
     }
+  }
+
+  /** Carrega os trechos guardados e escolhe os que respondem à pergunta. */
+  static async attachExcerpts(
+    artifacts: ArtifactMemoryRecord[],
+    prompt: string,
+    skipSha256: Set<string> = new Set()
+  ): Promise<ArtifactMemoryRecord[]> {
+    if (!isFirebaseAdminConfigured() || !adminDb) return artifacts;
+    let budget = ARTIFACT_EXCERPT_BUDGET_CHARS;
+    let loaded = 0;
+    const namesWithExcerpts = new Set<string>();
+    const result: ArtifactMemoryRecord[] = [];
+    for (const artifact of artifacts) {
+      // Anexos enviados nesta mesma mensagem já chegam inteiros à IA; versões repetidas do
+      // mesmo arquivo (ex.: o repositório importado de novo) não gastam o espaço duas vezes.
+      if (!artifact.chunkCount || skipSha256.has(artifact.sha256) || namesWithExcerpts.has(artifact.name) ||
+          loaded >= MAX_ARTIFACTS_WITH_EXCERPTS || budget < 2_000) {
+        result.push(artifact);
+        continue;
+      }
+      try {
+        const snapshot = await adminDb
+          .collection('artifact_memory_entries')
+          .doc(artifact.id)
+          .collection('chunks')
+          .orderBy('index', 'asc')
+          .limit(200)
+          .get();
+        const chunks: ArtifactChunk[] = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            index: Number(data.index || 0),
+            label: cleanText(data.label, 300) || artifact.name,
+            content: decryptPersonalMemory(data, artifact.tenantId, artifact.userId),
+          };
+        });
+        const excerpts = selectArtifactExcerpts(chunks, prompt, budget);
+        budget -= excerpts.reduce((sum, chunk) => sum + chunk.content.length, 0);
+        loaded += 1;
+        namesWithExcerpts.add(artifact.name);
+        result.push({ ...artifact, chunkCount: chunks.length, excerpts });
+      } catch (error) {
+        console.warn('Trechos do anexo indisponíveis; usando a prévia.', error);
+        result.push(artifact);
+      }
+    }
+    return result;
   }
 
   static async retrieveRelevant(
@@ -819,10 +916,9 @@ export class ArtifactMemoryService {
       );
     }
 
-    return this
-      .retrieveRelevant(
-        input
-      );
+    const relevant = await this.retrieveRelevant(input);
+    const currentTurn = new Set(input.attachments.map((attachment) => calculateSha256(attachment)));
+    return this.attachExcerpts(relevant, input.prompt, currentTurn);
   }
 
   static toContext(
@@ -850,9 +946,11 @@ export class ArtifactMemoryService {
           `modos=${artifact.modesSeen.join(',') || 'não informado'}; ultimoModo=${artifact.lastMode || 'não informado'}`,
           `sha256=${artifact.sha256}; tamanho=${artifact.sizeBytes}`,
           `originalBytesPersisted=${artifact.originalBytesPersisted}`,
-          artifact.preview
-            ? `prévia/análise=${artifact.preview.slice(0, 6000)}`
-            : 'prévia/análise=indisponível; somente metadados persistidos'
+          artifact.excerpts && artifact.excerpts.length > 0
+            ? artifactExcerptsContext(artifact.name, artifact.excerpts, artifact.chunkCount || artifact.excerpts.length)
+            : artifact.preview
+              ? `prévia/análise (SÓ O COMEÇO: ${Math.min(6000, artifact.preview.length)} de ${artifact.sizeBytes} bytes; não afirme o que vem depois)=${artifact.preview.slice(0, 6000)}`
+              : 'prévia/análise=indisponível; somente metadados persistidos'
         ].join('\n')
       )
     ].join('\n\n');

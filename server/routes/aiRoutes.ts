@@ -63,6 +63,7 @@ import {
   shouldResearchGithub,
 } from '../ai/githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import { IndependentResponseVerifier } from '../ai/independentResponseVerifier.js';
 import {
   GithubCodeReading,
   githubCodeReadingContext,
@@ -70,6 +71,16 @@ import {
   githubCodeReadingFromImport,
   shouldImportGithubCode,
 } from '../ai/githubCodeReading.js';
+
+/** Mesmo critério da rota sem streaming (aiExecutionService). */
+export function applyIndependentVerification(
+  text: string,
+  verification: { approved: boolean; revisedResponse?: string; reason: string }
+): string {
+  if (verification.approved) return text;
+  if (verification.revisedResponse) return verification.revisedResponse;
+  return `[RESPOSTA PRELIMINAR — VERIFICAÇÃO INDEPENDENTE NÃO CONCLUÍDA]\n${verification.reason}\n\n${text}`;
+}
 
 export const aiRouter = Router();
 
@@ -699,9 +710,16 @@ try {
     let siteAuditReport: SiteAuditReport | null = null;
     const startTime = Date.now();
     let isClosed = false;
+    // Respostas de alto risco (saúde, dinheiro, direito, segurança, criação de site) são
+    // revisadas pelo verificador independente ANTES de aparecer. Antes ele só existia na
+    // rota sem streaming, que a tela de chat não usa: na conversa normal nunca rodava.
+    const verifyBeforeSending =
+      plan.classification.requiresIndependentVerification;
+
     const bufferForEvidence =
       enableSearchGrounding ||
-      knowledgeBaseIds.length > 0;
+      knowledgeBaseIds.length > 0 ||
+      verifyBeforeSending;
 
     res.once('close', () => {
       if (!res.writableEnded) {
@@ -1021,6 +1039,30 @@ recentMessages:
           fullOutput,
           streamCitations
         ).text;
+      }
+
+      if (verifyBeforeSending && fullOutput.trim()) {
+        sendEvent('verification', { status: 'started' });
+        const verification = await IndependentResponseVerifier.verify({
+          prompt: sanitizedPrompt,
+          response: fullOutput,
+          domain: plan.classification.domain,
+          sensitivity: plan.classification.sensitivity,
+          researchStatus: evidence.researchStatus,
+          ragStatus: evidence.ragStatus,
+          citations: streamCitations.map((citation) => ({
+            title: citation.title,
+            uri: citation.uri,
+            snippet: citation.snippet,
+            domain: citation.domain,
+            supportedText: (citation as { supportedText?: string }).supportedText,
+          })),
+        });
+        fullOutput = applyIndependentVerification(fullOutput, verification);
+        sendEvent('verification', {
+          status: verification.approved ? 'approved' : verification.revisedResponse ? 'revised' : 'not_confirmed',
+          reason: verification.reason,
+        });
       }
 
       if (bufferForEvidence) {
