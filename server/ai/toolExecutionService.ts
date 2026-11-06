@@ -221,6 +221,7 @@ export class ToolExecutionService {
     const idempotencyScope =
       contract.mutatesState && request.idempotencyKey
       ? [
+          ...(request.actor.tenantId ? [request.actor.tenantId] : []),
           request.actor.userId,
           request.actor.projectId || 'personal',
           contract.name,
@@ -230,6 +231,7 @@ export class ToolExecutionService {
     const executionPayloadHash = payloadHash({
       toolName: contract.name,
       args: validation.data,
+      tenantId: request.actor.tenantId || null,
       userId: request.actor.userId,
       projectId: request.actor.projectId || null,
     });

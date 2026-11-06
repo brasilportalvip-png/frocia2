@@ -186,6 +186,56 @@ describe('ToolExecutionService policy enforcement', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('isolates idempotency scope and payload hash across distinct tenants', async () => {
+    let executionCount = 0;
+    const handler = vi.fn(async () => {
+      executionCount += 1;
+      return {
+        output: { txSeq: executionCount },
+        costCredits: 1,
+        deterministicVerified: true,
+      };
+    });
+    const runtime = service({
+      declaration: contract({
+        mutatesState: true,
+        requiresConfirmation: true,
+        idempotencyRequired: true,
+      }),
+      handler,
+    });
+
+    const executionTenantA = request({
+      confirmed: true,
+      idempotencyKey: 'tx-01',
+      actor: {
+        userId: 'usr-1',
+        tenantId: 'tenant-a',
+        projectId: 'personal',
+        grantedScopes: ['user'],
+      },
+    });
+    const executionTenantB = request({
+      confirmed: true,
+      idempotencyKey: 'tx-01',
+      actor: {
+        userId: 'usr-1',
+        tenantId: 'tenant-b',
+        projectId: 'personal',
+        grantedScopes: ['user'],
+      },
+    });
+
+    const receiptA = await runtime.execute(executionTenantA);
+    const receiptB = await runtime.execute(executionTenantB);
+
+    expect(receiptA.replayed).toBe(false);
+    expect(receiptB.replayed).toBe(false);
+    expect(receiptA.output).toEqual({ txSeq: 1 });
+    expect(receiptB.output).toEqual({ txSeq: 2 });
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it('does not create a mutation ledger for a read-only request key', async () => {
     const runtime = service({});
 
