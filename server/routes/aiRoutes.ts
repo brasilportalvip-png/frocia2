@@ -63,6 +63,13 @@ import {
   shouldResearchGithub,
 } from '../ai/githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import {
+  GithubCodeReading,
+  githubCodeReadingContext,
+  githubCodeReadingFromError,
+  githubCodeReadingFromImport,
+  shouldImportGithubCode,
+} from '../ai/githubCodeReading.js';
 
 export const aiRouter = Router();
 
@@ -103,7 +110,7 @@ function optionalId(value: unknown): string | null {
     !/^[A-Za-z0-9_-]+$/.test(value.trim())
   ) {
     throw new InvalidAIRequestError([
-      'Um dos identificadores informados Ã© invÃ¡lido.'
+      'Um dos identificadores informados é inválido.'
     ]);
   }
 
@@ -115,7 +122,7 @@ function parseExecutionRequest(
 ): Omit<ExecutionParams, 'userId'> {
   if (!value || typeof value !== 'object') {
     throw new InvalidAIRequestError([
-      'O corpo da requisiÃ§Ã£o Ã© obrigatÃ³rio.'
+      'O corpo da requisição é obrigatório.'
     ]);
   }
 
@@ -139,7 +146,7 @@ function parseExecutionRequest(
 
   if (!ALLOWED_MODES.has(mode)) {
     throw new InvalidAIRequestError([
-      'O modo de IA informado nÃ£o Ã© permitido.'
+      'O modo de IA informado não é permitido.'
     ]);
   }
 
@@ -167,7 +174,7 @@ function parseExecutionRequest(
       rawKnowledgeBaseIds.length
   ) {
     throw new InvalidAIRequestError([
-      'A lista de bases de conhecimento Ã© invÃ¡lida.'
+      'A lista de bases de conhecimento é inválida.'
     ]);
   }
 
@@ -197,7 +204,7 @@ function parseExecutionRequest(
     tools.length !== rawTools.length
   ) {
     throw new InvalidAIRequestError([
-      'A lista de ferramentas Ã© invÃ¡lida.'
+      'A lista de ferramentas é inválida.'
     ]);
   }
 
@@ -319,7 +326,7 @@ aiRouter.post(
             code:
               'feature_temporarily_disabled',
             message:
-              'Este recurso estÃ¡ temporariamente indisponÃ­vel.',
+              'Este recurso está temporariamente indisponível.',
             feature: error.flag,
             correlationId:
               req.correlationId
@@ -332,7 +339,7 @@ aiRouter.post(
           code:
             'ai_request_validation_failed',
           message:
-            'NÃ£o foi possÃ­vel validar a solicitaÃ§Ã£o.',
+            'Não foi possível validar a solicitação.',
           correlationId:
             req.correlationId
         }
@@ -361,7 +368,7 @@ aiRouter.post(
           code: 'unsafe_prompt',
           message:
             safety.reason ||
-            'Prompt rejeitado por seguranÃ§a.',
+            'Prompt rejeitado por segurança.',
           correlationId:
             req.correlationId
         }
@@ -372,9 +379,15 @@ aiRouter.post(
       SafetyService.sanitizeInput(prompt);
 
     let attachments = submittedAttachments;
-    const githubRepositoryUrl =
-      attachments.length === 0 &&
-      !shouldResearchGithub(sanitizedPrompt)
+    // Link https://github.com/dono/repo → o CÓDIGO é sempre importado (ver githubCodeReading.ts).
+    const canonicalGithub = shouldImportGithubCode(sanitizedPrompt, attachments.length)
+      ? extractCanonicalGithubRepository(sanitizedPrompt)
+      : null;
+    let githubCodeReading: GithubCodeReading | null = null;
+    const githubRepositoryUrl = canonicalGithub
+      ? canonicalGithub.url
+      : attachments.length === 0 &&
+        !shouldResearchGithub(sanitizedPrompt)
         ? await resolveGithubRepositoryUrlFromPrompt(
             sanitizedPrompt
           )
@@ -395,17 +408,24 @@ aiRouter.post(
             data: bytes.toString('base64'),
           },
         ];
+        githubCodeReading = githubCodeReadingFromImport(imported.title || githubRepositoryUrl, imported);
       } catch (error) {
-        if (error instanceof ExternalImportError) {
-          return res.status(error.status).json({
-            error: {
-              code: error.code,
-              message: error.message,
-              correlationId: req.correlationId,
-            },
-          });
+        if (canonicalGithub) {
+          // Não derruba o chat: o modelo é avisado de que NÃO leu o código.
+          console.warn('[GitHub] leitura do código falhou', error instanceof Error ? error.message : error);
+          githubCodeReading = githubCodeReadingFromError(canonicalGithub.url, error);
+        } else {
+          if (error instanceof ExternalImportError) {
+            return res.status(error.status).json({
+              error: {
+                code: error.code,
+                message: error.message,
+                correlationId: req.correlationId,
+              },
+            });
+          }
+          throw error;
         }
-        throw error;
       }
     }
 
@@ -539,7 +559,7 @@ try {
             message:
               error instanceof Error
                 ? error.message
-                : 'Erro ao reservar crÃ©ditos.',
+                : 'Erro ao reservar créditos.',
             correlationId:
               req.correlationId
           }
@@ -608,14 +628,14 @@ try {
             userId: uid,
             reservationId,
             operation:
-              'Estorno por falha ao criar o registro da execuÃ§Ã£o de IA',
+              'Estorno por falha ao criar o registro da execução de IA',
             idempotencyKey:
               `trace-failed-${idempotencyKey}`
           }
         );
       } catch (releaseError) {
         console.error(
-          'Falha ao liberar reserva apÃ³s erro na criaÃ§Ã£o do trace:',
+          'Falha ao liberar reserva após erro na criação do trace:',
           releaseError
         );
       }
@@ -625,7 +645,7 @@ try {
           code:
             'execution_trace_failed',
           message:
-            'NÃ£o foi possÃ­vel iniciar a execuÃ§Ã£o de IA.',
+            'Não foi possível iniciar a execução de IA.',
           correlationId:
             req.correlationId
         }
@@ -689,7 +709,7 @@ try {
 
         ExecutionAbortRegistry.cancel(
           executionId,
-          'ConexÃ£o SSE encerrada pelo cliente.'
+          'Conexão SSE encerrada pelo cliente.'
         );
       }
     });
@@ -890,6 +910,7 @@ recentMessages:
 
        const modelUserMessage = [
         assembled.userMessage,
+        githubCodeReadingContext(githubCodeReading),
         githubResearchContext,
         siteAuditReport
           ? SiteAuditService.toGroundingContext(
@@ -922,7 +943,7 @@ recentMessages:
       for await (const chunk of stream) {
         if (isClosed) {
           throw new Error(
-            'ConexÃ£o abortada pelo cliente.'
+            'Conexão abortada pelo cliente.'
           );
         }
 
@@ -1047,7 +1068,7 @@ recentMessages:
         }
       );
 
-      // Persiste o turno completo da conversa para que o histÃ³rico
+      // Persiste o turno completo da conversa para que o histórico
       // possa ser reaberto posteriormente pela interface.
       if (adminDb && conversationId) {
         try {
@@ -1239,7 +1260,7 @@ recentMessages:
           : 'Erro desconhecido';
 
       console.error(
-        'Erro na transmissÃ£o SSE de IA:',
+        'Erro na transmissão SSE de IA:',
         streamError
       );
 
@@ -1258,15 +1279,15 @@ recentMessages:
             userId: uid,
             reservationId,
             operation: wasCancelled
-              ? 'Estorno por cancelamento da transmissÃ£o SSE'
-              : `Estorno por erro de transmissÃ£o SSE: ${message}`,
+              ? 'Estorno por cancelamento da transmissão SSE'
+              : `Estorno por erro de transmissão SSE: ${message}`,
             idempotencyKey:
               `rel-${idempotencyKey}`
           }
         );
       } catch (releaseError) {
         console.warn(
-          'A reserva SSE jÃ¡ estava liberada ou o estorno falhou:',
+          'A reserva SSE já estava liberada ou o estorno falhou:',
           releaseError
         );
       }
@@ -1297,7 +1318,7 @@ recentMessages:
                 ? 'context_limit_exceeded'
                 : 'stream_failed',
             message: wasCancelled
-              ? 'ExecuÃ§Ã£o cancelada pelo usuÃ¡rio.'
+              ? 'Execução cancelada pelo usuário.'
               : message
           }
         );
@@ -1326,7 +1347,7 @@ aiRouter.post(
       ) {
         requestAbortController.abort(
           new Error(
-            'ConexÃ£o encerrada pelo cliente.'
+            'Conexão encerrada pelo cliente.'
           )
         );
       }
@@ -1412,7 +1433,7 @@ aiRouter.post(
             code:
               'feature_temporarily_disabled',
             message:
-              'Este recurso estÃ¡ temporariamente indisponÃ­vel.',
+              'Este recurso está temporariamente indisponível.',
             feature: error.flag,
             correlationId:
               req.correlationId
@@ -1573,7 +1594,7 @@ aiRouter.post(
           message:
             error instanceof Error
               ? error.message
-              : 'NÃ£o foi possÃ­vel iniciar a pesquisa.',
+              : 'Não foi possível iniciar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1601,7 +1622,7 @@ aiRouter.get(
           message:
             error instanceof Error
               ? error.message
-              : 'NÃ£o foi possÃ­vel atualizar a pesquisa.',
+              : 'Não foi possível atualizar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1629,7 +1650,7 @@ aiRouter.post(
           message:
             error instanceof Error
               ? error.message
-              : 'NÃ£o foi possÃ­vel cancelar a pesquisa.',
+              : 'Não foi possível cancelar a pesquisa.',
           correlationId: req.correlationId,
         },
       });
@@ -1663,7 +1684,7 @@ aiRouter.get(
           error: {
             code: 'trace_not_found',
             message:
-              'Trace de execuÃ§Ã£o nÃ£o localizado.',
+              'Trace de execução não localizado.',
             correlationId:
               req.correlationId
           }
@@ -1711,7 +1732,7 @@ aiRouter.post(
           error: {
             code: 'trace_not_found',
             message:
-              'ExecuÃ§Ã£o nÃ£o encontrada.',
+              'Execução não encontrada.',
             correlationId:
               req.correlationId
           }
@@ -1721,7 +1742,7 @@ aiRouter.post(
       if (trace.status === 'running') {
         ExecutionAbortRegistry.cancel(
           executionId,
-          'ExecuÃ§Ã£o cancelada pelo usuÃ¡rio.'
+          'Execução cancelada pelo usuário.'
         );
 
         await CreditWalletService.releaseReservation(
@@ -1730,7 +1751,7 @@ aiRouter.post(
             reservationId:
               trace.reservationId,
             operation:
-              'Estorno por cancelamento do usuÃ¡rio',
+              'Estorno por cancelamento do usuário',
             idempotencyKey:
               `cancel-${executionId}`
           }
@@ -1760,7 +1781,7 @@ aiRouter.post(
         error: {
           code: 'cancel_failed',
           message:
-            'Erro ao cancelar execuÃ§Ã£o.',
+            'Erro ao cancelar execução.',
           correlationId:
             req.correlationId
         }

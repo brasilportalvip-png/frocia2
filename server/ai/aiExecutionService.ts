@@ -45,6 +45,13 @@ import {
   shouldResearchGithub,
 } from './githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import {
+  GithubCodeReading,
+  githubCodeReadingContext,
+  githubCodeReadingFromError,
+  githubCodeReadingFromImport,
+  shouldImportGithubCode,
+} from './githubCodeReading.js';
 import { SelfSiteOwnerService } from '../selfEvolution/selfSiteOwnerService.js';
 
 export class AIExecutionService {
@@ -113,19 +120,37 @@ export class AIExecutionService {
     const sanitizedPrompt = SafetyService.sanitizeInput(prompt);
 
     let attachments = submittedAttachments;
-    const githubRepositoryUrl =
-      attachments.length === 0 &&
-      !shouldResearchGithub(sanitizedPrompt)
+    // Link https://github.com/dono/repo → o CÓDIGO é sempre importado (ver githubCodeReading.ts).
+    const canonicalGithub = shouldImportGithubCode(sanitizedPrompt, attachments.length)
+      ? extractCanonicalGithubRepository(sanitizedPrompt)
+      : null;
+    let githubCodeReading: GithubCodeReading | null = null;
+    const githubRepositoryUrl = canonicalGithub
+      ? canonicalGithub.url
+      : attachments.length === 0 &&
+        !shouldResearchGithub(sanitizedPrompt)
         ? await resolveGithubRepositoryUrlFromPrompt(
             sanitizedPrompt
           )
         : undefined;
 
+    let imported: Awaited<ReturnType<typeof ExternalImportService.import>> | null = null;
     if (githubRepositoryUrl) {
-      const imported = await ExternalImportService.import({
-        type: 'github',
-        url: githubRepositoryUrl,
-      });
+      try {
+        imported = await ExternalImportService.import({
+          type: 'github',
+          url: githubRepositoryUrl,
+        });
+        githubCodeReading = githubCodeReadingFromImport(imported.title || githubRepositoryUrl, imported);
+      } catch (error) {
+        if (!canonicalGithub) throw error;
+        // Não derruba a resposta: o modelo é avisado de que NÃO leu o código.
+        console.warn('[GitHub] leitura do código falhou', error instanceof Error ? error.message : error);
+        githubCodeReading = githubCodeReadingFromError(canonicalGithub.url, error);
+      }
+    }
+
+    if (imported) {
       attachments = [
         {
           type: 'code',
@@ -523,6 +548,7 @@ recentMessages: conversationContext.recentMessages,
         assembled.userMessage,
         siteAuditReport ? SiteAuditService.toGroundingContext(siteAuditReport) : '',
         socialSearchReport ? SocialSearchService.toGroundingContext(socialSearchReport) : '',
+        githubCodeReadingContext(githubCodeReading),
         githubResearchContext,
         calculatorContext,
         weatherContext,
