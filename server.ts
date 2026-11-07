@@ -74,6 +74,7 @@ import { portableRecoveryRouter } from './server/routes/portableRecoveryRoutes.j
 import { toolRouter } from './server/routes/toolRoutes.js';
 import { githubAppRouter } from './server/routes/githubAppRoutes.js';
 import { speechRouter } from './server/routes/speechRoutes.js';
+import { siteCommandRouter } from './server/routes/siteCommandRoutes.js';
 import { AIExecutionService } from './server/ai/aiExecutionService.js';
 
 
@@ -195,6 +196,7 @@ export async function createApp() {
   app.use('/api/social-search', socialSearchRouter);
   app.use('/api/tools', toolRouter);
   app.use('/api/github', githubAppRouter);
+  app.use('/api/site-commands', siteCommandRouter);
   app.use(
     '/api/ai/speech',
     requireFeatureFlag('ai_chat'),

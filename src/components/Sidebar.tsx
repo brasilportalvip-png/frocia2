@@ -50,6 +50,7 @@ import { CodeSnippetModal } from './CodeSnippetModal';
 import { ZipInspectorModal } from './ZipInspectorModal';
 import { KnowledgeBaseModal } from './KnowledgeBaseModal';
 import { MascotWidget } from './MascotWidget';
+import { useSiteCommand } from '../services/siteCommandBus';
 
 const WHATSAPP_SUPPORT_URL =
   'https://chat.whatsapp.com/JqXdWPrCVxz1NC9dXyMdso?s=cl&p=a&ilr=2&amv=1';
@@ -90,6 +91,7 @@ interface SidebarProps {
   errorMsg: string | null;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
+  onOpenMobile?: () => void;
   onNavigate?: (mode: AppNavigationMode) => void;
   isAdmin?: boolean;
 }
@@ -113,6 +115,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   errorMsg,
   isOpenMobile = false,
   onCloseMobile,
+  onOpenMobile,
   onNavigate
 }) => {
   const [historyTab, setHistoryTab] = useState<'conversations' | 'projects'>('conversations');
@@ -255,6 +258,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setActiveSection('history');
     onCloseMobile?.();
   };
+
+  /* Central de Comandos do Site: menu lateral por voz. */
+  const isCompactScreen = () =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 1023px)').matches === true;
+  const revealSidebar = () => {
+    if (isCompactScreen()) onOpenMobile?.();
+    else setIsCollapsed(false);
+  };
+
+  useSiteCommand('sidebar.toggle', ({ value }) => {
+    if (value === 'close') {
+      if (isCompactScreen()) onCloseMobile?.();
+      else setIsCollapsed(true);
+      return { ok: true, message: 'Fechei o menu lateral.' };
+    }
+    revealSidebar();
+    return { ok: true, message: 'Abri o menu lateral.' };
+  });
+
+  useSiteCommand('sidebar.section', ({ value }) => {
+    const labels: Record<string, string> = {
+      history: 'o histórico de conversas',
+      projects: 'os seus projetos',
+      create: 'o criador de sites',
+      templates: 'os modelos prontos',
+      tools: 'as ferramentas',
+    };
+    if (!value || !labels[value]) return { ok: false, message: 'Não reconheci essa seção do menu.' };
+    revealSidebar();
+    if (value === 'history' || value === 'projects') {
+      setActiveSection('history');
+      setHistoryTab(value === 'projects' ? 'projects' : 'conversations');
+    } else {
+      setActiveSection(value as SidebarSection);
+    }
+    return { ok: true, message: `Abri ${labels[value]}.` };
+  });
+
+  useSiteCommand('support.open', () => {
+    revealSidebar();
+    setIsSupportOpen(true);
+    return { ok: true, message: 'Abri o suporte. Escolha WhatsApp ou Telegram.' };
+  });
+
+  useSiteCommand('ui.close', () => {
+    const wasOpen = isSupportOpen || isAttachmentMenuOpen || isCameraOpen || isVoiceOpen ||
+      isUrlModalOpen || isCodeModalOpen || isZipModalOpen || isKbModalOpen;
+    setIsSupportOpen(false);
+    setIsAttachmentMenuOpen(false);
+    setIsCameraOpen(false);
+    setIsVoiceOpen(false);
+    setIsUrlModalOpen(false);
+    setIsCodeModalOpen(false);
+    setIsZipModalOpen(false);
+    setIsKbModalOpen(false);
+    return { ok: wasOpen, message: '' };
+  });
 
   const toggleFeature = (feature: string) => {
     setSelectedFeatures((current) =>

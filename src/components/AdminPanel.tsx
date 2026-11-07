@@ -23,6 +23,7 @@ import { DisasterRecoveryModal } from './DisasterRecoveryModal';
 import { OperationalObservabilityModal } from './OperationalObservabilityModal';
 import { SelfEvolutionDashboard } from './self-evolution/SelfEvolutionDashboard';
 import { apiClient } from '../services/apiClient';
+import { useSiteCommand } from '../services/siteCommandBus';
 
 interface AdminPanelProps {
   onGrantCreditsToUser?: (amount: number, userEmail: string) => void;
@@ -143,6 +144,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = () => {
   const [isFeatureFlagsOpen, setIsFeatureFlagsOpen] = useState(false);
   const [isDisasterRecoveryOpen, setIsDisasterRecoveryOpen] = useState(false);
   const [isObservabilityOpen, setIsObservabilityOpen] = useState(false);
+
+  /* Central de Comandos do Site: painel administrativo inteiro por voz (somente admin). */
+  const ADMIN_TAB_LABELS = {
+    metrics: 'as métricas',
+    models: 'os modelos de IA',
+    users: 'a gestão de usuários e créditos',
+    audit: 'os logs de auditoria',
+    selfEvolution: 'a autoevolução e os agentes',
+  } as const;
+  useSiteCommand('admin.tab', ({ value }) => {
+    const tab = (value && value in ADMIN_TAB_LABELS ? value : 'metrics') as keyof typeof ADMIN_TAB_LABELS;
+    setActiveTab(tab);
+    return { ok: true, message: `Abri ${ADMIN_TAB_LABELS[tab]}.` };
+  });
+  const openAdminModal = (open: () => void, label: string) => () => {
+    open();
+    return { ok: true, message: `Abri ${label}.` };
+  };
+  useSiteCommand('admin.prompts', openAdminModal(() => setIsPromptRegistryOpen(true), 'o registro de prompts'));
+  useSiteCommand('admin.evaluations', openAdminModal(() => setIsEvaluationsOpen(true), 'as avaliações'));
+  useSiteCommand('admin.traces', openAdminModal(() => setIsTracesOpen(true), 'os rastros de execução'));
+  useSiteCommand('admin.observability', openAdminModal(() => setIsObservabilityOpen(true), 'a observabilidade'));
+  useSiteCommand('admin.featureFlags', openAdminModal(() => setIsFeatureFlagsOpen(true), 'as chaves de funcionalidades'));
+  useSiteCommand('admin.disasterRecovery', openAdminModal(() => setIsDisasterRecoveryOpen(true), 'a recuperação de desastre'));
+  useSiteCommand('ui.close', () => {
+    const wasOpen = isPromptRegistryOpen || isEvaluationsOpen || isTracesOpen || isFeatureFlagsOpen ||
+      isDisasterRecoveryOpen || isObservabilityOpen;
+    setIsPromptRegistryOpen(false);
+    setIsEvaluationsOpen(false);
+    setIsTracesOpen(false);
+    setIsFeatureFlagsOpen(false);
+    setIsDisasterRecoveryOpen(false);
+    setIsObservabilityOpen(false);
+    return { ok: wasOpen, message: '' };
+  });
 
   useEffect(() => {
     async function loadMetrics() {

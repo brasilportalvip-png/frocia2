@@ -24,6 +24,9 @@ import { toAIAttachmentPayloads } from './services/attachmentService';
 import { isProjectEditRequest } from './services/projectEditIntent';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SiteCommandToast } from './components/SiteCommandToast';
+import { setSiteCommandEnvironment, useSiteCommand } from './services/siteCommandBus';
+import { resolveNamedItem } from '../shared/siteCommandCatalog';
 
 const ExportModal = lazyWithRetry(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
 const PricingPage = lazyWithRetry(() => import('./components/PricingPage').then(m => ({ default: m.PricingPage })));
@@ -548,7 +551,7 @@ const fetchConversations = async () => {
     }
   };
 
-  const handleDeleteConversation = async (convId: string) => {
+  const handleDeleteConversation = async (convId: string): Promise<boolean> => {
     const activeConvKey = getPartitionedKey('frocia_active_conv', currentUser.id);
     try {
       await apiClient(`/api/conversations/${convId}`, { method: 'DELETE' });
@@ -563,8 +566,10 @@ const fetchConversations = async () => {
         }
         setChatMessages([]);
       }
+      return true;
     } catch (err: any) {
       console.error('Erro ao deletar conversa:', err);
+      return false;
     }
   };
 
@@ -1458,13 +1463,13 @@ const handleGeneralChat = async (
     }
   };
 
-  const handleDeleteSite = async (siteId: string) => {
-    if (deletingSiteIds.includes(siteId)) return;
+  const handleDeleteSite = async (siteId: string): Promise<boolean> => {
+    if (deletingSiteIds.includes(siteId)) return false;
     setErrorMsg(null);
     setDeleteError(null);
 
     const removed = savedSites.find((site) => site.id === siteId);
-    if (!removed) return;
+    if (!removed) return false;
 
     // Remoção imediata na tela; volta atrás se o servidor recusar.
     setDeletingSiteIds((ids) => [...ids, siteId]);
@@ -1488,6 +1493,7 @@ const handleGeneralChat = async (
           if (!(deleteError instanceof ApiClientError && deleteError.status === 404)) throw deleteError;
         }
       }
+      return true;
     } catch (error) {
       setSavedSites((current) => {
         if (current.some((site) => site.id === removed.id)) return current;
@@ -1500,6 +1506,7 @@ const handleGeneralChat = async (
           error instanceof Error ? error.message : 'erro desconhecido'
         }. Ele foi mantido na lista.`
       );
+      return false;
     } finally {
       setDeletingSiteIds((ids) => ids.filter((id) => id !== siteId));
     }
@@ -1530,6 +1537,286 @@ const handleGeneralChat = async (
     }
   };
 
+
+  const openSavedSite = (site: GeneratedSite) => {
+    setActiveSite(site);
+    if (site.professionalBuildId) {
+      setProfessionalBuildId(site.professionalBuildId);
+      setIsMobileSidebarOpen(false);
+      return;
+    }
+    setActiveArtifact({
+      id: site.id,
+      title: site.title,
+      type: 'site',
+      content: site.html,
+      htmlPreview: site.html
+    });
+    setIsArtifactOpen(true);
+    setIsMobileSidebarOpen(false);
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Central de Comandos do Site: tudo que a voz pode fazer nesta tela.   */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    setSiteCommandEnvironment({ isAdmin: Boolean(isAdmin), isAuthenticated: Boolean(isAuthenticated) });
+  }, [isAdmin, isAuthenticated]);
+
+  const NAV_LABELS: Record<AppNavigationMode, string> = {
+    landing: 'a página inicial',
+    studio: 'o início',
+    dashboard: 'o seu painel',
+    pricing: 'a página de preços e créditos',
+    integrations: 'as integrações',
+    admin: 'o painel administrativo',
+  };
+  const navigateTo = (mode: AppNavigationMode) => {
+    setNavMode(mode);
+    setIsMobileSidebarOpen(false);
+    return { ok: true, message: `Abri ${NAV_LABELS[mode]}.` };
+  };
+  useSiteCommand('nav.studio', () => navigateTo('studio'));
+  useSiteCommand('nav.dashboard', () => navigateTo('dashboard'));
+  useSiteCommand('nav.pricing', () => navigateTo('pricing'));
+  useSiteCommand('nav.integrations', () => navigateTo('integrations'));
+  useSiteCommand('nav.admin', (_params, context) => (context.isAdmin
+    ? navigateTo('admin')
+    : { ok: false, message: 'Essa área é exclusiva do administrador.' }));
+
+  const needLogin = () => {
+    setIsAuthOpen(true);
+    return { ok: false, message: 'Para isso você precisa entrar na sua conta. Abri a janela de login.' };
+  };
+  const quote = (text: string | undefined) => `"${(text || 'sem título').trim()}"`;
+
+  useSiteCommand('chat.new', async () => {
+    if (!isAuthenticated) return needLogin();
+    setNavMode('studio');
+    await handleNewChat();
+    return { ok: true, message: 'Nova conversa criada.' };
+  });
+
+  const findConversation = (name: string | undefined): { conversation?: Conversation; error?: string } => {
+    const result = resolveNamedItem<Conversation>(conversations, name, (conversation) => conversation.title || '');
+    if (result.status === 'current') {
+      const current = conversations.find((conversation) => conversation.id === currentConversationIdRef.current);
+      return current ? { conversation: current } : { error: 'Não há nenhuma conversa aberta agora.' };
+    }
+    if (result.status === 'found') return { conversation: result.item };
+    if (result.status === 'ambiguous') {
+      return { error: `Encontrei mais de uma: ${result.options.map((option) => quote(option.title)).join(', ')}. Diga o nome completo.` };
+    }
+    return { error: name ? `Não encontrei a conversa ${quote(name)}.` : 'Não encontrei essa conversa.' };
+  };
+
+  useSiteCommand('chat.open', async ({ name }) => {
+    if (!isAuthenticated) return needLogin();
+    const found = findConversation(name);
+    if (!found.conversation) return { ok: false, message: found.error! };
+    setNavMode('studio');
+    if (found.conversation.id !== currentConversationIdRef.current) {
+      await handleSelectConversation(found.conversation.id);
+    }
+    return { ok: true, message: `Abri a conversa ${quote(found.conversation.title)}.` };
+  });
+
+  useSiteCommand('chat.delete', async ({ name }, { dryRun }) => {
+    if (!isAuthenticated) return needLogin();
+    const found = findConversation(name);
+    if (!found.conversation) return { ok: false, message: found.error! };
+    if (dryRun) return { ok: true, message: `excluir a conversa ${quote(found.conversation.title)}` };
+    const ok = await handleDeleteConversation(found.conversation.id);
+    return ok
+      ? { ok: true, message: `Conversa ${quote(found.conversation.title)} excluída.` }
+      : { ok: false, message: 'O servidor não confirmou a exclusão. A conversa foi mantida.' };
+  });
+
+  useSiteCommand('chat.deleteAll', async (_params, { dryRun }) => {
+    if (!isAuthenticated) return needLogin();
+    if (!conversations.length) return { ok: false, message: 'Você não tem conversas salvas.' };
+    if (dryRun) return { ok: true, message: `excluir todas as ${conversations.length} conversas` };
+    let removed = 0;
+    for (const conversation of [...conversations]) {
+      if (await handleDeleteConversation(conversation.id)) removed += 1;
+    }
+    return removed === conversations.length
+      ? { ok: true, message: `Excluí ${removed} conversas.` }
+      : { ok: false, message: `Excluí ${removed} de ${conversations.length} conversas; as demais foram mantidas.` };
+  });
+
+  useSiteCommand('chat.list', () => {
+    if (!isAuthenticated) return needLogin();
+    if (!conversations.length) return { ok: true, message: 'Você ainda não tem conversas salvas.' };
+    const top = conversations.slice(0, 5).map((conversation, index) => `${index + 1}. ${conversation.title || 'Sem título'}`);
+    return {
+      ok: true,
+      message: `Você tem ${conversations.length} conversa${conversations.length === 1 ? '' : 's'}. As mais recentes: ${top.join('; ')}.`,
+    };
+  });
+
+  useSiteCommand('chat.stop', () => {
+    if (!isGenerating && !activeRequestControllerRef.current) return { ok: true, message: 'Não há nenhuma resposta em andamento.' };
+    handleStopGeneration();
+    return { ok: true, message: 'Parei a resposta.' };
+  });
+
+  const sitesByRecency = () => [...savedSites].sort((first, second) => second.updatedAt - first.updatedAt);
+  const findSite = (name: string | undefined): { site?: GeneratedSite; error?: string } => {
+    const result = resolveNamedItem<GeneratedSite>(sitesByRecency(), name, (site) => site.title || '');
+    if (result.status === 'current') return activeSite ? { site: activeSite } : { error: 'Não há nenhum projeto aberto agora.' };
+    if (result.status === 'found') return { site: result.item };
+    if (result.status === 'ambiguous') {
+      return { error: `Encontrei mais de um: ${result.options.map((option) => quote(option.title)).join(', ')}. Diga o nome completo.` };
+    }
+    return { error: name ? `Não encontrei o projeto ${quote(name)}.` : 'Não encontrei esse projeto.' };
+  };
+
+  useSiteCommand('site.new', () => {
+    handleNewSite();
+    setNavMode('studio');
+    return { ok: true, message: 'Pronto para um projeto novo. Diga o que quer criar.' };
+  });
+
+  useSiteCommand('site.open', ({ name }) => {
+    const found = findSite(name);
+    if (!found.site) return { ok: false, message: found.error! };
+    setNavMode('studio');
+    openSavedSite(found.site);
+    return { ok: true, message: `Abri o projeto ${quote(found.site.title)}.` };
+  });
+
+  useSiteCommand('site.delete', async ({ name }, { dryRun }) => {
+    const found = findSite(name);
+    if (!found.site) return { ok: false, message: found.error! };
+    if (dryRun) return { ok: true, message: `excluir o projeto ${quote(found.site.title)}` };
+    const ok = await handleDeleteSite(found.site.id);
+    return ok
+      ? { ok: true, message: `Projeto ${quote(found.site.title)} excluído.` }
+      : { ok: false, message: `Não consegui excluir ${quote(found.site.title)}; ele foi mantido.` };
+  });
+
+  useSiteCommand('site.clearLocal', (_params, { dryRun }) => {
+    const local = savedSites.filter((site) => site.id.startsWith('local-') || site.id.startsWith('tmpl-'));
+    if (!local.length) return { ok: false, message: 'Não há projetos só deste aparelho para limpar.' };
+    if (dryRun) return { ok: true, message: `remover ${local.length} projeto${local.length === 1 ? '' : 's'} que só existem neste aparelho` };
+    handleClearLocalProjects();
+    return { ok: true, message: `Removi ${local.length} projeto${local.length === 1 ? '' : 's'} locais da lista.` };
+  });
+
+  const requireActiveSite = () => (activeSite ? null : { ok: false, message: 'Abra ou crie um projeto primeiro.' });
+
+  useSiteCommand('site.favorite', () => {
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    handleToggleFavorite(activeSite!.id);
+    return { ok: true, message: activeSite!.isFavorite ? 'Removi dos favoritos.' : 'Marquei como favorito.' };
+  });
+
+  useSiteCommand('site.export', () => {
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    if (activeSite!.professionalBuildId) setProfessionalBuildId(activeSite!.professionalBuildId);
+    else setIsExportOpen(true);
+    return { ok: true, message: 'Abri a exportação do projeto.' };
+  });
+
+  useSiteCommand('site.configure', () => {
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    setIsProjectConfigurationOpen(true);
+    return { ok: true, message: 'Abri as configurações do projeto.' };
+  });
+
+  useSiteCommand('site.build', () => {
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    if (!activeSite!.professionalBuildId) return { ok: false, message: 'Este projeto ainda não tem construção profissional.' };
+    setProfessionalBuildId(activeSite!.professionalBuildId);
+    return { ok: true, message: 'Abri o painel de construção profissional.' };
+  });
+
+  useSiteCommand('site.refresh', () => {
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    refreshFrame();
+    return { ok: true, message: 'Atualizei a prévia.' };
+  });
+
+  useSiteCommand('view.mode', ({ value }) => {
+    const mode: ViewMode = value === 'code' || value === 'split' ? value : 'preview';
+    setNavMode('studio');
+    setViewMode(mode);
+    setMobilePane(mode === 'code' ? 'code' : mode === 'preview' ? 'preview' : 'chat');
+    const label = mode === 'code' ? 'o código' : mode === 'split' ? 'a visão lado a lado' : 'a prévia';
+    return activeSite
+      ? { ok: true, message: `Mostrando ${label}.` }
+      : { ok: true, message: `Deixei ${label} selecionada; ela aparece quando um projeto estiver aberto.` };
+  });
+
+  useSiteCommand('view.device', ({ value }) => {
+    const device: DeviceView = value === 'mobile' || value === 'tablet' ? value : 'desktop';
+    setDeviceView(device);
+    return { ok: true, message: `Prévia como ${device === 'mobile' ? 'celular' : device === 'tablet' ? 'tablet' : 'computador'}.` };
+  });
+
+  useSiteCommand('view.fullscreen', ({ value }) => {
+    if (value === 'off') {
+      setIsFullscreen(false);
+      return { ok: true, message: 'Saí da tela cheia.' };
+    }
+    const missing = requireActiveSite();
+    if (missing) return missing;
+    setIsFullscreen(true);
+    return { ok: true, message: 'Abri a prévia em tela cheia.' };
+  });
+
+  useSiteCommand('ui.theme', ({ value }) => {
+    const root = document.documentElement;
+    const light = value === 'light' ? true : value === 'dark' ? false : !root.classList.contains('froc-light-mode');
+    root.classList.toggle('froc-light-mode', light);
+    return { ok: true, message: light ? 'Tema claro ativado.' : 'Tema escuro ativado.' };
+  });
+
+  useSiteCommand('auth.login', () => {
+    if (isAuthenticated) return { ok: true, message: 'Você já está conectado.' };
+    setIsAuthOpen(true);
+    return { ok: true, message: 'Abri a janela de login.' };
+  });
+
+  useSiteCommand('auth.logout', async (_params, { dryRun }) => {
+    if (!isAuthenticated) return { ok: false, message: 'Você não está conectado.' };
+    if (dryRun) return { ok: true, message: 'sair da sua conta' };
+    await logout();
+    return { ok: true, message: 'Você saiu da conta.' };
+  });
+
+  useSiteCommand('ui.reload', () => {
+    window.setTimeout(() => window.location.reload(), 900);
+    return { ok: true, message: 'Recarregando o site.' };
+  });
+
+  useSiteCommand('ui.close', () => {
+    let closed = false;
+    const close = (open: boolean, action: () => void) => { if (open) { action(); closed = true; } };
+    close(isFullscreen, () => setIsFullscreen(false));
+    close(isExportOpen, () => setIsExportOpen(false));
+    close(isAuthOpen, () => setIsAuthOpen(false));
+    close(mediaModal.isOpen, () => setMediaModal((current) => ({ ...current, isOpen: false })));
+    close(costModal.isOpen, () => setCostModal((current) => ({ ...current, isOpen: false })));
+    close(isArtifactOpen, () => setIsArtifactOpen(false));
+    close(isProjectConfigurationOpen, () => setIsProjectConfigurationOpen(false));
+    close(Boolean(professionalBuildId), () => setProfessionalBuildId(null));
+    close(isMobileSidebarOpen, () => setIsMobileSidebarOpen(false));
+    return { ok: closed, message: closed ? 'Fechei.' : '' };
+  });
+  // Usado pelo "fechar" quando nenhuma janela estava aberta: volta para o início.
+  useSiteCommand('ui.back', () => {
+    if (navMode === 'studio') return { ok: false, message: '' };
+    setNavMode('studio');
+    return { ok: true, message: 'Voltei para o início.' };
+  });
+
   const refreshFrame = () => {
     if (activeSite) {
       setActiveSite({ ...activeSite });
@@ -1547,6 +1834,7 @@ const handleGeneralChat = async (
 
   return (
     <div id="froc-app-root" className="froc-app-background h-dvh w-full flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased">
+      <SiteCommandToast />
 
 
 
@@ -1666,26 +1954,19 @@ const handleGeneralChat = async (
         </Suspense>
         </ErrorBoundary>
 
-        {navMode === 'studio' && (
-          <div className="flex-1 flex flex-col lg:flex-row w-full h-full overflow-hidden relative">
+        {/* O estúdio fica montado (oculto) nas outras telas para a escuta de voz
+            continuar ativa e a IA poder comandar o site inteiro de qualquer página. */}
+        {(
+          <div
+            aria-hidden={navMode !== 'studio'}
+            className={`${navMode === 'studio' ? 'flex' : 'hidden'} flex-1 flex-col lg:flex-row w-full h-full overflow-hidden relative`}
+          >
             {/* Left Collapsible Sidebar */}
             <Sidebar
               onGenerateSite={handleGenerateSite}
               onRefineSite={handleRefineSite}
               onSelectTemplate={handleSelectTemplate}
-              onLoadSavedSite={(site) => {
-                setActiveSite(site);
-                if(site.professionalBuildId){setProfessionalBuildId(site.professionalBuildId);setIsMobileSidebarOpen(false);return;}
-                setActiveArtifact({
-                  id: site.id,
-                  title: site.title,
-                  type: 'site',
-                  content: site.html,
-                  htmlPreview: site.html
-                });
-                setIsArtifactOpen(true);
-                setIsMobileSidebarOpen(false);
-              }}
+              onLoadSavedSite={openSavedSite}
               onNewChat={() => {
                 handleNewChat();
                 setIsMobileSidebarOpen(false);
@@ -1705,6 +1986,7 @@ const handleGeneralChat = async (
               errorMsg={errorMsg}
               isOpenMobile={isMobileSidebarOpen}
               onCloseMobile={() => setIsMobileSidebarOpen(false)}
+              onOpenMobile={() => setIsMobileSidebarOpen(true)}
               onNavigate={(mode) => {
                 setNavMode(mode);
                 setIsMobileSidebarOpen(false);
@@ -1742,6 +2024,8 @@ const handleGeneralChat = async (
 
 
              onSendMessage={async (text, mode, files = []) => {
+  // Pedido de voz feito em outra tela: a resposta aparece no chat.
+  setNavMode('studio');
   if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
     await handleGenerateSite(
       {
