@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
 import { classifyFrocMediaVoiceCommand, classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { executeSiteCommandText, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
@@ -1195,6 +1196,21 @@ export const ChatCentral: React.FC<
       return;
     }
 
+    // Comando digitado curto ("abrir preços", "excluir esta conversa", "confirmar").
+    if (
+      voiceText === undefined &&
+      attachedFiles.length === 0 &&
+      normalizedText &&
+      !normalizedText.includes('?') &&
+      normalizedText.split(/\s+/).length <= 10
+    ) {
+      const outcome = await executeSiteCommandText(normalizedText).catch(() => null);
+      if (outcome) {
+        setInputText('');
+        return;
+      }
+    }
+
     const textToSend =
       normalizedText ||
       'Analise os arquivos que foram anexados.';
@@ -1265,17 +1281,86 @@ await onSendMessage(
     }
   };
 
+  /* ---------------- Central de Comandos do Site ---------------- */
+  // Fala o recibo do comando e volta a ouvir o próximo pedido.
+  const speakSiteCommandReceipt = (outcome: SiteCommandOutcome) => {
+    voiceAwaitingResponseRef.current = false;
+    if (!voiceEnabledRef.current) return;
+    const text = (outcome.spoken || outcome.message || '').trim();
+    if (!text) {
+      resumeVoiceListening();
+      return;
+    }
+    handleSpeak(`site-command-${Date.now()}`, text);
+  };
+
+  const CHAT_MODE_NAMES = CHAT_MODES.map((mode) => mode.name);
+  useSiteCommand('chat.mode', ({ value }) => {
+    const mode = CHAT_MODE_NAMES.find((name) => name === value);
+    if (!mode) return { ok: false, message: 'Não reconheci esse modo.' };
+    setSelectedMode(mode);
+    setIsModeMenuOpen(false);
+    return { ok: true, message: `Modo ${mode} ativado.` };
+  });
+
+  useSiteCommand('chat.scroll', ({ value }) => {
+    const scroll = chatScrollRef.current;
+    if (!scroll) return { ok: false, message: 'A conversa não está visível agora.' };
+    scroll.scrollTo({ top: value === 'top' ? 0 : scroll.scrollHeight, behavior: 'smooth' });
+    return { ok: true, message: value === 'top' ? 'Fui para o início da conversa.' : 'Fui para o final da conversa.' };
+  });
+
+  const openTool = (open: () => void, message: string) => () => {
+    setIsAttachmentMenuOpen(false);
+    open();
+    return { ok: true, message };
+  };
+  useSiteCommand('tool.attachments', () => {
+    setIsAttachmentMenuOpen(true);
+    return { ok: true, message: 'Abri o menu de anexos. Escolha o tipo de arquivo.' };
+  });
+  useSiteCommand('tool.camera', openTool(() => setIsCameraOpen(true), 'Abri a câmera.'));
+  useSiteCommand('tool.voiceRecorder', openTool(() => setIsVoiceOpen(true), 'Abri o gravador de áudio.'));
+  useSiteCommand('tool.url', openTool(() => { setUrlImporterInitialUrl(''); setUrlImporterType('url'); }, 'Abri o importador de URL.'));
+  useSiteCommand('tool.github', openTool(() => { setUrlImporterInitialUrl(''); setUrlImporterType('github'); }, 'Abri o importador do GitHub.'));
+  useSiteCommand('tool.code', openTool(() => setIsCodeOpen(true), 'Abri a janela para colar código.'));
+  useSiteCommand('tool.knowledge', openTool(() => setIsKnowledgeBaseOpen(true), 'Abri a base de conhecimento.'));
+
+  useSiteCommand('ui.close', () => {
+    const wasOpen = isModeMenuOpen || isAttachmentMenuOpen || isCameraOpen || isVoiceOpen || isCodeOpen ||
+      urlImporterType !== null || zipForInspection !== null || isKnowledgeBaseOpen;
+    setIsModeMenuOpen(false);
+    setIsAttachmentMenuOpen(false);
+    setIsCameraOpen(false);
+    setIsVoiceOpen(false);
+    setIsCodeOpen(false);
+    setUrlImporterType(null);
+    setZipForInspection(null);
+    setIsKnowledgeBaseOpen(false);
+    return { ok: wasOpen, message: '' };
+  });
+
   useEffect(() => {
     if (!voiceCommandToSend || isGenerating) return;
     const command = voiceCommandToSend;
     setVoiceCommandToSend(null);
-    const mediaCommand = classifyFrocMediaVoiceCommand(command);
-    if (mediaCommand) {
-      setSelectedMode(mediaCommand.mode);
-      void handleSend(mediaCommand.prompt, mediaCommand.mode);
-      return;
-    }
-    void handleSend(command);
+    void (async () => {
+      // 1º: é uma ordem para o site (abrir, fechar, excluir, testar...)?
+      const outcome = await executeSiteCommandText(command, { allowRemote: true }).catch(() => null);
+      if (outcome) {
+        setInputText('');
+        speakSiteCommandReceipt(outcome);
+        return;
+      }
+      // 2º: pedidos de imagem/vídeo; 3º: conversa normal com a IA.
+      const mediaCommand = classifyFrocMediaVoiceCommand(command);
+      if (mediaCommand) {
+        setSelectedMode(mediaCommand.mode);
+        void handleSend(mediaCommand.prompt, mediaCommand.mode);
+        return;
+      }
+      void handleSend(command);
+    })();
   }, [voiceCommandToSend, isGenerating]);
 
   const handleSuggestion = (

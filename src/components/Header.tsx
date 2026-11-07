@@ -28,6 +28,7 @@ import {
   ViewMode
 } from '../types';
 import { UserDropdown } from './UserDropdown';
+import { useSiteCommand } from '../services/siteCommandBus';
 import { AvatarUploadModal } from './AvatarUploadModal';
 import { ModelSelectorModal } from './ModelSelectorModal';
 import { MemoryManagerModal } from './MemoryManagerModal';
@@ -90,6 +91,39 @@ export const Header: React.FC<HeaderProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  /* Central de Comandos do Site: janelas do cabeçalho por voz. */
+  const loginFirst = () => {
+    onOpenAuth();
+    return { ok: false, message: 'Para isso você precisa entrar na sua conta. Abri a janela de login.' };
+  };
+  useSiteCommand('header.model', () => {
+    setIsModelModalOpen(true);
+    return { ok: true, message: 'Abri o seletor de modelo de IA.' };
+  });
+  useSiteCommand('header.memory', () => {
+    if (!user.isAuthenticated) return loginFirst();
+    setIsMemoryManagerOpen(true);
+    return { ok: true, message: 'Abri o gerenciador de memórias.' };
+  });
+  useSiteCommand('header.avatar', () => {
+    if (!user.isAuthenticated) return loginFirst();
+    setIsAvatarModalOpen(true);
+    return { ok: true, message: 'Abri a troca de foto de perfil.' };
+  });
+  useSiteCommand('header.userMenu', () => {
+    if (!user.isAuthenticated) return loginFirst();
+    setIsUserDropdownOpen(true);
+    return { ok: true, message: 'Abri o menu da sua conta.' };
+  });
+  useSiteCommand('ui.close', () => {
+    const wasOpen = isUserDropdownOpen || isAvatarModalOpen || isModelModalOpen || isMemoryManagerOpen;
+    setIsUserDropdownOpen(false);
+    setIsAvatarModalOpen(false);
+    setIsModelModalOpen(false);
+    setIsMemoryManagerOpen(false);
+    return { ok: wasOpen, message: '' };
+  });
 
   const creditPercentage =
     user.creditsMax > 0

@@ -34,7 +34,10 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
   onOpenMemoryManager,
   onCloseDropdown,
 }) => {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  // Lê o tema real da página (ele também pode ser trocado por comando de voz).
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('froc-light-mode') ? 'light' : 'dark'
+  );
 
   const creditPercentage =
     user.creditsMax > 0
