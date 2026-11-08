@@ -27,6 +27,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { SiteCommandToast } from './components/SiteCommandToast';
 import { requestSiteConfirmation, setSiteCommandEnvironment, useSiteCommand } from './services/siteCommandBus';
 import { resolveNamedItem } from '../shared/siteCommandCatalog';
+import { clickTarget, findClickTarget, listVisibleActions, typeIntoField } from './services/siteDomActuator';
 
 const ExportModal = lazyWithRetry(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
 const PricingPage = lazyWithRetry(() => import('./components/PricingPage').then(m => ({ default: m.PricingPage })));
@@ -1830,6 +1831,46 @@ const handleGeneralChat = async (
       confirmedMessage: 'Confirmado. Já estou fazendo.',
     });
   }, [costModal.isOpen, costModal.opType, costModal.credits]);
+
+  // Acesso universal: qualquer botão, aba, opção ou campo visível, em qualquer tela.
+  useSiteCommand('ui.click', ({ name }) => {
+    if (!name) return { ok: false, message: 'Diga o nome do botão que devo apertar.' };
+    const found = findClickTarget(name);
+    if (found.options) {
+      return { ok: false, message: `Encontrei mais de uma opção: ${found.options.map((option) => `"${option.slice(0, 40)}"`).join(', ')}. Diga o nome completo.` };
+    }
+    if (!found.match) {
+      return { ok: false, message: `Não encontrei "${name}" nesta tela. Diga "o que tem nesta tela" para ouvir as opções.` };
+    }
+    const match = found.match;
+    const label = match.label.slice(0, 60);
+    if (match.dangerous) {
+      requestSiteConfirmation({
+        key: `click-${Date.now()}`,
+        summary: `apertar "${label}"`,
+        onConfirm: () => clickTarget(match),
+        confirmedMessage: `Apertei "${label}".`,
+      });
+      return { ok: true, message: '', silent: true };
+    }
+    clickTarget(match);
+    return { ok: true, message: `Apertei "${label}".` };
+  });
+
+  useSiteCommand('ui.type', ({ name, value }) => {
+    if (!name) return { ok: false, message: 'Diga o que devo digitar.' };
+    return typeIntoField(name, value);
+  });
+
+  useSiteCommand('ui.screen', () => {
+    const actions = listVisibleActions(12);
+    if (!actions.length) return { ok: true, message: 'Não encontrei botões nesta tela.' };
+    return {
+      ok: true,
+      message: `Nesta tela posso apertar: ${actions.map((action) => `"${action}"`).join(', ')}.`,
+      spoken: `Nesta tela tem: ${actions.slice(0, 8).join(', ')}. É só dizer clique em e o nome.`,
+    };
+  });
 
   // Usado pelo "fechar" quando nenhuma janela estava aberta: volta para o início.
   useSiteCommand('ui.back', () => {

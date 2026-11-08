@@ -100,6 +100,9 @@ const RUN =
 const LIST = '(?:list(?:e|a|ar)|quais (?:sao|sao as|sao os)?|me (?:diga|fala|fale|diz)|diga|fala|fale|mostr(?:e|a|ar) a lista de)';
 const STOP = '(?:par(?:e|a|ar)|interromp(?:a|e|er)|cancel(?:e|a|ar)|segur(?:e|a|ar))';
 const EXPORT = '(?:export(?:e|a|ar)|baix(?:e|a|ar)|fa(?:ca|zer) (?:o )?download(?: d[eoa])?|download(?: d[eoa])?|salv(?:e|a|ar) (?:em|como) zip)';
+const CLICK =
+  '(?:cliqu?(?:e|a)|clicar|clica|apert(?:e|a|ar)|pression(?:e|a|ar)|toqu?(?:e|a)|tocar|acion(?:e|a|ar)|marqu?(?:e|a)|marcar|desmarqu?(?:e|a)|desmarcar|escolh(?:a|e|er)|selecion(?:e|a|ar)|confirm(?:e|ar) (?:o|a|no|na)|d(?:e|a|ar) (?:um )?(?:clique|click) (?:em|no|na))';
+const TYPE = '(?:digit(?:e|a|ar)|preench(?:a|e|er)(?: com)?)';
 const FILL =
   '(?:(?:o|a|os|as|um|uma|meu|minha|meus|minhas|seu|sua|do|da|de|dos|das|no|na|nos|nas|em|ao|aos|pro|pra|para|tela|pagina|aba|janela|area|secao|modal|parte|opcao|opcoes|guia)\\s+)*';
 const NAME_LINK =
@@ -530,6 +533,31 @@ export const SITE_COMMANDS: SiteCommandDefinition[] = [
     patterns: [exact('(?:sai(?:a|r)? da (?:minha )?conta|deslog(?:ue|a|ar)|logout|fa(?:ca|zer|z) logout|encerr(?:e|a|ar) (?:a )?sessao|sai(?:a|r)? do (?:site|sistema))')],
   },
 
+  /* ---------------- Qualquer botão / campo da tela ---------------- */
+  {
+    id: 'ui.click', title: 'Apertar qualquer botão da tela', category: 'sistema', audience: 'user',
+    description: 'Clica em qualquer botão, aba, link, opção ou interruptor visível na tela pelo nome (name = texto do botão). Use quando nenhum outro comando específico servir.',
+    examples: ['clique em salvar', 'aperte o botão gerar relatório', 'marque a opção lembrar de mim'],
+    patterns: [rx(CLICK, '(?:(?:botao|opcao|link|item|cartao|icone|interruptor|chave)\\s+)?(?:(?:de|do|da|com|escrito)\\s+)?(?<name>.+)')],
+  },
+  {
+    id: 'ui.type', title: 'Digitar em um campo', category: 'sistema', audience: 'user',
+    description: 'Digita um texto no campo em foco ou no campo citado (name = texto; value = nome do campo).',
+    examples: ['digite meu nome é Ana no campo nome', 'digite promo10'],
+    patterns: [exact(`${TYPE}\\s+(?<name>.+?)(?:\\s+(?:no|na|em) (?:campo|caixa) (?<value>.+))?`)],
+  },
+  {
+    id: 'ui.screen', title: 'O que tem nesta tela', category: 'sistema', audience: 'user',
+    description: 'Lê em voz alta os botões e opções que estão visíveis agora.',
+    examples: ['o que tem nesta tela', 'quais botões tem aqui'],
+    patterns: [
+      exact('(?:o )?que (?:tem|ha|existe|aparece) (?:nesta|nessa|na|aqui na) (?:tela|pagina|janela)'),
+      exact('(?:quais|que) (?:sao )?(?:os )?(?:botoes|opcoes)(?: (?:tem|existem|ha))?(?: (?:aqui|nesta tela|nessa tela|na tela))?'),
+      exact('(?:o )?que (?:eu )?posso (?:clicar|apertar|fazer) (?:aqui|nesta tela)'),
+      exact('(?:le|leia|ler) (?:a )?tela'),
+    ],
+  },
+
   /* ---------------- Sistema ---------------- */
   {
     id: 'ui.close', title: 'Fechar janela', category: 'sistema', audience: 'user',
@@ -645,6 +673,17 @@ function normalizeValue(id: string, raw: string | undefined): string | undefined
 /* Interpretação local (rápida, sem custo, sem internet)               */
 /* ------------------------------------------------------------------ */
 
+/** "digite joão@gmail.com no campo e-mail" → mantém acentos, maiúsculas e símbolos do que será digitado. */
+function rawTypedText(text: string): { name?: string; value?: string } {
+  const original = String(text || '').trim();
+  const verb = /\b(?:d[ií]git(?:e|a|ar)|preench(?:a|e|er)(?:\s+com)?)\s+/i.exec(original);
+  if (!verb) return {};
+  const rest = original.slice(verb.index + verb[0].length).trim();
+  const field = /\s+(?:no|na|em)\s+(?:campo|caixa)\s+(.+)$/i.exec(rest);
+  const name = (field ? rest.slice(0, field.index) : rest).replace(/^["“']|["”'.]$/g, '').trim();
+  return { name: name || undefined, value: field?.[1]?.replace(/[.!]$/, '').trim() };
+}
+
 export function parseSiteCommand(text: string): ParsedSiteCommand | null {
   const normalized = normalizeCommandText(text);
   if (!normalized || normalized.length > 160) return null;
@@ -668,6 +707,8 @@ export function parseSiteCommand(text: string): ParsedSiteCommand | null {
       if (command.id === 'sidebar.toggle' && new RegExp(`^${CLOSE}\\b`).test(normalized)) params.value = 'close';
       if (command.id === 'view.fullscreen' && new RegExp(`^${CLOSE}\\b`).test(normalized)) params.value = 'off';
       if (command.id === 'chat.mode' && !params.value) continue;
+      if (command.id === 'ui.type') Object.assign(params, rawTypedText(text));
+      if (command.id === 'ui.click' && params.name && params.name.split(' ').length > 8) continue;
       if (command.id === 'sidebar.section' && !params.value) continue;
       return { id: command.id, params, source: 'local' };
     }
@@ -683,7 +724,7 @@ export function looksLikeSiteCommand(text: string): boolean {
   const normalized = normalizeCommandText(text);
   if (!normalized || normalized.length > 160 || normalized.split(' ').length > 14) return false;
   if (/\?/.test(text)) return false;
-  return new RegExp(`^(?:${OPEN}|${CLOSE}|${DELETE}|${SWITCH}|${RUN}|${EXPORT}|${STOP})\\b`).test(normalized) &&
+  return new RegExp(`^(?:${OPEN}|${CLOSE}|${DELETE}|${SWITCH}|${RUN}|${EXPORT}|${STOP}|${CLICK}|${TYPE})\\b`).test(normalized) &&
     !/\b(?:imagem|imagens|foto de um|video sobre|texto|redacao|resumo|poema|historia|codigo que|funcao que|explique|explica)\b/.test(normalized);
 }
 

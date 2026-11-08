@@ -71,3 +71,24 @@ describe('Interrupção em tempo real — ouvir enquanto a Froc fala', () => {
     expect(isLikelyEcho('quero um vídeo de cachorro', spoken)).toBe(false);
   });
 });
+
+import { parseSiteCommand } from '../shared/siteCommandCatalog';
+
+describe('Acesso universal por voz — qualquer botão e campo da tela', () => {
+  it.each([
+    ['clique em salvar', 'ui.click', { name: 'salvar' }],
+    ['aperte o botão gerar relatório', 'ui.click', { name: 'gerar relatorio' }],
+    ['Ok Froc, clica no plano Pro', 'ui.click', { name: 'plano pro' }],
+    ['aperta em conceder créditos', 'ui.click', { name: 'conceder creditos' }],
+    ['digite João@Gmail.com no campo e-mail', 'ui.type', { name: 'João@Gmail.com', value: 'e-mail' }],
+    ['preencha com PROMO10', 'ui.type', { name: 'PROMO10' }],
+    ['o que tem nesta tela', 'ui.screen', {}],
+    // comandos específicos continuam com prioridade
+    ['abrir preços', 'nav.pricing', {}],
+    ['selecione a aba usuários', 'admin.tab', { value: 'users' }],
+  ] as const)('"%s" → %s', (text, id, params) => {
+    const parsed = parseSiteCommand(text);
+    expect(parsed?.id).toBe(id);
+    expect(parsed?.params).toMatchObject(params);
+  });
+});
