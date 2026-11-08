@@ -6,8 +6,10 @@ import React, {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
-import { classifyFrocMediaVoiceCommand, classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
-import { executeSiteCommandText, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
+import { classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
+import { executeSiteCommandText, onSiteCommandOutcome, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
+import { decideBargeIn } from '../services/voiceBargeIn';
+import { routeFrocRequest } from '../../shared/frocIntentRouter';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
@@ -278,6 +280,10 @@ export const ChatCentral: React.FC<
   const liveSessionRef = useRef<FrocLiveSession | null>(null);
   const liveConnectingRef = useRef(false);
   const liveAttemptRef = useRef(0);
+  // Interrupção em tempo real: o que a Froc está dizendo (para filtrar o próprio eco).
+  const currentSpeechTextRef = useRef('');
+  const lastSpeechEndedAtRef = useRef(0);
+  const latestAiRef = useRef<{ id: string; text: string } | null>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
   const handleRate = (messageId: string, rating: 'up' | 'down') => {
@@ -370,16 +376,99 @@ export const ChatCentral: React.FC<
     setSpeakingMsgId(null);
   };
 
+  /** No celular com reconhecimento do navegador o microfone disputa o áudio; ali segue meio-duplex. */
+  const canListenWhileBusy = () =>
+    liveSessionRef.current !== null || liveConnectingRef.current || !mobileVoiceModeRef.current;
+
+  const isFrocBusy = () =>
+    speakingMsgIdRef.current !== null ||
+    isGeneratingRef.current ||
+    voiceAwaitingResponseRef.current ||
+    queuedSpeechRef.current !== null;
+
+  /** Para a fala e a resposta em andamento na hora em que a pessoa fala por cima. */
+  const interruptFroc = () => {
+    speechSessionRef.current += 1;
+    disposePrefetchedSpeech();
+    queuedSpeechRef.current = null;
+    progressiveSpeechRef.current = null;
+    stopNeuralAudio();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    speakingMsgIdRef.current = null;
+    setSpeakingMsgId(null);
+    currentSpeechTextRef.current = '';
+    // A resposta interrompida não volta a ser lida depois.
+    if (latestAiRef.current) lastSpokenMessageRef.current = latestAiRef.current.id;
+    if (isGeneratingRef.current) {
+      try { onStopGeneration(); } catch { /* a geração pode já ter terminado */ }
+    }
+    voiceAwaitingResponseRef.current = false;
+    setVoicePhase('listening');
+  };
+
+  const speechReference = () =>
+    [currentSpeechTextRef.current, queuedSpeechRef.current?.text || '', latestAiRef.current?.text.slice(0, 4000) || '']
+      .join(' ');
+
+  /**
+   * Toda fala ouvida passa por aqui (Gemini Live ou reconhecimento do navegador).
+   * Enquanto a Froc pensa/fala, decide se é eco, "para" ou um novo pedido.
+   */
+  const handleHeardSpeech = (text: string, isFinal: boolean): 'command' | 'other' => {
+    if (!voiceEnabledRef.current) return 'other';
+    // O fim da própria fala ainda pode chegar transcrito logo depois que ela terminou.
+    if (!isFrocBusy() && Date.now() - lastSpeechEndedAtRef.current < 2500 &&
+        decideBargeIn(text, isFinal, speechReference()) === 'ignore') {
+      return 'other';
+    }
+    if (isFrocBusy()) {
+      if (!canListenWhileBusy()) return 'other';
+      const decision = decideBargeIn(text, isFinal, speechReference());
+      if (decision === 'ignore') return 'other';
+      interruptFroc();
+      if (decision === 'stop-only') {
+        setInputText('');
+        return 'other';
+      }
+    }
+
+    const intent = classifyFrocVoiceTranscript(text, isFinal, voiceArmedRef.current);
+    if (intent.type === 'preview') {
+      if (voiceArmedRef.current || hasFrocWakePhrase(text)) setInputText(intent.text);
+      return 'other';
+    }
+    if (intent.type === 'wake') {
+      voiceArmedRef.current = true;
+      setVoicePhase('awake');
+      setInputText('');
+      return 'other';
+    }
+    if (intent.type === 'stop') {
+      disableVoiceConversation();
+      return 'other';
+    }
+    if (intent.type === 'command') {
+      voiceAwaitingResponseRef.current = true;
+      setVoicePhase('thinking');
+      setInputText(intent.command);
+      setVoiceCommandToSend(intent.command);
+      return 'command';
+    }
+    return 'other';
+  };
+
   const startVoiceRecognition = () => {
     if (
       !voiceEnabledRef.current ||
       recognitionRef.current ||
       liveConnectingRef.current ||
       liveSessionRef.current !== null ||
-      isGeneratingRef.current ||
-      voiceAwaitingResponseRef.current ||
-      speakingMsgIdRef.current !== null ||
-      ('speechSynthesis' in window && window.speechSynthesis.speaking)
+      (!canListenWhileBusy() && (
+        isGeneratingRef.current ||
+        voiceAwaitingResponseRef.current ||
+        speakingMsgIdRef.current !== null ||
+        ('speechSynthesis' in window && window.speechSynthesis.speaking)
+      ))
     ) return;
     const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!Recognition) {
@@ -400,26 +489,9 @@ export const ChatCentral: React.FC<
         transcript += event.results[index][0].transcript;
         isFinal = isFinal || event.results[index].isFinal;
       }
-      const intent = classifyFrocVoiceTranscript(
-        transcript,
-        isFinal,
-        voiceArmedRef.current
-      );
-      if (intent.type === 'preview') setInputText(intent.text);
-      if (intent.type === 'wake') {
-        voiceArmedRef.current = true;
-        setVoicePhase('awake');
-        setInputText('');
-      }
-      if (intent.type === 'command') {
-        // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
-        voiceAwaitingResponseRef.current = true;
-        setVoicePhase('thinking');
-        setInputText(intent.command);
-        setVoiceCommandToSend(intent.command);
-        stopVoiceRecognition();
-      }
-      if (intent.type === 'stop') disableVoiceConversation();
+      // No computador o microfone segue ligado para permitir interromper a Froc.
+      const result = handleHeardSpeech(transcript, isFinal);
+      if (result === 'command' && !canListenWhileBusy()) stopVoiceRecognition();
     };
     recognition.onerror = (event: any) => {
       recognitionRef.current = null;
@@ -448,10 +520,12 @@ export const ChatCentral: React.FC<
 
       if (
         voiceEnabledRef.current &&
-        !isGeneratingRef.current &&
-        !voiceAwaitingResponseRef.current &&
-        speakingMsgIdRef.current === null &&
-        !window.speechSynthesis?.speaking
+        (canListenWhileBusy() || (
+          !isGeneratingRef.current &&
+          !voiceAwaitingResponseRef.current &&
+          speakingMsgIdRef.current === null &&
+          !window.speechSynthesis?.speaking
+        ))
       ) {
         restartVoiceTimerRef.current = window.setTimeout(
           startVoiceRecognition,
@@ -496,63 +570,15 @@ export const ChatCentral: React.FC<
     liveConnectingRef.current = true;
 
     void startFrocLiveTranscription({
+      // A escuta Live nunca é pausada: a pessoa pode interromper a Froc a qualquer momento.
       onPartial: (text) => {
-        if (
-          attempt !== liveAttemptRef.current ||
-          !voiceEnabledRef.current ||
-          voiceAwaitingResponseRef.current ||
-          isGeneratingRef.current ||
-          speakingMsgIdRef.current !== null
-        ) return;
-
-        const intent = classifyFrocVoiceTranscript(
-          text,
-          false,
-          voiceArmedRef.current
-        );
-
-        if (intent.type === 'preview' &&
-            (voiceArmedRef.current || hasFrocWakePhrase(text))) {
-          setInputText(intent.text);
-        }
+        if (attempt !== liveAttemptRef.current || !voiceEnabledRef.current) return;
+        handleHeardSpeech(text, false);
       },
 
       onFinal: (text) => {
-        if (
-          attempt !== liveAttemptRef.current ||
-          !voiceEnabledRef.current ||
-          voiceAwaitingResponseRef.current ||
-          isGeneratingRef.current ||
-          speakingMsgIdRef.current !== null
-        ) return;
-
-        const intent = classifyFrocVoiceTranscript(
-          text,
-          true,
-          voiceArmedRef.current
-        );
-
-        if (intent.type === 'wake') {
-          voiceArmedRef.current = true;
-          setVoicePhase('awake');
-          setInputText('');
-          return;
-        }
-
-        if (intent.type === 'stop') {
-          disableVoiceConversation();
-          return;
-        }
-
-        if (intent.type === 'command') {
-          // Após ativar o microfone, a conversa aceita perguntas seguintes sem novo clique.
-          voiceAwaitingResponseRef.current = true;
-          liveSessionRef.current?.pause();
-
-          setVoicePhase('thinking');
-          setInputText(intent.command);
-          setVoiceCommandToSend(intent.command);
-        }
+        if (attempt !== liveAttemptRef.current || !voiceEnabledRef.current) return;
+        handleHeardSpeech(text, true);
       },
 
       onError: (message) => {
@@ -582,14 +608,8 @@ export const ChatCentral: React.FC<
 
       liveConnectingRef.current = false;
       liveSessionRef.current = session;
-
-      if (
-        voiceAwaitingResponseRef.current ||
-        isGeneratingRef.current ||
-        speakingMsgIdRef.current !== null
-      ) {
-        session.pause();
-      }
+      // Se o navegador estava ouvindo como reserva, a escuta Live assume.
+      stopVoiceRecognition();
 
       setAttachmentError(null);
     }).catch((error: unknown) => {
@@ -639,8 +659,10 @@ export const ChatCentral: React.FC<
 
     if (isGenerating) {
       setVoicePhase('thinking');
-      stopVoiceRecognition();
-      liveSessionRef.current?.pause();
+      if (!canListenWhileBusy()) {
+        stopVoiceRecognition();
+        liveSessionRef.current?.pause();
+      }
     } else {
       resumeVoiceListening();
     }
@@ -748,8 +770,14 @@ export const ChatCentral: React.FC<
       return;
     }
 
-    stopVoiceRecognition();
-    liveSessionRef.current?.pause();
+    // Microfone continua ligado (exceto celular sem Live) para permitir interromper.
+    if (!canListenWhileBusy()) {
+      stopVoiceRecognition();
+      liveSessionRef.current?.pause();
+    } else if (!liveSessionRef.current && !recognitionRef.current) {
+      window.setTimeout(startVoiceRecognition, 0);
+    }
+    currentSpeechTextRef.current = text;
     const speechSession = ++speechSessionRef.current;
     stopNeuralAudio();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
@@ -1231,8 +1259,10 @@ export const ChatCentral: React.FC<
           .reverse()
           .find((message) => message.sender === 'ai')?.id ?? null;
         voiceAwaitingResponseRef.current = true;
-        stopVoiceRecognition();
-        liveSessionRef.current?.pause();
+        if (!canListenWhileBusy()) {
+          stopVoiceRecognition();
+          liveSessionRef.current?.pause();
+        }
         setVoicePhase('thinking');
       }
 
@@ -1246,25 +1276,35 @@ const creationIntent =
   /^(?:(?:froc|por favor|pode|voce pode|quero que voce|preciso que voce)[\s,.:]+){0,3}(?:crie|cria|gere|gera|faca|desenhe|produza|construa|desenvolva|monte)\b/.test(normalizedRequest) ||
   /^(?:eu\s+)?(?:quero|preciso)\s+(?:que voce\s+)?(?:crie|criar|gere|gerar|faca|fazer|produza|produzir)\b/.test(normalizedRequest);
 
+// Roteador único: entende imagem/vídeo/pesquisa em qualquer ponto da frase,
+// mesmo no meio de outro assunto ("...agora cria uma imagem de um gato").
+const lastUserMessage = [...messages].reverse().find((message) => message.sender === 'user')?.text || '';
+const lastAiMessage = latestAiRef.current?.text || '';
+const routed = modeOverride
+  ? null
+  : routeFrocRequest(textToSend, {
+      previousTopic: [lastUserMessage, lastAiMessage.slice(0, 280)].filter(Boolean).join(' — '),
+      hasAttachments: attachedFiles.length > 0,
+    });
+
 const requestedMode: ChatMode =
   modeOverride ??
   (isProjectCreationRequest(textToSend)
     ? 'Criador de projetos'
-    : creationIntent &&
-  /\b(video|videos|vidio|vidios|animacao|animacoes|filme|filmes|clipe|clipes|reel|reels|short|shorts)\b/.test(normalizedRequest)
-    ? 'Vídeo'
-    : creationIntent &&
-        /\b(imagem|imagens|imagen|imagenes|image|images|foto|fotos|fotografia|ilustracao|arte|desenho|desenhos|figura|figuras)\b/.test(normalizedRequest)
-      ? 'Imagem'
+    : routed
+      ? routed.mode
       : creationIntent &&
           /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
         ? 'Criador de projetos'
-        : /^(?:froc[\s,.:]*)?(?:pesquise|investigue|faca uma pesquisa)\b/.test(normalizedRequest)
-          ? 'Pesquisa'
-          : 'Inteligente');
+        : 'Inteligente');
+
+const routedText =
+  routed && (routed.mode === 'Imagem' || routed.mode === 'Vídeo') && requestedMode === routed.mode
+    ? routed.prompt
+    : textToSend;
 
 await onSendMessage(
-  textToSend,
+  routedText,
   requestedMode,
   attachedFiles
 );
@@ -1280,6 +1320,25 @@ await onSendMessage(
       return;
     }
   };
+
+  useEffect(() => {
+    if (speakingMsgId === null) lastSpeechEndedAtRef.current = Date.now();
+  }, [speakingMsgId]);
+
+  useEffect(() => {
+    const latest = [...messages].reverse().find((message) => message.sender === 'ai');
+    latestAiRef.current = latest ? { id: latest.id, text: latest.text || '' } : null;
+  }, [messages]);
+
+  // Confirmações pedidas pelo site (ex.: custo de imagem) são faladas e respondidas por voz.
+  const handleSpeakRef = useRef(handleSpeak);
+  handleSpeakRef.current = handleSpeak;
+  useEffect(() => onSiteCommandOutcome((outcome) => {
+    if (outcome.source !== 'system' || !voiceEnabledRef.current) return;
+    voiceAwaitingResponseRef.current = false;
+    const text = outcome.spoken || outcome.message;
+    if (text) handleSpeakRef.current(`site-confirmation-${Date.now()}`, text);
+  }), []);
 
   /* ---------------- Central de Comandos do Site ---------------- */
   // Fala o recibo do comando e volta a ouvir o próximo pedido.
@@ -1352,13 +1411,7 @@ await onSendMessage(
         speakSiteCommandReceipt(outcome);
         return;
       }
-      // 2º: pedidos de imagem/vídeo; 3º: conversa normal com a IA.
-      const mediaCommand = classifyFrocMediaVoiceCommand(command);
-      if (mediaCommand) {
-        setSelectedMode(mediaCommand.mode);
-        void handleSend(mediaCommand.prompt, mediaCommand.mode);
-        return;
-      }
+      // 2º: o roteador único decide imagem, vídeo, site, pesquisa ou conversa.
       void handleSend(command);
     })();
   }, [voiceCommandToSend, isGenerating]);
