@@ -9,7 +9,7 @@ import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgre
 import { classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { executeSiteCommandText, onSiteCommandOutcome, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
 import { decideBargeIn } from '../services/voiceBargeIn';
-import { routeFrocRequest } from '../../shared/frocIntentRouter';
+import { routeFrocRequest, splitFrocClauses } from '../../shared/frocIntentRouter';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
@@ -190,14 +190,14 @@ const SUGGESTIONS: Array<{
   {
     label: 'Criar uma imagem',
     prompt:
-      'Crie uma imagem profissional com base na descrição que vou fornecer.',
+      'Crie uma imagem de ',
     mode: 'Imagem',
     icon: ImageIcon
   },
   {
     label: 'Criar um vídeo',
     prompt:
-      'Crie um vídeo profissional com base no roteiro e estilo que vou fornecer.',
+      'Crie um vídeo de ',
     mode: 'Vídeo',
     icon: Video
   }
@@ -1289,7 +1289,8 @@ const routed = modeOverride
 
 const requestedMode: ChatMode =
   modeOverride ??
-  (isProjectCreationRequest(textToSend)
+  (isProjectCreationRequest(textToSend) ||
+   (!routed && splitFrocClauses(textToSend).some((clause) => isProjectCreationRequest(clause)))
     ? 'Criador de projetos'
     : routed
       ? routed.mode
@@ -1354,12 +1355,14 @@ await onSendMessage(
   };
 
   const CHAT_MODE_NAMES = CHAT_MODES.map((mode) => mode.name);
+  // Não existe mais troca de modo: a Froc é uma só e escolhe sozinha.
   useSiteCommand('chat.mode', ({ value }) => {
     const mode = CHAT_MODE_NAMES.find((name) => name === value);
-    if (!mode) return { ok: false, message: 'Não reconheci esse modo.' };
-    setSelectedMode(mode);
-    setIsModeMenuOpen(false);
-    return { ok: true, message: `Modo ${mode} ativado.` };
+    if (mode) setSelectedMode(mode);
+    return {
+      ok: true,
+      message: 'Não precisa escolher modo: a Froc decide sozinha. É só pedir o que você quer.',
+    };
   });
 
   useSiteCommand('chat.scroll', ({ value }) => {
@@ -1416,11 +1419,11 @@ await onSendMessage(
     })();
   }, [voiceCommandToSend, isGenerating]);
 
+  // Sugestões só preenchem o pedido; a própria Froc decide como atender.
   const handleSuggestion = (
     prompt: string,
-    mode: ChatMode
+    _mode: ChatMode
   ) => {
-    setSelectedMode(mode);
     setInputText(prompt);
   };
 
@@ -1436,97 +1439,14 @@ await onSendMessage(
           ref={modeMenuRef}
           className="relative"
         >
-          <button
-            type="button"
-            onClick={() => {
-  setIsModeMenuOpen(false);
-}}
-            disabled={isGenerating}
+          {/* Uma Froc só: não existe escolha de modo. Ela decide sozinha o que fazer. */}
+          <div
             className="glass-button flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 text-xs"
-            aria-expanded={isModeMenuOpen}
+            title="A Froc.IA escolhe sozinha: conversa, pesquisa, código, sites, imagens e vídeos."
           >
-            <CurrentModeIcon className="h-4 w-4 shrink-0 text-amber-300" />
-
-            <span className="truncate font-bold">
-  Froc.IA — Automática
-</span>
-
-            {currentMode.laboratory && (
-              <span className="hidden rounded-full border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[8px] uppercase tracking-wider text-amber-200/80 sm:inline">
-                Laboratório
-              </span>
-            )}
-
-            <ChevronDown
-              className={`h-3.5 w-3.5 shrink-0 text-white/40 transition-transform ${
-                isModeMenuOpen ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
-
-          {isModeMenuOpen && (
-            <div className="froc-support-popover absolute left-0 top-[calc(100%+8px)] z-50 w-72 rounded-2xl border border-amber-300/20 bg-[#0a0a0a]/98 p-2 shadow-[0_24px_65px_rgba(0,0,0,0.6),0_0_28px_rgba(245,196,81,0.07)] backdrop-blur-xl">
-              <div className="px-2 pb-2 pt-1">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/35">
-                  Escolha o modo da Froc.IA
-                </p>
-              </div>
-
-              <div className="custom-scrollbar max-h-[360px] space-y-1 overflow-y-auto">
-                {CHAT_MODES.map((mode) => {
-                  const Icon = mode.icon;
-                  const isSelected =
-                    mode.name === selectedMode;
-
-                  return (
-                    <button
-                      key={mode.name}
-                      type="button"
-                      onClick={() => {
-                        setSelectedMode(mode.name);
-                        setIsModeMenuOpen(false);
-                      }}
-                      className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                        isSelected
-                          ? 'froc-menu-active'
-                          : 'border-transparent hover:bg-white/5'
-                      }`}
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/[0.035]">
-                        <Icon
-                          className={`h-4 w-4 ${
-                            isSelected
-                              ? 'text-amber-300'
-                              : 'text-white/55'
-                          }`}
-                        />
-                      </span>
-
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 text-xs font-bold text-white">
-                          {mode.name}
-
-                          {mode.laboratory && (
-                            <span className="rounded-full border border-amber-300/20 bg-amber-300/8 px-1.5 py-0.5 text-[7px] uppercase tracking-wider text-amber-200/70">
-                              Laboratório
-                            </span>
-                          )}
-                        </span>
-
-                        <span className="mt-0.5 block truncate text-[9px] text-white/38">
-                          {mode.description}
-                        </span>
-                      </span>
-
-                      {isSelected && (
-                        <span aria-hidden="true" className="text-amber-300">✓</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            <Sparkles className="h-4 w-4 shrink-0 text-amber-300" />
+            <span className="truncate font-bold">Froc.IA — faz tudo automaticamente</span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.035] px-3 py-1.5">
@@ -1583,7 +1503,7 @@ await onSendMessage(
                         {suggestion.label}
                       </span>
                       <span className="mt-0.5 block truncate text-[9px] text-white/35">
-                        Modo {suggestion.mode}
+                        É só pedir — a Froc faz
                       </span>
                     </span>
                   </button>

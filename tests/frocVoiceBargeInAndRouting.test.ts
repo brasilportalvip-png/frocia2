@@ -92,3 +92,20 @@ describe('Acesso universal por voz — qualquer botão e campo da tela', () => {
     expect(parsed?.params).toMatchObject(params);
   });
 });
+
+import { splitFrocClauses } from '../shared/frocIntentRouter';
+import { isProjectCreationRequest } from '../src/services/projectCreationIntent';
+
+describe('Uma Froc só — criar site/app no meio de qualquer assunto', () => {
+  const wantsProject = (text: string) =>
+    isProjectCreationRequest(text) || splitFrocClauses(text).some((clause) => isProjectCreationRequest(clause));
+
+  it.each([
+    ['a gente tava falando de vendas, agora cria um site para minha padaria', true],
+    ['estamos conversando sobre marketing e agora quero um site de loja virtual', true],
+    ['como criar um site?', false],
+    ['quero saber como faz um site', false],
+  ] as const)('"%s" → %s', (text, expected) => {
+    expect(wantsProject(text)).toBe(expected);
+  });
+});
