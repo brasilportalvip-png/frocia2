@@ -1394,23 +1394,18 @@ const handleGeneralChat = async (
 
     await refreshProfile();
   } catch (error: any) {
-    if (
-      error?.code ===
-      'request_aborted'
-    ) {
+    // Interrupção (pela voz, pelo botão ou por um novo pedido) não é erro:
+    // some o balão vazio e nenhuma mensagem de falha aparece.
+    const wasAborted =
+      error?.code === 'request_aborted' ||
+      error?.name === 'AbortError' ||
+      requestController.signal.aborted ||
+      /\babort/i.test(String(error?.message || ''));
+    if (wasAborted) {
       setErrorMsg(null);
-
-      setChatMessages((current) => [
-        ...current,
-        {
-          id: `ai-cancelled-${Date.now()}`,
-          sender: 'ai',
-          text:
-            'Geração interrompida pelo usuário.',
-          timestamp: Date.now()
-        }
-      ]);
-
+      setChatMessages((current) =>
+        current.filter((message) => !(message.sender === 'ai' && message.id.startsWith('ai-stream-') && !message.text.trim()))
+      );
       return;
     }
 
