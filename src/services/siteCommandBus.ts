@@ -28,6 +28,8 @@ export interface SiteCommandResult {
   message: string;
   /** Texto curto falado (se diferente do exibido). */
   spoken?: string;
+  /** A própria ação já mostrou/falou algo (ex.: pediu confirmação); não emitir recibo. */
+  silent?: boolean;
 }
 
 export interface SiteCommandContext {
@@ -310,7 +312,9 @@ export async function runSiteCommand(command: ParsedSiteCommand): Promise<SiteCo
         spoken: `Confirma ${preview.spoken || preview.message}? Diga confirmar ou cancelar.`,
       });
     }
-    return emit({ ...base, ...(await callHandlers(command.id, command.params, false)) });
+    const result = await callHandlers(command.id, command.params, false);
+    if (result.silent) return { ...base, ...result, message: '' };
+    return emit({ ...base, ...result });
   } catch (error) {
     return emit({ ...base, ok: false, message: `Não consegui concluir: ${error instanceof Error ? error.message : 'erro inesperado'}.` });
   }
