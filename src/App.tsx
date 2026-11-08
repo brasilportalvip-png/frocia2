@@ -25,7 +25,7 @@ import { isProjectEditRequest } from './services/projectEditIntent';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SiteCommandToast } from './components/SiteCommandToast';
-import { setSiteCommandEnvironment, useSiteCommand } from './services/siteCommandBus';
+import { requestSiteConfirmation, setSiteCommandEnvironment, useSiteCommand } from './services/siteCommandBus';
 import { resolveNamedItem } from '../shared/siteCommandCatalog';
 
 const ExportModal = lazyWithRetry(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
@@ -1810,6 +1810,27 @@ const handleGeneralChat = async (
     close(isMobileSidebarOpen, () => setIsMobileSidebarOpen(false));
     return { ok: closed, message: closed ? 'Fechei.' : '' };
   });
+  // Janela de custo (imagem, vídeo, construção): também confirma por voz.
+  const costModalRef = useRef(costModal);
+  costModalRef.current = costModal;
+  useEffect(() => {
+    if (!costModal.isOpen) return;
+    const credits = costModal.credits;
+    return requestSiteConfirmation({
+      key: `cost-${costModal.opType}-${Date.now()}`,
+      summary: `${costModal.opType.toLowerCase()} por ${credits} créditos`,
+      spoken: `Isso usa ${credits} créditos para ${costModal.opType.toLowerCase()}. Diga confirmar ou cancelar.`,
+      onConfirm: () => {
+        const current = costModalRef.current;
+        if (!current.isOpen) return;
+        current.onConfirm();
+        setCostModal((previous) => ({ ...previous, isOpen: false }));
+      },
+      onCancel: () => setCostModal((previous) => ({ ...previous, isOpen: false })),
+      confirmedMessage: 'Confirmado. Já estou fazendo.',
+    });
+  }, [costModal.isOpen, costModal.opType, costModal.credits]);
+
   // Usado pelo "fechar" quando nenhuma janela estava aberta: volta para o início.
   useSiteCommand('ui.back', () => {
     if (navMode === 'studio') return { ok: false, message: '' };

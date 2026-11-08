@@ -43,7 +43,8 @@ export type SiteCommandHandler = (
 
 export interface SiteCommandOutcome extends SiteCommandResult {
   commandId: string;
-  source: ParsedSiteCommand['source'];
+  /** 'system': pedido de confirmação gerado pelo próprio site (ex.: custo de imagem). */
+  source: ParsedSiteCommand['source'] | 'system';
   needsConfirmation?: boolean;
   /** Ajuda completa ou relatório detalhado para exibir. */
   details?: string;
@@ -54,7 +55,16 @@ type Listener = (outcome: SiteCommandOutcome) => void;
 const handlers = new Map<string, SiteCommandHandler[]>();
 const listeners = new Set<Listener>();
 const environment = { isAdmin: false, isAuthenticated: false };
-let pending: { command: ParsedSiteCommand; summary: string; expiresAt: number } | null = null;
+interface PendingConfirmation {
+  key: string;
+  commandId: string;
+  source: SiteCommandOutcome['source'];
+  summary: string;
+  expiresAt: number;
+  run: () => Promise<SiteCommandResult>;
+  cancel?: () => void;
+}
+let pending: PendingConfirmation | null = null;
 const history: SiteCommandOutcome[] = [];
 
 const CONFIRMATION_WINDOW_MS = 45_000;
@@ -97,7 +107,45 @@ export function getSiteCommandHistory(): SiteCommandOutcome[] {
 
 export function getPendingSiteCommand() {
   if (pending && pending.expiresAt < Date.now()) pending = null;
-  return pending ? { id: pending.command.id, summary: pending.summary } : null;
+  return pending ? { id: pending.commandId, summary: pending.summary } : null;
+}
+
+/**
+ * Pede uma confirmação que pode ser respondida por voz ("confirmar"/"cancelar")
+ * ou pelo clique na própria janela. Retorna uma função para descartar o pedido
+ * quando a janela for fechada pelo mouse.
+ */
+export function requestSiteConfirmation(options: {
+  key: string;
+  summary: string;
+  spoken?: string;
+  onConfirm: () => void | Promise<void>;
+  onCancel?: () => void;
+  confirmedMessage?: string;
+}): () => void {
+  pending = {
+    key: options.key,
+    commandId: 'confirm.request',
+    source: 'system',
+    summary: options.summary,
+    expiresAt: Date.now() + 120_000,
+    run: async () => {
+      await options.onConfirm();
+      return { ok: true, message: options.confirmedMessage || 'Confirmado. Já estou fazendo.' };
+    },
+    cancel: options.onCancel,
+  };
+  emit({
+    commandId: 'confirm.request',
+    source: 'system',
+    ok: true,
+    needsConfirmation: true,
+    message: `Confirma ${options.summary}? Diga "confirmar" ou "cancelar".`,
+    spoken: options.spoken || `Confirma ${options.summary}? Diga confirmar ou cancelar.`,
+  });
+  return () => {
+    if (pending?.key === options.key) pending = null;
+  };
 }
 
 /** Hook: registra uma ação enquanto o componente estiver montado. */
@@ -246,7 +294,14 @@ export async function runSiteCommand(command: ParsedSiteCommand): Promise<SiteCo
     if (definition.destructive) {
       const preview = await callHandlers(command.id, command.params, true);
       if (!preview.ok) return emit({ ...base, ...preview });
-      pending = { command, summary: preview.message, expiresAt: Date.now() + CONFIRMATION_WINDOW_MS };
+      pending = {
+        key: `${command.id}-${Date.now()}`,
+        commandId: command.id,
+        source: command.source,
+        summary: preview.message,
+        expiresAt: Date.now() + CONFIRMATION_WINDOW_MS,
+        run: () => callHandlers(command.id, command.params, false),
+      };
       return emit({
         ...base,
         ok: true,
@@ -265,12 +320,17 @@ async function resolvePending(confirmed: boolean): Promise<SiteCommandOutcome> {
   const current = pending;
   pending = null;
   if (!current) return emit({ commandId: confirmed ? 'confirm.yes' : 'confirm.no', source: 'local', ok: false, message: 'Não há nada aguardando confirmação.' });
-  if (!confirmed) return emit({ commandId: 'confirm.no', source: 'local', ok: true, message: `Cancelado. Não vou ${current.summary}.` });
+  if (!confirmed) {
+    try { current.cancel?.(); } catch { /* a janela pode já ter sido fechada */ }
+    return emit({ commandId: 'confirm.no', source: 'local', ok: true, message: `Cancelado. Não vou ${current.summary}.` });
+  }
+  // O resultado é falado por quem executou a confirmação; 'system' fica só para o pedido.
+  const source = current.source === 'system' ? 'local' : current.source;
   try {
-    const result = await callHandlers(current.command.id, current.command.params, false);
-    return emit({ commandId: current.command.id, source: current.command.source, ...result });
+    const result = await current.run();
+    return emit({ commandId: current.commandId, source, ...result });
   } catch (error) {
-    return emit({ commandId: current.command.id, source: current.command.source, ok: false, message: `Não consegui concluir: ${error instanceof Error ? error.message : 'erro inesperado'}.` });
+    return emit({ commandId: current.commandId, source, ok: false, message: `Não consegui concluir: ${error instanceof Error ? error.message : 'erro inesperado'}.` });
   }
 }
 
