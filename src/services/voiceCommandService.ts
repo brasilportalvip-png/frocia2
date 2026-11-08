@@ -1,9 +1,20 @@
 const FROC_NAME_PATTERN = '(?:froc|frock|frog|rock|froke|fr[oó]qui)';
+/** Como o reconhecimento de voz costuma ouvir "Froc" (Flávio, Floki, Frank, Proc, Bradesco...). */
+const MISHEARD_NAME = '(?:froc|frock|frog|frogue|froggy|froke|fr[oó]qui|froque|frok|flock|floki|fl[aá]vio|frank|franco|proc|broc|brock|croc|troc|rock|roque|bradesco)';
+const VOCATIVE_START = new RegExp(`^\\s*(?:(?:ok(?:ay)?|ol[aá]|ei|oi)\\s*,?\\s+)?${MISHEARD_NAME}\\s*[,.!:]\\s*(?=\\S)`, 'i');
+const VOCATIVE_END = new RegExp(`\\s*[,.]\\s*${MISHEARD_NAME}\\s*[.!?]?\\s*$`, 'i');
 const WAKE_PREFIX_PATTERN = '(?:ok(?:ay)?|ol[aá]|ei)';
 const WAKE_PATTERN = new RegExp(`^\\s*${WAKE_PREFIX_PATTERN}\\s+${FROC_NAME_PATTERN}\\b`, 'i');
 
 export function normalizeFrocVoiceCommand(transcript: string): string {
-  return transcript.replace(WAKE_PATTERN, '').replace(/^\s*,?\s*/, '').replace(/\s+/g, ' ').trim();
+  return transcript
+    .replace(VOCATIVE_START, '')
+    .replace(WAKE_PATTERN, '')
+    .replace(VOCATIVE_END, '.')
+    .replace(/\b(?:alta|alto|auto)[\s-]+evolu[cç][aã]o\b/gi, 'autoevolução')
+    .replace(/^\s*,?\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 export function hasFrocWakePhrase(transcript: string): boolean {
   return WAKE_PATTERN.test(transcript);
@@ -50,7 +61,7 @@ export function classifyFrocMediaVoiceCommand(
 }
 
 const STOP_PATTERN = new RegExp(
-  `^(?:${FROC_NAME_PATTERN}\\s*,?\\s*)?(?:pare|parar|desligue|desativar)(?:\\s+(?:a\\s+)?escuta)?[.!]?$`,
+  `^(?:(?:ok(?:ay)?|ei|oi)\\s*,?\\s*)?(?:${MISHEARD_NAME}\\s*,?\\s*)?(?:pare|parar|desligue|desligar|desliga|desativar|desative|encerrar|encerra|encerre|tchau)(?:\\s+(?:a\\s+)?(?:escuta|conversa|voz|microfone))?[.!]?$`,
   'i'
 );
 

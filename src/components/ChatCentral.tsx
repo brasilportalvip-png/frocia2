@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgressiveSpeech } from '../services/voicePreferenceService';
 import { classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { executeSiteCommandText, onSiteCommandOutcome, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
-import { decideBargeIn } from '../services/voiceBargeIn';
+import { decideBargeIn, isSilenceCommand, meaningfulWordCount } from '../services/voiceBargeIn';
 import { routeFrocRequest, splitFrocClauses } from '../../shared/frocIntentRouter';
 import {
   createNeuralSpeechAudio,
@@ -283,6 +283,9 @@ export const ChatCentral: React.FC<
   // Interrupção em tempo real: o que a Froc está dizendo (para filtrar o próprio eco).
   const currentSpeechTextRef = useRef('');
   const lastSpeechEndedAtRef = useRef(0);
+  // A transcrição chega em pedaços ("Ok Froc," + "obrigado."): junta antes de enviar.
+  const pendingVoiceCommandRef = useRef<{ text: string; timer: number | null }>({ text: '', timer: null });
+  const voiceCommandSentAtRef = useRef(0);
   const latestAiRef = useRef<{ id: string; text: string } | null>(null);
   const [ratedMessages, setRatedMessages] = useState<Record<string, 'up' | 'down'>>({});
 
@@ -354,6 +357,8 @@ export const ChatCentral: React.FC<
   };
 
   const disableVoiceConversation = () => {
+    if (pendingVoiceCommandRef.current.timer !== null) window.clearTimeout(pendingVoiceCommandRef.current.timer);
+    pendingVoiceCommandRef.current = { text: '', timer: null };
     disposePrefetchedSpeech();
     liveAttemptRef.current += 1;
     liveConnectingRef.current = false;
@@ -414,8 +419,50 @@ export const ChatCentral: React.FC<
    * Toda fala ouvida passa por aqui (Gemini Live ou reconhecimento do navegador).
    * Enquanto a Froc pensa/fala, decide se é eco, "para" ou um novo pedido.
    */
+  const VOICE_COMMAND_SETTLE_MS = 900;
+
+  const flushVoiceCommand = () => {
+    const pending = pendingVoiceCommandRef.current;
+    if (pending.timer !== null) window.clearTimeout(pending.timer);
+    pending.timer = null;
+    const command = pending.text.replace(/\s+/g, ' ').trim();
+    pending.text = '';
+    if (!command || !voiceEnabledRef.current) return;
+    voiceAwaitingResponseRef.current = true;
+    voiceCommandSentAtRef.current = Date.now();
+    setVoicePhase('thinking');
+    setInputText(command);
+    setVoiceCommandToSend(command);
+  };
+
+  const scheduleVoiceFlush = () => {
+    const pending = pendingVoiceCommandRef.current;
+    if (pending.timer !== null) window.clearTimeout(pending.timer);
+    pending.timer = window.setTimeout(flushVoiceCommand, VOICE_COMMAND_SETTLE_MS);
+  };
+
+  /**
+   * Toda fala ouvida passa por aqui (Gemini Live ou reconhecimento do navegador).
+   * Enquanto a Froc pensa/fala, decide se é eco, "para" ou um novo pedido.
+   */
   const handleHeardSpeech = (text: string, isFinal: boolean): 'command' | 'other' => {
     if (!voiceEnabledRef.current) return 'other';
+    const pending = pendingVoiceCommandRef.current;
+
+    // Ainda montando a frase: qualquer fala nova só estende a espera.
+    if (pending.text) {
+      if (!isFinal) {
+        setInputText(`${pending.text} ${text}`.trim());
+        scheduleVoiceFlush();
+        return 'other';
+      }
+      const intent = classifyFrocVoiceTranscript(text, true, true);
+      if (intent.type === 'command') pending.text = `${pending.text} ${intent.command}`;
+      setInputText(pending.text);
+      scheduleVoiceFlush();
+      return 'other';
+    }
+
     // O fim da própria fala ainda pode chegar transcrito logo depois que ela terminou.
     if (!isFrocBusy() && Date.now() - lastSpeechEndedAtRef.current < 2500 &&
         decideBargeIn(text, isFinal, speechReference()) === 'ignore') {
@@ -423,8 +470,14 @@ export const ChatCentral: React.FC<
     }
     if (isFrocBusy()) {
       if (!canListenWhileBusy()) return 'other';
+      const speaking = speakingMsgIdRef.current !== null || queuedSpeechRef.current !== null;
       const decision = decideBargeIn(text, isFinal, speechReference());
       if (decision === 'ignore') return 'other';
+      if (!speaking) {
+        // Pensando (ainda sem falar): protege o pedido que acabou de ser feito.
+        if (Date.now() - voiceCommandSentAtRef.current < 4000) return 'other';
+        if (decision !== 'stop-only' && (!isFinal || meaningfulWordCount(text) < 3)) return 'other';
+      }
       interruptFroc();
       if (decision === 'stop-only') {
         setInputText('');
@@ -448,10 +501,14 @@ export const ChatCentral: React.FC<
       return 'other';
     }
     if (intent.type === 'command') {
-      voiceAwaitingResponseRef.current = true;
-      setVoicePhase('thinking');
+      // "silêncio", "chega", "espera" com a Froc parada: não vira pergunta.
+      if (isSilenceCommand(intent.command)) {
+        setInputText('');
+        return 'other';
+      }
+      pending.text = intent.command;
       setInputText(intent.command);
-      setVoiceCommandToSend(intent.command);
+      scheduleVoiceFlush();
       return 'command';
     }
     return 'other';
@@ -1934,7 +1991,7 @@ await onSendMessage(
                       : voicePhase === 'awake'
                         ? 'Pode falar naturalmente'
                         : voicePhase === 'speaking'
-                          ? 'Você pode interromper pelo botão de voz'
+                          ? 'Pode falar por cima para interromper'
                           : 'A conversa continuará automaticamente'}
                   </span>
                 </span>

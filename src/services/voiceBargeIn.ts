@@ -60,3 +60,13 @@ export function decideBargeIn(heard: string, isFinal: boolean, spokenReference: 
   // Parcial: exige um começo de frase real para não cortar por ruído.
   return meaningful.length >= 3 ? 'interrupt' : 'ignore';
 }
+
+/** "silêncio", "para", "chega", "espera": só calar, nunca vira pergunta para a IA. */
+export function isSilenceCommand(heard: string): boolean {
+  return /^(?:(?:ok|ei|oi)\s+)?(?:para|pare|parar|para ai|para de falar|pare de falar|chega|chega ai|espera|espere|espera ai|perai|pera|silencio|fica quieta|fique quieta|cala|cala a boca|stop|calma)$/.test(normalize(heard));
+}
+
+/** Quantidade de palavras com conteúdo (para decidir se é um pedido de verdade). */
+export function meaningfulWordCount(heard: string): number {
+  return normalize(heard).split(' ').filter((word) => word.length >= 2).length;
+}
