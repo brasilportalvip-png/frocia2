@@ -257,10 +257,25 @@ mediaRouter.post(
 
       const ai = getGenAIClient();
 
-      const interaction =
-        await ai.interactions.create({
+      // O modelo às vezes responde só com texto (ou com texto depois da imagem).
+      // Procura a imagem em todas as saídas e tenta de novo antes de desistir.
+      const pickImage = (result: any): { data: string; mime_type?: string } | null => {
+        if (result?.output_image?.data) return result.output_image;
+        const outputs: any[] = Array.isArray(result?.outputs) ? result.outputs : [];
+        for (let index = outputs.length - 1; index >= 0; index -= 1) {
+          const output = outputs[index];
+          if (output?.type === 'image' && typeof output?.data === 'string' && output.data) return output;
+        }
+        return null;
+      };
+      const textOf = (result: any): string => {
+        const outputs: any[] = Array.isArray(result?.outputs) ? result.outputs : [];
+        return outputs.filter((output) => output?.type === 'text' && output?.text).map((output) => String(output.text)).join(' ').slice(0, 240);
+      };
+      const requestImage = (input: string) =>
+        ai.interactions.create({
           model: IMAGE_MODEL,
-          input: sanitizedPrompt,
+          input,
           response_format: {
             type: 'image',
             mime_type: 'image/jpeg',
@@ -269,14 +284,41 @@ mediaRouter.post(
           },
         });
 
-      const generatedImage =
-        interaction.output_image;
+      let interaction: any = await requestImage(sanitizedPrompt);
+      let generatedImage = pickImage(interaction);
+      let providerText = textOf(interaction);
+
+      if (!generatedImage) {
+        interaction = await requestImage(
+          `Gere uma imagem. Responda somente com a imagem, sem perguntas e sem texto. Tema: ${sanitizedPrompt}`
+        );
+        generatedImage = pickImage(interaction);
+        providerText = textOf(interaction) || providerText;
+      }
+
+      if (!generatedImage) {
+        // Último recurso: API clássica com saída somente de imagem.
+        try {
+          const legacy: any = await ai.models.generateContent({
+            model: IMAGE_MODEL,
+            contents: `Gere uma imagem: ${sanitizedPrompt}`,
+            config: { responseModalities: ['IMAGE'] } as any,
+          });
+          const parts: any[] = legacy?.candidates?.[0]?.content?.parts || [];
+          const inline = parts.find((part) => part?.inlineData?.data)?.inlineData;
+          if (inline?.data) generatedImage = { data: inline.data, mime_type: inline.mimeType || 'image/png' };
+        } catch (legacyError) {
+          console.warn('image_legacy_fallback_failed', legacyError instanceof Error ? legacyError.message : String(legacyError));
+        }
+      }
 
       const imageBytes = generatedImage?.data;
 
-      if (!imageBytes) {
+      if (!generatedImage || !imageBytes) {
         throw new Error(
-          'O provedor não retornou uma imagem válida.'
+          providerText
+            ? `O provedor não gerou a imagem e respondeu: "${providerText}". Tente descrever a imagem de outro jeito.`
+            : 'O provedor não retornou uma imagem válida. Tente descrever a imagem de outro jeito.'
         );
       }
 
