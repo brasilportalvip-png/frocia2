@@ -85,6 +85,14 @@ QUALIDADE:
 - Quando possível, termine com uma ação útil, sem repetir toda a resposta.
 `;
 
+const FROC_CAPABILITIES_POLICY = `
+[CAPACIDADES REAIS DA FROC.IA — VALEM EM TODA RESPOSTA]
+- A Froc.IA é uma só e faz tudo: conversa, pesquisa, programa, cria sites, imagens e vídeos. Nunca diga que não consegue, que não tem ferramenta ou que não está preparada para criar imagem, vídeo ou site, e nunca mande a pessoa usar outra ferramenta (DALL-E, Midjourney etc.).
+- [AÇÃO DE CRIAÇÃO] Quando a pessoa pedir (ou confirmar, mesmo de forma indireta, como "qualquer um", "pode ser", "sim", "manda") uma imagem, um vídeo ou um site/aplicativo, responda com uma frase curta e, na última linha, exatamente um marcador: [[FROC_ACTION:image|descrição completa da imagem em português]] ou [[FROC_ACTION:video|descrição do vídeo]] ou [[FROC_ACTION:site|descrição do site]]. O site executa o marcador de verdade. Se faltar o tema e a pessoa disser que tanto faz, escolha você um tema bonito. Não use o marcador para explicar, analisar ou falar sobre imagens.
+- Mensagens que começam com "[Registro automático]" são o histórico real de imagens e vídeos pedidos nesta conversa e do resultado; use-as para lembrar do que foi feito.
+- A pessoa pode interromper a fala a qualquer momento; não repita a resposta anterior depois de uma interrupção, atenda o novo pedido.
+`;
+
 const UNIVERSAL_OPERATOR_POLICY = `
 [REGRAS UNIVERSAIS DE OPERAÇÃO]
 - Trate a pessoa como iniciante, use linguagem simples e conduza ações manuais um passo por vez.
@@ -100,8 +108,6 @@ const UNIVERSAL_OPERATOR_POLICY = `
 - Para alterações de software, valide TypeScript, lint, testes e build quando esses comandos existirem. Nunca declare sucesso se alguma verificação falhar.
 - No GitHub, trabalhe em branch separada e abra Pull Request com resumo e testes. Não faça merge sem autorização explícita.
 - A fala deve começar assim que houver uma frase utilizável, sem repetição ou áudio sobreposto. Comandos “Ok Froc” podem acionar texto, imagem e vídeo.
-- A Froc.IA é uma só e faz tudo: a interface gera imagens e vídeos, cria sites e pesquisa automaticamente quando a pessoa pede, em qualquer momento da conversa, mesmo no meio de outro assunto. Nunca diga que não consegue ou não está preparada para criar imagem ou vídeo; se um pedido assim chegar como texto, responda em uma frase curta que vai gerar e peça só o tema, se faltar.
-- A pessoa pode interromper a fala a qualquer momento; não repita a resposta anterior depois de uma interrupção, atenda o novo pedido.
 - Antes de um serviço pago, informe o custo e peça confirmação; impeça cobrança duplicada e trate estorno em caso de falha.
 - Faça primeiro tudo o que estiver dentro das permissões disponíveis. Transfira ao usuário somente a próxima ação que realmente dependa dele.
 - Se o pedido estiver claro, não faça perguntas repetidas. Em tarefas complexas, apresente primeiro o resultado e depois somente o próximo passo necessário.
@@ -539,8 +545,11 @@ recentMessages = [],
     };
     // Sempre presente no uso real (144 mil tokens); só sai primeiro se o orçamento for mínimo.
     let includeMemoryPolicy = true;
+    // Capacidades reais (imagem/vídeo/site, interrupção): sempre no uso real; só sai sob orçamento mínimo.
+    let includeCapabilitiesPolicy = true;
     const buildSystemInstruction = () =>
       `${TRUST_AND_PERSONALITY_POLICY}\n\n` +
+      (includeCapabilitiesPolicy ? `${FROC_CAPABILITIES_POLICY}\n\n` : '') +
       (includeMemoryPolicy ? `${memoryTruthPolicy(Boolean(env.MEMORY_ENCRYPTION_KEY?.trim()))}\n\n` : '') +
       (mode === 'code'
         ? `${UNIVERSAL_OPERATOR_POLICY}\n\n`
@@ -572,7 +581,9 @@ buildRagSection();
 
     while (tokenCountEstimate > maxContextTokens) {
       contextTruncated = true;
-      if (includeMemoryPolicy) {
+      if (includeCapabilitiesPolicy) {
+        includeCapabilitiesPolicy = false;
+      } else if (includeMemoryPolicy) {
         includeMemoryPolicy = false;
       } else if (safeLongTermSegments.length > 0) {
         safeLongTermSegments = safeLongTermSegments.slice(0, -1);

@@ -193,6 +193,9 @@ export default function App() {
 
 const activeRequestControllerRef =
   useRef<AbortController | null>(null);
+// A própria IA pode acionar imagem/vídeo/site no meio da conversa (ver FROC_ACTION).
+const handleChatRequestRef =
+  useRef<((text: string, mode: ChatMode, files?: UploadedFile[]) => Promise<void>) | null>(null);
 const activeResearchJobIdRef =
   useRef<string | null>(null);
 
@@ -302,10 +305,13 @@ const fetchConversations = async () => {
       }>(`/api/conversations/${convId}/messages`);
 
       if (res.messages) {
+        // Registros automáticos de imagem/vídeo servem de memória para a IA; na tela viram aviso discreto.
         const mapped: ChatMessage[] = res.messages.map((m) => ({
           id: m.id,
-          sender: m.role === 'user' ? 'user' : 'ai',
-          text: m.content,
+          sender: m.role === 'user' && !m.content.startsWith('[Registro automático]') ? 'user' : 'ai',
+          text: m.content.startsWith('[Registro automático]')
+            ? m.content.replace('[Registro automático] Pedi', '🗂️ Você pediu')
+            : m.content,
           timestamp: new Date(m.createdAt).getTime(),
           citations: m.citations
         }));
@@ -1030,6 +1036,34 @@ const buildActiveProjectContext = (site: GeneratedSite | null): string => {
   ].filter(Boolean).join('\n').slice(0, 38000);
 };
 
+// Imagens e vídeos também entram no histórico do servidor, para a IA lembrar deles.
+const logToConversation = async (content: string) => {
+  try {
+    let conversationId = currentConversationIdRef.current;
+    if (!conversationId) {
+      const created = await apiClient<{ conversation: Conversation }>('/api/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ title: content.replace(/^\[[^\]]+\]\s*/, '').slice(0, 30) || 'Nova Conversa', mode: 'smart' }),
+      });
+      conversationId = created?.conversation?.id ?? null;
+      if (!conversationId) return;
+      updateCurrentConversationId(conversationId);
+      setConversations((previous) => [created.conversation, ...previous]);
+    }
+    await apiClient(`/api/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: content.slice(0, 4000) }),
+    });
+  } catch (logError) {
+    console.warn('Registro de mídia no histórico falhou:', logError);
+  }
+};
+
+/** Marcador que a IA usa para acionar uma ação: [[FROC_ACTION:image|prompt]] */
+const FROC_ACTION_PATTERN = /\[\[FROC_ACTION:(image|video|site)\|([\s\S]*?)\]\]/i;
+const stripFrocActions = (value: string) =>
+  value.replace(/\[\[FROC_ACTION:[\s\S]*?(?:\]\]|$)/gi, '').trim();
+
 const handleGeneralChat = async (
   text: string,
   mode: ChatMode,
@@ -1281,7 +1315,7 @@ const handleGeneralChat = async (
             setChatMessages((current) =>
               current.map((message) =>
                 message.id === streamMessageId
-                  ? { ...message, text: streamedText }
+                  ? { ...message, text: stripFrocActions(streamedText) }
                   : message
               )
             );
@@ -1318,9 +1352,26 @@ const handleGeneralChat = async (
       };
     }
 
+    // A IA decidiu criar algo (imagem, vídeo ou site): executa de verdade.
+    const actionMatch = FROC_ACTION_PATTERN.exec(result.text || '');
+    const actionKind = actionMatch?.[1]?.toLowerCase();
+    const actionPrompt = actionMatch?.[2]?.trim().slice(0, 2000) || '';
+    const visibleText = stripFrocActions(result.text || '');
+    const actionAnnouncement =
+      actionKind === 'image' ? `Certo! Vou criar a imagem: ${actionPrompt}`
+        : actionKind === 'video' ? `Certo! Vou criar o vídeo: ${actionPrompt}`
+          : actionKind === 'site' ? `Certo! Vou criar o projeto: ${actionPrompt}`
+            : '';
     const responseText =
-      result.text ||
+      (actionMatch && actionPrompt ? (visibleText || actionAnnouncement) : visibleText) ||
       'A IA não retornou conteúdo.';
+    if (actionMatch && actionPrompt) {
+      const actionMode: ChatMode =
+        actionKind === 'image' ? 'Imagem' : actionKind === 'video' ? 'Vídeo' : 'Criador de projetos';
+      window.setTimeout(() => {
+        void handleChatRequestRef.current?.(actionPrompt, actionMode, []);
+      }, 400);
+    }
 
     const aiMessage: ChatMessage = {
       id: `ai-${Date.now()}`,
@@ -1334,7 +1385,7 @@ const handleGeneralChat = async (
       if (streamedResponseMessageId) {
         return current.map((message) =>
           message.id === streamedResponseMessageId
-            ? { ...message, citations: result.citations ?? [] }
+            ? { ...message, text: responseText, citations: result.citations ?? [] }
             : message
         );
       }
@@ -1894,6 +1945,308 @@ const handleGeneralChat = async (
     );
   }
 
+  // Toda mensagem do chat (texto ou voz) passa por aqui; também é chamada pela própria IA
+  // quando ela decide criar uma imagem, um vídeo ou um site no meio da conversa.
+  const handleChatRequest = async (text: string, mode: ChatMode, files: UploadedFile[] = []) => {
+  // Pedido de voz feito em outra tela: a resposta aparece no chat.
+  setNavMode('studio');
+  if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
+    await handleGenerateSite(
+      {
+        prompt: text,
+        category: 'Software / Tecnologia',
+        colorPalette: 'Cyber Purple & Gold',
+        tone: 'Profissional',
+        features: [
+          'Responsivo',
+          'Formulário',
+          'FAQ',
+        ],
+      },
+      files
+    );
+    return;
+  }
+
+  // Projeto importado do GitHub: a IA altera o código-fonte e o servidor recompila.
+  if (
+    activeSite?.compiledFromSource &&
+    activeSite.sourceUrl &&
+    mode !== 'Imagem' &&
+    mode !== 'Vídeo' &&
+    mode !== 'Pesquisa' &&
+    files.length === 0 &&
+    isProjectEditRequest(text)
+  ) {
+    await handleEditImportedProject(text.trim());
+    return;
+  }
+
+  // Projeto aberto no editor: pedido de alteração no chat altera o projeto.
+  if (
+    activeSite &&
+    !activeSite.compiledFromSource &&
+    mode !== 'Imagem' &&
+    mode !== 'Vídeo' &&
+    mode !== 'Pesquisa' &&
+    files.length === 0 &&
+    isProjectEditRequest(text)
+  ) {
+    await handleRefineSite(text.trim());
+    return;
+  }
+
+  if (mode === 'Imagem') {
+    const prompt = text.trim();
+    if (!prompt) return;
+
+    if (!isAuthenticated || !authUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    let started = false;
+
+    setCostModal({
+      isOpen: true,
+      opType: 'Geração de imagem',
+      credits: 18,
+      desc: 'Criar imagem diretamente na conversa da Froc.IA.',
+      onConfirm: () => {
+        if (started) return;
+        started = true;
+
+        const requestId =
+          `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assistantId = `ai-${requestId}`;
+
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: `user-${requestId}`,
+            sender: 'user',
+            text: prompt,
+            timestamp: Date.now(),
+          },
+          {
+            id: assistantId,
+            sender: 'ai',
+            text: 'Gerando sua imagem...',
+            timestamp: Date.now(),
+            media: {
+              type: 'image',
+              prompt,
+              status: 'processing',
+            },
+          },
+        ]);
+
+        setIsGenerating(true);
+
+        void (async () => {
+          try {
+            const { MediaGenerationService } =
+              await import('./services/mediaGenerationService');
+
+            const image = await MediaGenerationService.generateImage({
+              prompt,
+              aspectRatio: '1:1',
+            });
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: 'Imagem criada com sucesso.',
+                      media: {
+                        type: 'image',
+                        prompt,
+                        status: 'completed',
+                        url: image.url,
+                        creditsSpent: image.creditsSpent,
+                      },
+                    }
+                  : message
+              )
+            );
+            void logToConversation(`[Registro automático] Pedi uma imagem: "${prompt}". Resultado: imagem criada e mostrada na conversa.`);
+          } catch (error) {
+            const detail =
+              error instanceof Error
+                ? error.message
+                : 'Erro desconhecido.';
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: `Não foi possível gerar a imagem: ${detail}`,
+                      media: {
+                        type: 'image',
+                        prompt,
+                        status: 'failed',
+                      },
+                    }
+                  : message
+              )
+            );
+            void logToConversation(`[Registro automático] Pedi uma imagem: "${prompt}". Resultado: falhou (${detail}). Os créditos foram devolvidos.`);
+          } finally {
+            setIsGenerating(false);
+            void refreshProfile();
+          }
+        })();
+      },
+    });
+
+    return;
+  }
+
+  if (mode === 'Vídeo') {
+    const prompt = text.trim();
+    if (!prompt) return;
+
+    if (!isAuthenticated || !authUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    let started = false;
+
+    setCostModal({
+      isOpen: true,
+      opType: 'Geração de vídeo',
+      credits: 30,
+      desc: 'Criar vídeo de 4 segundos na qualidade Lite.',
+      onConfirm: () => {
+        if (started) return;
+        started = true;
+
+        const requestId =
+          `video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const assistantId = `ai-${requestId}`;
+
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: `user-${requestId}`,
+            sender: 'user',
+            text: prompt,
+            timestamp: Date.now(),
+          },
+          {
+            id: assistantId,
+            sender: 'ai',
+            text: 'Gerando seu vídeo...',
+            timestamp: Date.now(),
+            media: {
+              type: 'video',
+              prompt,
+              status: 'processing',
+              progress: 0,
+            },
+          },
+        ]);
+
+        setIsGenerating(true);
+
+        void (async () => {
+          try {
+            const { MediaGenerationService } =
+              await import('./services/mediaGenerationService');
+
+            const job = await MediaGenerationService.startVideo({
+              prompt,
+              aspectRatio: '16:9',
+              durationSeconds: 4,
+              quality: 'lite',
+            });
+
+            const completed = await MediaGenerationService.waitForVideo(
+              job.jobId,
+              {
+                onProgress: (updated) => {
+                  setChatMessages((current) =>
+                    current.map((message) =>
+                      message.id === assistantId
+                        ? {
+                            ...message,
+                            media: {
+                              type: 'video',
+                              prompt,
+                              status: 'processing',
+                              progress: updated.progress,
+                            },
+                          }
+                        : message
+                    )
+                  );
+                },
+              }
+            );
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: 'Vídeo criado com sucesso.',
+                      media: {
+                        type: 'video',
+                        prompt,
+                        status: 'completed',
+                        progress: 100,
+                        url: completed.videoUrl ?? undefined,
+                        creditsSpent: completed.creditsReserved,
+                      },
+                    }
+                  : message
+              )
+            );
+            void logToConversation(`[Registro automático] Pedi um vídeo: "${prompt}". Resultado: vídeo criado e mostrado na conversa.`);
+          } catch (error) {
+            const detail =
+              error instanceof Error
+                ? error.message
+                : 'Erro desconhecido.';
+
+            setChatMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: `Não foi possível concluir o vídeo: ${detail}`,
+                      media: {
+                        type: 'video',
+                        prompt,
+                        status: 'failed',
+                      },
+                    }
+                  : message
+              )
+            );
+            void logToConversation(`[Registro automático] Pedi um vídeo: "${prompt}". Resultado: falhou (${detail}).`);
+          } finally {
+            setIsGenerating(false);
+            void refreshProfile();
+          }
+        })();
+      },
+    });
+
+    return;
+  }
+
+  await handleGeneralChat(
+    text,
+    mode,
+    files
+  );
+  };
+  handleChatRequestRef.current = handleChatRequest;
+
   return (
     <div id="froc-app-root" className="froc-app-background h-dvh w-full flex flex-col bg-[#050505] text-white font-sans overflow-hidden antialiased">
       <SiteCommandToast />
@@ -2085,300 +2438,7 @@ const handleGeneralChat = async (
              
 
 
-             onSendMessage={async (text, mode, files = []) => {
-  // Pedido de voz feito em outra tela: a resposta aparece no chat.
-  setNavMode('studio');
-  if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
-    await handleGenerateSite(
-      {
-        prompt: text,
-        category: 'Software / Tecnologia',
-        colorPalette: 'Cyber Purple & Gold',
-        tone: 'Profissional',
-        features: [
-          'Responsivo',
-          'Formulário',
-          'FAQ',
-        ],
-      },
-      files
-    );
-    return;
-  }
-
-  // Projeto importado do GitHub: a IA altera o código-fonte e o servidor recompila.
-  if (
-    activeSite?.compiledFromSource &&
-    activeSite.sourceUrl &&
-    mode !== 'Imagem' &&
-    mode !== 'Vídeo' &&
-    mode !== 'Pesquisa' &&
-    files.length === 0 &&
-    isProjectEditRequest(text)
-  ) {
-    await handleEditImportedProject(text.trim());
-    return;
-  }
-
-  // Projeto aberto no editor: pedido de alteração no chat altera o projeto.
-  if (
-    activeSite &&
-    !activeSite.compiledFromSource &&
-    mode !== 'Imagem' &&
-    mode !== 'Vídeo' &&
-    mode !== 'Pesquisa' &&
-    files.length === 0 &&
-    isProjectEditRequest(text)
-  ) {
-    await handleRefineSite(text.trim());
-    return;
-  }
-
-  if (mode === 'Imagem') {
-    const prompt = text.trim();
-    if (!prompt) return;
-
-    if (!isAuthenticated || !authUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-
-    let started = false;
-
-    setCostModal({
-      isOpen: true,
-      opType: 'Geração de imagem',
-      credits: 18,
-      desc: 'Criar imagem diretamente na conversa da Froc.IA.',
-      onConfirm: () => {
-        if (started) return;
-        started = true;
-
-        const requestId =
-          `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const assistantId = `ai-${requestId}`;
-
-        setChatMessages((current) => [
-          ...current,
-          {
-            id: `user-${requestId}`,
-            sender: 'user',
-            text: prompt,
-            timestamp: Date.now(),
-          },
-          {
-            id: assistantId,
-            sender: 'ai',
-            text: 'Gerando sua imagem...',
-            timestamp: Date.now(),
-            media: {
-              type: 'image',
-              prompt,
-              status: 'processing',
-            },
-          },
-        ]);
-
-        setIsGenerating(true);
-
-        void (async () => {
-          try {
-            const { MediaGenerationService } =
-              await import('./services/mediaGenerationService');
-
-            const image = await MediaGenerationService.generateImage({
-              prompt,
-              aspectRatio: '1:1',
-            });
-
-            setChatMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      text: 'Imagem criada com sucesso.',
-                      media: {
-                        type: 'image',
-                        prompt,
-                        status: 'completed',
-                        url: image.url,
-                        creditsSpent: image.creditsSpent,
-                      },
-                    }
-                  : message
-              )
-            );
-          } catch (error) {
-            const detail =
-              error instanceof Error
-                ? error.message
-                : 'Erro desconhecido.';
-
-            setChatMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      text: `Não foi possível gerar a imagem: ${detail}`,
-                      media: {
-                        type: 'image',
-                        prompt,
-                        status: 'failed',
-                      },
-                    }
-                  : message
-              )
-            );
-          } finally {
-            setIsGenerating(false);
-            void refreshProfile();
-          }
-        })();
-      },
-    });
-
-    return;
-  }
-
-  if (mode === 'Vídeo') {
-    const prompt = text.trim();
-    if (!prompt) return;
-
-    if (!isAuthenticated || !authUser) {
-      setIsAuthOpen(true);
-      return;
-    }
-
-    let started = false;
-
-    setCostModal({
-      isOpen: true,
-      opType: 'Geração de vídeo',
-      credits: 30,
-      desc: 'Criar vídeo de 4 segundos na qualidade Lite.',
-      onConfirm: () => {
-        if (started) return;
-        started = true;
-
-        const requestId =
-          `video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const assistantId = `ai-${requestId}`;
-
-        setChatMessages((current) => [
-          ...current,
-          {
-            id: `user-${requestId}`,
-            sender: 'user',
-            text: prompt,
-            timestamp: Date.now(),
-          },
-          {
-            id: assistantId,
-            sender: 'ai',
-            text: 'Gerando seu vídeo...',
-            timestamp: Date.now(),
-            media: {
-              type: 'video',
-              prompt,
-              status: 'processing',
-              progress: 0,
-            },
-          },
-        ]);
-
-        setIsGenerating(true);
-
-        void (async () => {
-          try {
-            const { MediaGenerationService } =
-              await import('./services/mediaGenerationService');
-
-            const job = await MediaGenerationService.startVideo({
-              prompt,
-              aspectRatio: '16:9',
-              durationSeconds: 4,
-              quality: 'lite',
-            });
-
-            const completed = await MediaGenerationService.waitForVideo(
-              job.jobId,
-              {
-                onProgress: (updated) => {
-                  setChatMessages((current) =>
-                    current.map((message) =>
-                      message.id === assistantId
-                        ? {
-                            ...message,
-                            media: {
-                              type: 'video',
-                              prompt,
-                              status: 'processing',
-                              progress: updated.progress,
-                            },
-                          }
-                        : message
-                    )
-                  );
-                },
-              }
-            );
-
-            setChatMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      text: 'Vídeo criado com sucesso.',
-                      media: {
-                        type: 'video',
-                        prompt,
-                        status: 'completed',
-                        progress: 100,
-                        url: completed.videoUrl ?? undefined,
-                        creditsSpent: completed.creditsReserved,
-                      },
-                    }
-                  : message
-              )
-            );
-          } catch (error) {
-            const detail =
-              error instanceof Error
-                ? error.message
-                : 'Erro desconhecido.';
-
-            setChatMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      text: `Não foi possível concluir o vídeo: ${detail}`,
-                      media: {
-                        type: 'video',
-                        prompt,
-                        status: 'failed',
-                      },
-                    }
-                  : message
-              )
-            );
-          } finally {
-            setIsGenerating(false);
-            void refreshProfile();
-          }
-        })();
-      },
-    });
-
-    return;
-  }
-
-  await handleGeneralChat(
-    text,
-    mode,
-    files
-  );
-}}
+             onSendMessage={handleChatRequest}
 
 
 

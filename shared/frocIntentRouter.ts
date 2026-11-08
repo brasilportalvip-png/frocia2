@@ -81,7 +81,7 @@ const LINKS = new Set(['de', 'do', 'da', 'dos', 'das', 'com', 'sobre', 'mostrand
 /** Ligações fortes para mensagens curtas só com o objeto ("uma imagem de um gato"). */
 const OBJECT_LINKS = new Set(['de', 'do', 'da', 'dos', 'das', 'com', 'sobre', 'mostrando', 'retratando', 'representando']);
 /** Adjetivos logo depois do objeto que não fazem parte do tema ("imagem REALISTA de..."). */
-const LEADING_ADJECTIVES = new Set(['realista', 'realistas', 'curta', 'curto', 'linda', 'lindo', 'bonita', 'bonito', 'hd', '4k', 'ultra', 'rapida', 'rapido', 'pequena', 'pequeno', 'nova', 'novo', 'profissional', 'criativa', 'criativo', 'colorida', 'colorido', 'artistica', 'artistico', 'detalhada', 'detalhado', 'incrivel', 'legal', 'top']);
+const LEADING_ADJECTIVES = new Set(['simples', 'qualquer', 'rapidinha', 'rapidinho', 'basica', 'basico', 'realista', 'realistas', 'curta', 'curto', 'linda', 'lindo', 'bonita', 'bonito', 'hd', '4k', 'ultra', 'rapida', 'rapido', 'pequena', 'pequeno', 'nova', 'novo', 'profissional', 'criativa', 'criativo', 'colorida', 'colorido', 'artistica', 'artistico', 'detalhada', 'detalhado', 'incrivel', 'legal', 'top']);
 /** Verbos que já significam imagem: "desenha um dragão". */
 const DRAW_VERBS = new Set(['desenhe', 'desenha', 'desenhar', 'pinte', 'pinta', 'pintar', 'ilustre', 'ilustra', 'ilustrar']);
 /** Tema que aponta para a conversa: "uma imagem disso". */
@@ -205,7 +205,17 @@ export function routeFrocRequest(text: string, context: FrocRouteContext = {}): 
 
     // Tema: o que vem depois do objeto, sem as palavras de ligação iniciais
     // ("imagem DE um gato" → "um gato"). Continua pelos trechos seguintes.
-    let rest = clause.slice(found.nounIndex + 1);
+    // Remove "pra mim", "de teste", "só pra testar"… que não descrevem a imagem.
+    let rest = clause.slice(found.nounIndex + 1).filter((word, position, list) => {
+      const next = list[position + 1]?.norm || '';
+      const previous = list[position - 1]?.norm || '';
+      if ((word.norm === 'pra' || word.norm === 'para') && next === 'mim') return false;
+      if (word.norm === 'mim' && (previous === 'pra' || previous === 'para')) return false;
+      if (/^(?:de|pra|para|so)$/.test(word.norm) && /^(?:teste|testar|testes)$/.test(next)) return false;
+      if (word.norm === 'so' && /^(?:pra|para|de)$/.test(next) && /^(?:teste|testar|testes)$/.test(list[position + 2]?.norm || '')) return false;
+      if (/^(?:teste|testar|testes)$/.test(word.norm)) return false;
+      return true;
+    });
     while (rest.length && ((LINKS.has(rest[0].norm) && rest[0].norm !== 'que') || LEADING_ADJECTIVES.has(rest[0].norm))) rest = rest.slice(1);
     const tail = parts.slice(partIndex + 1).flat();
     let prompt = cleanPrompt([...rest, ...tail]);
@@ -213,9 +223,12 @@ export function routeFrocRequest(text: string, context: FrocRouteContext = {}): 
 
     if (!promptNorm || PRONOUN_TOPIC.test(promptNorm)) {
       const topic = (context.previousTopic || '').replace(/\s+/g, ' ').trim().slice(0, 400);
-      prompt = topic
+      const pronounOnly = Boolean(promptNorm);
+      prompt = topic && pronounOnly
         ? `${found.mode === 'Vídeo' ? 'Vídeo' : 'Imagem'} sobre: ${topic}`
-        : original;
+        : found.mode === 'Vídeo'
+          ? 'Um vídeo curto, bonito e simples, com tema livre.'
+          : 'Uma imagem bonita e simples, com tema livre.';
     }
     return { mode: found.mode, prompt };
   }
