@@ -168,6 +168,11 @@ function mediaInClause(clause: Word[], isShortMessage: boolean): { mode: 'Imagem
   return null;
 }
 
+/** Trechos da frase ("…, agora cria um site para…") para detectar pedidos no meio da conversa. */
+export function splitFrocClauses(text: string): string[] {
+  return clauses(words(String(text || ''))).map((clause) => clause.map((word) => word.raw).join(' ')).filter(Boolean);
+}
+
 export function routeFrocRequest(text: string, context: FrocRouteContext = {}): FrocRoutedIntent | null {
   const original = String(text || '').trim();
   if (!original) return null;
