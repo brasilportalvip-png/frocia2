@@ -871,6 +871,11 @@ recentMessages:
         }
       }
 
+      // Link na mensagem (ou "o site" depois de ter mandado um): a Froc ABRE o site de verdade,
+      // inclusive os textos das telas (planos, preços), junto com a auditoria quando houver.
+      const siteTarget = resolveSiteTarget(sanitizedPrompt, conversationContext.recentMessages);
+      const siteReadPromise = siteTarget ? readSiteAsContext(siteTarget) : Promise.resolve('');
+
       if (plan.classification.siteAuditUrl) {
         await SiteAuditPolicyService.assertAllowed({
           userId: uid,
@@ -889,13 +894,7 @@ recentMessages:
         });
       }
 
-      // Link na mensagem (ou "o site" depois de ter mandado um): a Froc ABRE o site de verdade
-      // antes de responder, em vez de adivinhar o conteúdo.
-      let siteReadContext = '';
-      if (!siteAuditReport) {
-        const siteTarget = resolveSiteTarget(sanitizedPrompt, conversationContext.recentMessages);
-        if (siteTarget) siteReadContext = await readSiteAsContext(siteTarget);
-      }
+      const siteReadContext = await siteReadPromise;
 
       if (
         SocialSearchService.shouldSearch(
