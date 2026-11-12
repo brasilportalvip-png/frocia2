@@ -63,6 +63,7 @@ import {
   shouldResearchGithub,
 } from '../ai/githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
+import { readSiteAsContext, resolveSiteTarget } from '../services/siteReaderService.js';
 import { IndependentResponseVerifier } from '../ai/independentResponseVerifier.js';
 import {
   GithubCodeReading,
@@ -888,6 +889,14 @@ recentMessages:
         });
       }
 
+      // Link na mensagem (ou "o site" depois de ter mandado um): a Froc ABRE o site de verdade
+      // antes de responder, em vez de adivinhar o conteúdo.
+      let siteReadContext = '';
+      if (!siteAuditReport) {
+        const siteTarget = resolveSiteTarget(sanitizedPrompt, conversationContext.recentMessages);
+        if (siteTarget) siteReadContext = await readSiteAsContext(siteTarget);
+      }
+
       if (
         SocialSearchService.shouldSearch(
           sanitizedPrompt,
@@ -935,6 +944,7 @@ recentMessages:
               siteAuditReport
             )
           : '',
+        siteReadContext,
         socialSearchReport
           ? SocialSearchService.toGroundingContext(
               socialSearchReport
