@@ -85,6 +85,51 @@ function getMediaApiKey(): string {
   return apiKey.trim();
 }
 
+type VideoKeyRef = 'media' | 'main';
+
+/** Chaves que podem gerar vídeo: a de mídia primeiro, a principal como reserva. */
+export function videoApiKeys(): Array<{ ref: VideoKeyRef; key: string }> {
+  const valid = (v?: string) => (v && v.trim() && !v.includes('MY_') ? v.trim() : '');
+  const list: Array<{ ref: VideoKeyRef; key: string }> = [];
+  const media = valid(process.env.GEMINI_MEDIA_API_KEY);
+  const main = valid(process.env.GEMINI_API_KEY);
+  if (media) list.push({ ref: 'media', key: media });
+  if (main && main !== media) list.push({ ref: 'main', key: main });
+  return list;
+}
+
+function videoKeyFor(ref?: string): string {
+  const found = videoApiKeys().find((k) => k.ref === ref) || videoApiKeys()[0];
+  if (!found) throw new Error('GEMINI_MEDIA_API_KEY não configurada no servidor.');
+  return found.key;
+}
+
+/** Erro de cobrança/projeto do Google: vale tentar a outra chave. */
+export function isProviderBillingError(message: string): boolean {
+  return /billing|faturamento|PERMISSION_DENIED|API_KEY_INVALID|API key not valid|has not been used in project|is disabled/i.test(String(message || ''));
+}
+
+export function friendlyVideoError(message: string): string {
+  if (/billing/i.test(String(message || '')))
+    return 'O Google recusou o vídeo porque a conta de faturamento do projeto da chave GEMINI_MEDIA_API_KEY está fechada. Ative o faturamento desse projeto no Google Cloud (ou use uma chave de um projeto com faturamento ativo). Seus créditos foram devolvidos.';
+  return message;
+}
+
+async function startOmniVideo(key: string, body: Record<string, unknown>): Promise<string> {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`O provedor de vídeo recusou o pedido: HTTP ${response.status} — ${(await response.text()).slice(0, 400)}`);
+  }
+  const started = (await response.json()) as { id?: string; name?: string };
+  const id = started.id || started.name;
+  if (!id) throw new Error('O provedor de vídeo não retornou uma operação válida.');
+  return id;
+}
+
 function getGenAIClient(): GoogleGenAI {
   return new GoogleGenAI({
     apiKey: getMediaApiKey(),
@@ -175,7 +220,8 @@ async function releaseVideoReservation(params: {
 }
 
 async function cancelProviderVideoOperation(
-  operationName: string
+  operationName: string,
+  keyRef?: string
 ): Promise<boolean> {
   if (
     !operationName ||
@@ -193,7 +239,7 @@ async function cancelProviderVideoOperation(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-goog-api-key': getMediaApiKey(),
+        'x-goog-api-key': keyRef ? videoKeyFor(keyRef) : getMediaApiKey(),
       },
       body: '{}',
     }
@@ -563,41 +609,35 @@ mediaRouter.post(
 
       reservationId = reservation.reservationId;
 
-      const startResponse = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/interactions',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': getMediaApiKey(),
-          },
-          body: JSON.stringify({
-            model: selectedModel,
-            input: sanitizedPrompt,
-            response_format: {
-              type: 'video',
-              aspect_ratio: aspectRatio,
-              resolution: VIDEO_RESOLUTION[quality],
-            },
-            background: true,
-            store: true,
-          }),
+      const omniBody = {
+        model: selectedModel,
+        input: sanitizedPrompt,
+        response_format: {
+          type: 'video',
+          aspect_ratio: aspectRatio,
+          resolution: VIDEO_RESOLUTION[quality],
+        },
+        background: true,
+        store: true,
+      };
+      let operationName = '';
+      let apiKeyRef: VideoKeyRef = 'media';
+      const triedKeys: VideoKeyRef[] = [];
+      let lastStartError: unknown = null;
+      for (const candidate of videoApiKeys()) {
+        triedKeys.push(candidate.ref);
+        try {
+          operationName = await startOmniVideo(candidate.key, omniBody);
+          apiKeyRef = candidate.ref;
+          break;
+        } catch (error) {
+          lastStartError = error;
+          if (!isProviderBillingError(error instanceof Error ? error.message : String(error))) break;
         }
-      );
-
-      if (!startResponse.ok) {
-        throw new Error(
-          `O provedor de vídeo recusou o pedido: HTTP ${startResponse.status} — ${(await startResponse.text()).slice(0, 400)}`
-        );
       }
-
-      const started = await startResponse.json() as { id?: string; name?: string };
-      const operationName = started.id || started.name;
-
       if (!operationName) {
-        throw new Error(
-          'O provedor de vídeo não retornou uma operação válida.'
-        );
+        const message = lastStartError instanceof Error ? lastStartError.message : 'GEMINI_MEDIA_API_KEY não configurada no servidor.';
+        throw new Error(friendlyVideoError(message));
       }
 
       const jobId =
@@ -612,6 +652,9 @@ mediaRouter.post(
         userId: uid,
         operationName,
         provider: 'omni_interactions',
+        apiKeyRef,
+        triedKeys,
+        omniBody,
         type: 'video',
         prompt: sanitizedPrompt,
         aspectRatio,
@@ -724,14 +767,35 @@ mediaRouter.get(
       try {
         const pollResponse = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/interactions/${encodeURIComponent(String(job.operationName))}`,
-          { method: 'GET', headers: { 'x-goog-api-key': getMediaApiKey() } }
+          { method: 'GET', headers: { 'x-goog-api-key': videoKeyFor(job.apiKeyRef) } }
         );
         if (!pollResponse.ok) {
           throw new Error(`Falha ao consultar o vídeo: HTTP ${pollResponse.status} — ${(await pollResponse.text()).slice(0, 300)}`);
         }
         const interaction = await pollResponse.json() as Record<string, unknown> & { status?: string; error?: { message?: string } };
         const status = String(interaction.status || '').toLowerCase();
-        if (interaction.error || /fail|cancel|expired/.test(status)) {
+        const providerMessage = interaction.error?.message || '';
+        const tried: string[] = Array.isArray(job.triedKeys) ? job.triedKeys : [job.apiKeyRef || 'media'];
+        const alternate = videoApiKeys().find((k) => !tried.includes(k.ref));
+        let retried = false;
+        if ((interaction.error || /fail/.test(status)) && isProviderBillingError(providerMessage) && alternate && job.omniBody) {
+          try {
+            const newOperation = await startOmniVideo(alternate.key, job.omniBody);
+            const retriedAt = new Date().toISOString();
+            const nextTried = [...tried, alternate.ref];
+            await docRef.update({ operationName: newOperation, apiKeyRef: alternate.ref, triedKeys: nextTried, progress: 10, updatedAt: retriedAt });
+            job.operationName = newOperation;
+            job.apiKeyRef = alternate.ref;
+            job.triedKeys = nextTried;
+            job.updatedAt = retriedAt;
+            retried = true;
+          } catch {
+            retried = false;
+          }
+        }
+        if (retried) {
+          // seguiu com a outra chave; o próximo polling acompanha
+        } else if (interaction.error || /fail|cancel|expired/.test(status)) {
           const failedAt = new Date().toISOString();
           await releaseVideoReservation({
             userId: job.userId,
@@ -739,7 +803,7 @@ mediaRouter.get(
             jobId,
             operation: 'Estorno após falha na geração de vídeo',
           });
-          const message = interaction.error?.message || `O provedor informou "${status}" na geração do vídeo.`;
+          const message = friendlyVideoError(interaction.error?.message || `O provedor informou "${status}" na geração do vídeo.`);
           await docRef.update({ status: 'failed', progress: 0, error: message, failedAt, updatedAt: failedAt });
           job.status = 'failed';
           job.progress = 0;
@@ -1139,7 +1203,7 @@ mediaRouter.get(
         {
           method: 'GET',
           headers: {
-            'x-goog-api-key': getMediaApiKey(),
+            'x-goog-api-key': videoKeyFor(job.apiKeyRef),
           },
         }
       );
@@ -1297,7 +1361,8 @@ mediaRouter.post(
         await cancelProviderVideoOperation(
           job.provider === 'omni_interactions'
             ? `interactions/${job.operationName}`
-            : job.operationName
+            : job.operationName,
+          job.provider === 'omni_interactions' ? job.apiKeyRef : undefined
         );
     } catch (error: any) {
       console.warn(
