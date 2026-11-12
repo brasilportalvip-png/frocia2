@@ -282,13 +282,13 @@ function parsePublicHttpUrl(value: string): URL {
   return parsed;
 }
 
-async function readLimitedBody(response: Response): Promise<Uint8Array> {
+async function readLimitedBody(response: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<Uint8Array> {
   if (!response.body) {
     throw new ExternalImportError('empty_response', 'O endereço retornou uma resposta vazia.', 422);
   }
 
   const declaredLength = Number(response.headers.get('content-length') || 0);
-  if (declaredLength > MAX_RESPONSE_BYTES) {
+  if (declaredLength > maxBytes) {
     throw new ExternalImportError(
       'response_too_large',
       'O conteúdo excede o limite de 900 KB para importação.',
@@ -306,7 +306,7 @@ async function readLimitedBody(response: Response): Promise<Uint8Array> {
     if (!value) continue;
 
     totalBytes += value.byteLength;
-    if (totalBytes > MAX_RESPONSE_BYTES) {
+    if (totalBytes > maxBytes) {
       await reader.cancel();
       throw new ExternalImportError(
         'response_too_large',
@@ -332,6 +332,7 @@ async function safeFetch(
     headers?: Record<string, string>;
     allowedHosts?: Set<string>;
     timeoutMs?: number;
+    maxBytes?: number;
   } = {}
 ): Promise<{ response: Response; bytes: Uint8Array; finalUrl: URL }> {
   let currentUrl = initialUrl;
@@ -408,7 +409,7 @@ async function safeFetch(
 
     return {
       response,
-      bytes: await readLimitedBody(response),
+      bytes: await readLimitedBody(response, options.maxBytes),
       finalUrl: currentUrl
     };
   }
@@ -1233,4 +1234,125 @@ export class ExternalImportService {
       ? importGithubRepository(input.url)
       : importWebPage(input.url, input.timeoutMs);
   }
+}
+
+/**
+ * Lê os textos de um site feito em React/Vite (SPA): o HTML quase não tem texto, mas o
+ * JavaScript do site carrega todas as frases das telas (planos, preços, nomes...).
+ * Baixa o HTML e os scripts principais do MESMO domínio, com as mesmas travas de segurança.
+ */
+export async function readPublicSiteTexts(
+  sourceUrl: string,
+  options: { timeoutMs?: number; maxScripts?: number; maxChars?: number } = {}
+): Promise<{ finalUrl: string; title: string; description: string | null; pageText: string; appTexts: string[]; scriptsRead: number }> {
+  const parsed = parsePublicHttpUrl(sourceUrl);
+  const timeoutMs = options.timeoutMs ?? 8_000;
+  const { response, bytes, finalUrl } = await safeFetch(parsed, { timeoutMs });
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  const html = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  if (!/html/.test(contentType) && !/<html[\s>]/i.test(html)) {
+    throw new ExternalImportError('unsupported_content', 'O endereço não é uma página de site.', 415);
+  }
+  const title = extractTagText(html, /<title[^>]*>([\s\S]*?)<\/title>/gi)[0] || finalUrl.hostname;
+  const description = extractMetaContent(html, 'description') || extractMetaContent(html, 'og:description');
+  const pageText = stripHtml(html).slice(0, 6_000);
+
+  const scriptUrls: string[] = [];
+  for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) {
+    try {
+      const url = new URL(match[1], finalUrl);
+      if (url.hostname === finalUrl.hostname && /\.m?js(?:$|\?)/.test(url.pathname + url.search)) scriptUrls.push(url.toString());
+    } catch {
+      // ignora src inválido
+    }
+  }
+  for (const match of html.matchAll(/<link\b[^>]*rel=["']modulepreload["'][^>]*href=["']([^"']+)["'][^>]*>/gi)) {
+    try {
+      const url = new URL(match[1], finalUrl);
+      if (url.hostname === finalUrl.hostname) scriptUrls.push(url.toString());
+    } catch {
+      // ignora href inválido
+    }
+  }
+
+  const appTexts: string[] = [];
+  const seen = new Set<string>();
+  let scriptsRead = 0;
+  for (const url of [...new Set(scriptUrls)].slice(0, options.maxScripts ?? 3)) {
+    try {
+      const script = await safeFetch(new URL(url), { timeoutMs, maxBytes: 6_000_000 });
+      scriptsRead += 1;
+      for (const text of extractHumanStrings(new TextDecoder('utf-8', { fatal: false }).decode(script.bytes))) {
+        const key = text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        appTexts.push(text);
+      }
+    } catch {
+      // um script que falha não derruba a leitura do resto
+    }
+  }
+
+  const maxChars = options.maxChars ?? 9_000;
+  const capped: string[] = [];
+  let used = 0;
+  // O que mais importa primeiro (planos, preços, botões, títulos); textos longos de conteúdo por último.
+  const ranked = appTexts
+    .map((text, index) => ({ text, index, score: siteTextScore(text) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((item) => item.text);
+  for (const text of ranked) {
+    if (used + text.length > maxChars) break;
+    capped.push(text);
+    used += text.length + 1;
+  }
+  return { finalUrl: finalUrl.toString(), title: title.slice(0, 200), description, pageText, appTexts: capped, scriptsRead };
+}
+
+function siteTextScore(text: string): number {
+  let score = 0;
+  if (/R\$\s?\d|\bpre[cç]o|\bplano|\bcr[eé]ditos?\b|\bgr[aá]tis|\bassinatura|\bmensal|\bpacote|\bpromo[cç]/i.test(text)) score += 6;
+  if (/\b(?:entrar|criar conta|cadastr|comprar|contratar|baixar|whatsapp|contato|sobre|ajuda|consulta)/i.test(text)) score += 3;
+  if (text.length <= 60) score += 1;
+  if (text.length > 140) score -= 2;
+  return score;
+}
+
+/** Frases de gente (não código) dentro de um JavaScript compilado. */
+export function extractHumanStrings(code: string): string[] {
+  const out: string[] = [];
+  const literal = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
+  for (const match of code.matchAll(literal)) {
+    let text = match[1] ?? match[2] ?? match[3] ?? '';
+    if (text.length < 8 || text.length > 400) continue;
+    text = decodeJsEscapes(text);
+    text = text.replace(/\s+/g, ' ').trim();
+    if (isHumanText(text)) out.push(text);
+  }
+  return out;
+}
+
+/** "\\xB7" → "·", "\\u00e7" → "ç" (o build costuma escapar acentos). */
+function decodeJsEscapes(text: string): string {
+  return text.replace(/\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|[nrt'"`\\])/g, (_all, code: string) => {
+    if (code[0] === 'x') return String.fromCharCode(parseInt(code.slice(1), 16));
+    if (code.startsWith('u{')) return String.fromCodePoint(parseInt(code.slice(2, -1), 16));
+    if (code[0] === 'u') return String.fromCharCode(parseInt(code.slice(1), 16));
+    if (code === 'n' || code === 'r' || code === 't') return ' ';
+    return code;
+  });
+}
+
+function isHumanText(text: string): boolean {
+  if (text.length < 8 || !/\s/.test(text)) return false;
+  if (/[{};<>=]|=>|\\|\bfunction\b|\breturn\b|https?:|www\.|\.(?:js|css|png|svg|json)\b|^\s*[.#@]/.test(text)) return false;
+  const words = text.split(' ');
+  if (words.length < 2) return false;
+  // Classes do Tailwind ("flex items-center gap-2 text-sm") não são frases.
+  const codeLike = words.filter((word) => /[-:/\[\]_]/.test(word) || /^[a-z]+\d+$/.test(word)).length;
+  if (codeLike / words.length > 0.3) return false;
+  const letters = (text.match(/\p{L}/gu) || []).length;
+  if (letters / text.length < 0.5) return false;
+  // Português ou frase com cara de interface: acento, R$, pontuação de frase ou maiúscula no início.
+  return /[ãáàâéêíóôõúç]|R\$|[.!?…:·]|^[A-ZÁÉÍÓÚ]/.test(text);
 }

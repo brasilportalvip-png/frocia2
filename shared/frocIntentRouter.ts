@@ -87,6 +87,16 @@ const DRAW_VERBS = new Set(['desenhe', 'desenha', 'desenhar', 'pinte', 'pinta', 
 /** Tema que aponta para a conversa: "uma imagem disso". */
 const PRONOUN_TOPIC = /^(?:disso|isso|disto|isto|dele|dela|deles|delas|desse assunto|dessa ideia|desse tema|do assunto|do tema|do que (?:a gente )?(?:falamos|conversamos|estamos falando)|sobre isso|sobre o assunto|sobre o que falamos|do que voce disse|dessa resposta|do que (?:eu )?falei)\b/;
 
+/**
+ * "faz a imagem certa, caralho", "cria a imagem de novo", "gera a imagem que eu pedi":
+ * isso é reclamação ou referência, não o tema da imagem. Vai para a conversa, que tem o
+ * contexto (o site, o pedido original) e monta a descrição certa.
+ */
+export const VAGUE_IMAGE_TOPIC =
+  /^(?:(?:a|o|as|os|uma|um|de|do|da|que|eu|voce|tinha|pedi|pedido|falei|mandei|agora|logo|ai|entao|novo|nova|novamente|outra|outro|outras|outros|mesma|mesmo|certa|certo|certas|certos|correta|correto|direito|direita|melhor|boa|bom|bonita|bonito|igual|real|verdade|serio|profissional|caralho|porra|merda|cacete|droga|po|poxa|pelo|amor|deus|por|favor|pfv|pf|ja|isso|aquela|aquele|essa|esse|do site|site|link|pagina|ok|sim|vai|bora|direto|pra|para|mim|so|e|com|como|sem|erro|erros)\b\s*)+$/;
+
+const REDO_OR_COMPLAINT = /\b(?:novo|novamente|certa|certo|correta|correto|direito|direita|pedi|pedido|caralho|porra|merda|site|link|pagina|igual|mesma|mesmo|verdade|real|erro|erros)\b/;
+
 const RESEARCH = /(?:^|\s)(?:pesquise|pesquisa sobre|pesquisar sobre|faca uma pesquisa|faz uma pesquisa|fazer uma pesquisa|investigue|procure na (?:internet|web)|busque na (?:internet|web)|procura na (?:internet|web)|busca na (?:internet|web)|pesquisa na (?:internet|web)|pesquise na (?:internet|web))\b/;
 
 interface Word { raw: string; norm: string; endsClause: boolean }
@@ -216,11 +226,15 @@ export function routeFrocRequest(text: string, context: FrocRouteContext = {}): 
       if (/^(?:teste|testar|testes)$/.test(word.norm)) return false;
       return true;
     });
+    const rawTopic = rest.map((word) => word.norm).join(' ');
+    // "cria a imagem de novo", "faz a imagem certa": refazer/reclamar — a conversa sabe o tema.
+    if (rawTopic && VAGUE_IMAGE_TOPIC.test(rawTopic) && REDO_OR_COMPLAINT.test(rawTopic) && !parts.slice(partIndex + 1).flat().length) return null;
     while (rest.length && ((LINKS.has(rest[0].norm) && rest[0].norm !== 'que') || LEADING_ADJECTIVES.has(rest[0].norm))) rest = rest.slice(1);
     const tail = parts.slice(partIndex + 1).flat();
     let prompt = cleanPrompt([...rest, ...tail]);
     const promptNorm = prompt.split(' ').map(stripWord).filter(Boolean).join(' ');
 
+    if (promptNorm && VAGUE_IMAGE_TOPIC.test(promptNorm)) return null;
     if (!promptNorm || PRONOUN_TOPIC.test(promptNorm)) {
       const topic = (context.previousTopic || '').replace(/\s+/g, ' ').trim().slice(0, 400);
       const pronounOnly = Boolean(promptNorm);
