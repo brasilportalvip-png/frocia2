@@ -110,9 +110,19 @@ export function isProviderBillingError(message: string): boolean {
 }
 
 export function friendlyVideoError(message: string): string {
-  if (/billing/i.test(String(message || '')))
-    return 'O Google recusou o vídeo porque a conta de faturamento do projeto da chave GEMINI_MEDIA_API_KEY está fechada. Ative o faturamento desse projeto no Google Cloud (ou use uma chave de um projeto com faturamento ativo). Seus créditos foram devolvidos.';
-  return message;
+  const text = String(message || '');
+  if (/^O Google recusou o vídeo/.test(text)) return text;
+  if (/billing/i.test(text)) {
+    const state = /state (\w+)/i.exec(text)?.[1]?.toLowerCase();
+    const why =
+      state === 'absent'
+        ? 'não tem conta de faturamento ligada'
+        : state === 'closed'
+          ? 'está ligado a uma conta de faturamento fechada'
+          : 'está com o faturamento desativado';
+    return `O Google recusou o vídeo porque o projeto Google da chave de vídeo ${why}. A geração de vídeo exige faturamento ativo: crie a chave GEMINI_MEDIA_API_KEY em um projeto com faturamento ativo (ou ative o faturamento desse projeto). Seus créditos foram devolvidos.`;
+  }
+  return text;
 }
 
 async function startOmniVideo(key: string, body: Record<string, unknown>): Promise<string> {
@@ -1093,7 +1103,7 @@ if (operation.error) {
       aspectRatio: job.aspectRatio || '16:9',
       creditsReserved:
         Number(job.creditsReserved || 0),
-      error: job.error || null,
+      error: job.error ? friendlyVideoError(String(job.error)) : null,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     });
