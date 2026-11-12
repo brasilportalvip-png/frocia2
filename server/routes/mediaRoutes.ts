@@ -6,6 +6,7 @@ import { AuthenticatedRequest } from '../types.js';
 import { SafetyService } from '../ai/safetyService.js';
 import { CreditWalletService } from '../services/creditWalletService.js';
 import { adminDb } from '../lib/firebaseAdmin.js';
+import { saveMediaBlob, readMediaBlob } from '../lib/mediaBlobStore.js';
 import { FeatureFlagService } from '../services/featureFlagService.js';
 
 export const mediaRouter = Router();
@@ -422,33 +423,14 @@ mediaRouter.post(
         const createdAt = new Date().toISOString();
 
       let storagePath: string | null = null;
+      let storageStatus: string = 'temporary_browser_delivery';
 
-      if (process.env.FIREBASE_STORAGE_BUCKET?.trim()) {
-        try {
-          const { getMediaStorageBucket } =
-            await import('../lib/firebaseAdmin.js');
-
-          const bucket = await getMediaStorageBucket();
-          const objectPath = `media/${uid}/images/${docId}.jpg`;
-
-          await bucket.file(objectPath).save(
-            Buffer.from(imageBytes, 'base64'),
-            {
-              resumable: false,
-              contentType: mimeType,
-              metadata: {
-                cacheControl: 'private, no-store',
-              },
-            }
-          );
-
-          storagePath = objectPath;
-        } catch (storageError) {
-          console.error(
-            'Falha ao salvar imagem no Storage:',
-            storageError
-          );
-        }
+      try {
+        const objectPath = `media/${uid}/images/${docId}.jpg`;
+        storageStatus = await saveMediaBlob(objectPath, Buffer.from(imageBytes, 'base64'), mimeType);
+        storagePath = objectPath;
+      } catch (storageError) {
+        console.error('Falha ao guardar imagem:', storageError);
       }
 
       const mediaRecord = {
@@ -461,9 +443,7 @@ mediaRouter.post(
         mimeType,
         model: IMAGE_MODEL,
         status: 'completed',
-        storageStatus: storagePath
-          ? 'private_bucket'
-          : 'temporary_browser_delivery',
+        storageStatus,
         ...(storagePath ? { storagePath } : {}),
         creditsSpent: IMAGE_COST,
         createdAt,
@@ -825,15 +805,11 @@ mediaRouter.get(
           const completedAt = new Date().toISOString();
           let storagePath: string | null = null;
           let videoUrl: string | null = video.uri || null;
+          let videoStorage: string | null = null;
           if (video.data) {
-            const { getMediaStorageBucket } = await import('../lib/firebaseAdmin.js');
-            const bucket = await getMediaStorageBucket();
             storagePath = `media/${job.userId}/videos/${jobId}.mp4`;
-            await bucket.file(storagePath).save(Buffer.from(video.data, 'base64'), {
-              resumable: false,
-              contentType: video.mimeType || 'video/mp4',
-              metadata: { cacheControl: 'private, no-store' },
-            });
+            // O vídeo já foi gerado (e pago ao Google): guarda no Storage ou, se ele recusar, no Firestore.
+            videoStorage = await saveMediaBlob(storagePath, Buffer.from(video.data, 'base64'), video.mimeType || 'video/mp4');
             videoUrl = null;
           }
           await docRef.update({
@@ -841,6 +817,7 @@ mediaRouter.get(
             progress: 100,
             ...(videoUrl ? { videoUrl } : {}),
             ...(storagePath ? { storagePath } : {}),
+            ...(videoStorage ? { videoStorage } : {}),
             completedAt,
             updatedAt: completedAt,
           });
@@ -862,7 +839,7 @@ mediaRouter.get(
             quality: job.quality || 'lite',
             model: job.model,
             status: 'completed',
-            storageStatus: storagePath ? 'private_bucket' : 'temporary_provider_delivery',
+            storageStatus: storagePath ? (videoStorage || 'private_bucket') : 'temporary_provider_delivery',
             creditsSpent: job.creditsReserved || VIDEO_COSTS.lite,
             createdAt: job.createdAt,
             completedAt,
@@ -1160,9 +1137,9 @@ mediaRouter.get(
       job.storagePath === `media/${job.userId}/videos/${jobId}.mp4`
     ) {
       try {
-        const { getMediaStorageBucket } = await import('../lib/firebaseAdmin.js');
-        const bucket = await getMediaStorageBucket();
-        const [videoBytes] = await bucket.file(job.storagePath).download();
+        const stored = await readMediaBlob(job.storagePath, job.videoStorage);
+        if (!stored) return res.status(404).json({ error: 'Vídeo não encontrado.' });
+        const videoBytes = stored.bytes;
         res.setHeader('Content-Type', 'video/mp4');
         res.setHeader('Cache-Control', 'private, no-store');
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1497,7 +1474,7 @@ mediaRouter.get(
       if (
         media?.userId !== uid ||
         media?.type !== 'image' ||
-        media?.storageStatus !== 'private_bucket' ||
+        !['private_bucket', 'firestore_chunks'].includes(media?.storageStatus) ||
         media?.storagePath !== expectedPath
       ) {
         return res.status(404).json({
@@ -1505,13 +1482,11 @@ mediaRouter.get(
         });
       }
 
-      const { getMediaStorageBucket } =
-        await import('../lib/firebaseAdmin.js');
-
-      const bucket = await getMediaStorageBucket();
-      const [imageBytes] = await bucket
-        .file(expectedPath)
-        .download();
+      const stored = await readMediaBlob(expectedPath, media.storageStatus);
+      if (!stored) {
+        return res.status(404).json({ error: 'Imagem não encontrada ou indisponível.' });
+      }
+      const imageBytes = stored.bytes;
 
       res.setHeader(
         'Content-Type',
