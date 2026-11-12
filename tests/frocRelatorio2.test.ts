@@ -16,10 +16,18 @@ describe('Correções do 2º relatório do teste completo', () => {
     }, () => 'modelo-teste');
     const result = await model.generate({ systemInstruction: 's', userMessage: 'u', maxOutputTokens: 8000 });
     expect(isCompleteJson(result.text)).toBe(true);
-    expect(budgets[0]).toBeGreaterThanOrEqual(32768);
-    expect(budgets[1]).toBe(65536);
+    expect(budgets[0]).toBe(8000);
+    expect(budgets[1]).toBe(16000);
     expect(result.inputTokens).toBe(20);
     expect(result.model).toBe('modelo-teste');
+  });
+
+  it('construção não fica parada em 0% para sempre quando o servidor corta a etapa', () => {
+    const service = read('server/siteFactory/professionalBuildService.ts');
+    expect(service).toContain('SEJA CONCISO');
+    expect(service).toContain('attempts > MAX_MODEL_CALL_ATTEMPTS');
+    expect(service).toContain('"model_call_timeout"');
+    expect(service).not.toMatch(/context,\s*8000,/);
   });
 
   it('erro temporário da construção não aparece como falha enquanto ela tenta de novo', () => {
@@ -32,7 +40,7 @@ describe('Correções do 2º relatório do teste completo', () => {
     const media = read('server/routes/mediaRoutes.ts');
     expect(media).toContain('export function videoApiKeys()');
     expect(media).toContain('isProviderBillingError(providerMessage) && alternate');
-    expect(media).toContain('conta de faturamento do projeto da chave GEMINI_MEDIA_API_KEY está fechada');
+    expect(media).toContain('A geração de vídeo exige faturamento ativo');
     expect(media).toContain("videoKeyFor(job.apiKeyRef)");
   });
 });

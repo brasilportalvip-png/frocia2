@@ -65,6 +65,8 @@ export interface ProfessionalBuild extends BuildScope {
   createdAt: string;
   updatedAt: string;
   lease: { token: string; expires: number } | null;
+  /** Chamada ao modelo em andamento; se a função for encerrada no meio, conta as tentativas. */
+  modelCall?: { phase: number; attempts: number } | null;
   reports: Array<{
     stage: string;
     contributions: Array<{
@@ -343,6 +345,7 @@ export function isCompleteJson(text: string): boolean {
   }
 }
 export const FACTORY_MAX_OUTPUT_TOKENS = 65536;
+export const MAX_MODEL_CALL_ATTEMPTS = 3;
 export function createFactoryModel(
   call: (input: Parameters<FactoryModel["generate"]>[0]) => Promise<{
     text: string;
@@ -355,7 +358,7 @@ export function createFactoryModel(
     async generate(input) {
       let budget = Math.min(
         FACTORY_MAX_OUTPUT_TOKENS,
-        Math.max(32768, input.maxOutputTokens || 0),
+        Math.max(4096, input.maxOutputTokens || 0),
       );
       let inputTokens = 0;
       let outputTokens = 0;
@@ -368,7 +371,7 @@ export function createFactoryModel(
         if (isCompleteJson(last.text)) break;
         // sem tempo para outra tentativa nesta chamada: a etapa é retomada na próxima
         if (Date.now() - started > 100_000) break;
-        budget = FACTORY_MAX_OUTPUT_TOKENS;
+        budget = Math.min(FACTORY_MAX_OUTPUT_TOKENS, budget * 2);
       }
       return { ...last, inputTokens, outputTokens, model: model() };
     },
@@ -601,6 +604,16 @@ export class ProfessionalBuildService {
       amount,
       reservationId: null,
     };
+    const attempts =
+      b.modelCall && b.modelCall.phase === b.phase ? b.modelCall.attempts + 1 : 1;
+    if (attempts > MAX_MODEL_CALL_ATTEMPTS) {
+      b.modelCall = null;
+      throw new FactoryError(
+        "model_call_timeout",
+        "A etapa " + (b.phase + 1) + " passou do tempo limite do servidor " + MAX_MODEL_CALL_ATTEMPTS + " vezes seguidas. Toque em “Retomar construção” para tentar de novo; os créditos dessas tentativas foram devolvidos.",
+      );
+    }
+    b.modelCall = { phase: b.phase, attempts };
     b.billing = bill;
     await this.repository.save(b, token);
     const reserved = await this.wallet.reserveCredits({
@@ -644,12 +657,14 @@ export class ProfessionalBuildService {
             "\nAnexo " + reference.name + ":\n" + bytes.toString("utf8");
       }
     }
-    return this.model.generate({
+    const result = await this.model.generate({
       systemInstruction: system,
       userMessage: message,
       maxOutputTokens,
       attachments,
     });
+    b.modelCall = null;
+    return result;
   }
   async advance(id: string, scope: BuildScope) {
     const token = randomUUID();
@@ -684,14 +699,14 @@ export class ProfessionalBuildService {
           b,
           token,
           2,
-          "Você participa da fábrica profissional. Devolva JSON {contributions:[{agentId,decisions:string[],tests:string[]}]}. Cada perfil precisa de decisões específicas e testes. Cada decisão deve explicar motivo, arquivo ou fluxo afetado e critério observável. Cada teste deve descrever entrada, ação e resultado esperado. Integre as decisões anteriores. Não alegue testes executados.\n" +
+          "Você participa da fábrica profissional. Devolva JSON {contributions:[{agentId,decisions:string[],tests:string[]}]}. Cada perfil precisa de decisões específicas e testes. Cada decisão deve explicar motivo, arquivo ou fluxo afetado e critério observável. Cada teste deve descrever entrada, ação e resultado esperado. Integre as decisões anteriores. Não alegue testes executados. SEJA CONCISO: por perfil, de 2 a 4 decisões (cada uma com no máximo 300 caracteres) e de 2 a 3 testes (cada um com no máximo 220 caracteres); o JSON inteiro deve ter menos de 12000 caracteres.\n" +
             AGENT_EXECUTION_PROTOCOL +
             "\n" +
             FACTORY_DISCIPLINE_PROTOCOL[stage.id] +
             "\n" +
             agents.map(describeAgent).join("\n\n"),
           context,
-          8000,
+          16384,
         );
         const report = json(result.text);
         if (
@@ -780,7 +795,7 @@ export class ProfessionalBuildService {
           "Revise independentemente a cobertura e o código. Retorne JSON {passed:boolean,issues:string[]}. Reprove código incompleto, integrações simuladas, autorização ausente, pagamentos sem webhook, dados não persistidos, conteúdo genérico e testes triviais. Não alegue executar testes.\n" +
             PROFESSIONAL_GENERATION_CONTRACT,
           JSON.stringify({ brief: b.brief, bundle: b.bundle }),
-          12000,
+          16384,
         );
         const review = json(result.text);
         if (
@@ -975,11 +990,13 @@ export class ProfessionalBuildService {
                     ? "certifying"
                     : "publishing",
           error: null,
+          modelCall: null,
         });
       });
     } else if (this.repository instanceof InMemoryBuildRepository) {
       b.status = "queued";
       b.error = null;
+      b.modelCall = null;
       this.repository.builds.set(id, b);
     }
     return this.advance(id, scope);
