@@ -162,8 +162,11 @@ export function isLikelyDirectSourceUrl(value: unknown): boolean {
 function numberCitations(
   citations: MessageCitation[]
 ): MessageCitation[] {
+  // Campos undefined são removidos: o Firestore não aceita undefined ao salvar.
   return citations.map((citation, index) => ({
-    ...citation,
+    ...(Object.fromEntries(
+      Object.entries(citation).filter(([, value]) => value !== undefined)
+    ) as MessageCitation),
     index: index + 1,
   }));
 }

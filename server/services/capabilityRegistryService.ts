@@ -105,15 +105,15 @@ export class CapabilityRegistryService {
 
     const veoLiteModel =
       process.env.VEO_LITE_MODEL ||
-      'veo-3.1-lite-generate-preview';
+      (process.env.OMNI_VIDEO_MODEL || 'gemini-omni-1.1-flash');
 
     const veoFastModel =
       process.env.VEO_FAST_MODEL ||
-      'veo-3.1-fast-generate-preview';
+      (process.env.OMNI_VIDEO_MODEL || 'gemini-omni-1.1-flash');
 
     const veoStandardModel =
       process.env.VEO_STANDARD_MODEL ||
-      'veo-3.1-generate-preview';
+      (process.env.OMNI_VIDEO_MODEL || 'gemini-omni-1.1-flash');
 
     const capabilities: CapabilityItem[] = [
       {

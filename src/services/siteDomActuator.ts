@@ -52,10 +52,12 @@ function labelOf(element: HTMLElement): string {
   const labelledBy = element.getAttribute('aria-labelledby');
   const labelled = labelledBy ? labelledBy.split(' ').map((id) => document.getElementById(id)?.textContent || '').join(' ') : '';
   let own = '';
-  if (element instanceof HTMLInputElement) {
-    own = element.value && element.type !== 'checkbox' && element.type !== 'radio' ? element.value : '';
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    // O que está DIGITADO num campo não é o nome dele: "digite ... no campo nome" achava a caixa
+    // do chat porque a própria frase digitada continha "nome". Só botões (submit/button) usam o valor.
+    own = element instanceof HTMLInputElement && /^(?:submit|button|reset)$/.test(element.type) ? element.value : '';
     const label = element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`) : element.closest('label');
-    own = `${own} ${label?.textContent || ''} ${element.placeholder || ''}`;
+    own = `${own} ${label?.textContent || ''} ${element.placeholder || ''} ${element.getAttribute('name') || ''}`;
   } else if (element instanceof HTMLSelectElement) {
     const label = element.id ? document.querySelector(`label[for="${CSS.escape(element.id)}"]`) : element.closest('label');
     own = label?.textContent || element.name || '';

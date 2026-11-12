@@ -271,3 +271,19 @@ export function pickImageAspectRatio(prompt: string): '1:1' | '16:9' | '4:3' {
   if (/\b(?:horizontal|paisagem|panoramic[ao]|widescreen|banner|capa|youtube|16\s*[:x]\s*9|1[.,]91\s*[:x]\s*1|1200\s*x\s*628|1920\s*x\s*1080)\b/.test(n)) return '16:9';
   return '1:1';
 }
+
+/**
+ * "cria uma imagem para o Google Ads desse site", "faz um banner do meu app": o que se cria é
+ * MÍDIA, mesmo com "site"/"app" na frase. Antes isso disparava a construção de um site inteiro.
+ */
+export function isMediaCreationRequest(text: string): boolean {
+  const n = String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const verb = /\b(?:crie|cria|criar|gere|gera|gerar|faca|faz|fazer|desenhe|desenha|produza|produz|monte|monta|quero|preciso)\b/.exec(n);
+  if (!verb) return false;
+  const after = n.slice(verb.index + verb[0].length);
+  const media = /\b(?:imagem|imagens|foto|fotos|video|videos|logo|logotipo|logomarca|banner|banners|arte|artes|post|posts|anuncio|anuncios|criativo|criativos|ilustracao|ilustracoes|figura|desenho|thumbnail|thumb|capa|flyer|panfleto)\b/.exec(after);
+  if (!media || media.index > 40) return false;
+  // O que vem primeiro é o que se cria: "um site com imagens" é site; "uma imagem do site" é imagem.
+  const project = /\b(?:site|website|aplicativo|app|webapp|sistema|loja virtual|landing page|pagina web)\b/.exec(after);
+  return !project || media.index < project.index;
+}

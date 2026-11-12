@@ -1,4 +1,4 @@
-import { pickImageAspectRatio } from '../shared/frocIntentRouter';
+import { isMediaCreationRequest, pickImageAspectRatio } from '../shared/frocIntentRouter';
 import { committeeNavigation } from './services/committeeNavigation';
 import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
@@ -1946,7 +1946,7 @@ const handleGeneralChat = async (
   const handleChatRequest = async (text: string, mode: ChatMode, files: UploadedFile[] = []) => {
   // Pedido de voz feito em outra tela: a resposta aparece no chat.
   setNavMode('studio');
-  if (mode === 'Criador de projetos' || /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text)) {
+  if (mode === 'Criador de projetos' || (!isMediaCreationRequest(text) && /^\s*(?:por favor[, ]*)?(?:(?:eu\s+)?quero(?:\s+que\s+voc[eê])?\s+)?(?:crie|criar|construa|fa[çc]a|monte|desenvolva)\b[\s\S]{0,180}\b(?:site|aplicativo|webapp|loja virtual|landing page)\b/i.test(text))) {
     await handleGenerateSite(
       {
         prompt: text,

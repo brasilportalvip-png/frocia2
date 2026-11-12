@@ -27,17 +27,47 @@ const IMAGE_MODEL =
   process.env.GEMINI_IMAGE_MODEL ||
   'gemini-3.1-flash-image';
 
+// Os modelos Veo 3.1 "preview" foram desligados pelo Google em 22/10/2026 (o vídeo falhava
+// com "models/veo-3.1-lite-generate-preview is not found"). O substituto indicado é o
+// Gemini Omni Flash, pela Interactions API. A qualidade vira a resolução.
+const OMNI_VIDEO_MODEL = process.env.OMNI_VIDEO_MODEL || 'gemini-omni-1.1-flash';
 const VIDEO_MODELS: Record<VideoQuality, string> = {
-  lite:
-    process.env.VEO_LITE_MODEL ||
-    'veo-3.1-lite-generate-preview',
-  fast:
-    process.env.VEO_FAST_MODEL ||
-    'veo-3.1-fast-generate-preview',
-  standard:
-    process.env.VEO_STANDARD_MODEL ||
-    'veo-3.1-generate-preview',
+  lite: OMNI_VIDEO_MODEL,
+  fast: OMNI_VIDEO_MODEL,
+  standard: OMNI_VIDEO_MODEL,
 };
+const VIDEO_RESOLUTION: Record<VideoQuality, '720p' | '1080p'> = {
+  lite: '720p',
+  fast: '720p',
+  standard: '1080p',
+};
+
+/** Procura o vídeo na resposta da Interactions API (output_video, outputs ou steps). */
+export function findOmniVideo(value: unknown, depth = 0): { data?: string; uri?: string; mimeType?: string } | null {
+  if (!value || typeof value !== 'object' || depth > 8) return null;
+  const item = value as Record<string, unknown>;
+  const mime = String(item.mime_type || item.mimeType || '');
+  const isVideo = item.type === 'video' || mime.startsWith('video/');
+  if (isVideo && (typeof item.data === 'string' || typeof item.uri === 'string')) {
+    return {
+      data: typeof item.data === 'string' ? item.data : undefined,
+      uri: typeof item.uri === 'string' ? item.uri : undefined,
+      mimeType: mime || 'video/mp4',
+    };
+  }
+  if (item.output_video && typeof item.output_video === 'object') {
+    const found = findOmniVideo({ type: 'video', ...(item.output_video as object) }, depth + 1);
+    if (found) return found;
+  }
+  for (const child of Object.values(item)) {
+    const found = Array.isArray(child)
+      ? child.map((entry) => findOmniVideo(entry, depth + 1)).find(Boolean) || null
+      : findOmniVideo(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 
 function getMediaApiKey(): string {
   const apiKey = process.env.GEMINI_MEDIA_API_KEY;
@@ -533,19 +563,36 @@ mediaRouter.post(
 
       reservationId = reservation.reservationId;
 
-      const ai = getGenAIClient();
-
-      const videoOperation =
-        await ai.models.generateVideos({
-          model: selectedModel,
-          prompt: sanitizedPrompt,
-          config: {
-            aspectRatio,
-            durationSeconds,
+      const startResponse = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/interactions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': getMediaApiKey(),
           },
-        });
+          body: JSON.stringify({
+            model: selectedModel,
+            input: sanitizedPrompt,
+            response_format: {
+              type: 'video',
+              aspect_ratio: aspectRatio,
+              resolution: VIDEO_RESOLUTION[quality],
+            },
+            background: true,
+            store: true,
+          }),
+        }
+      );
 
-      const operationName = videoOperation.name;
+      if (!startResponse.ok) {
+        throw new Error(
+          `O provedor de vídeo recusou o pedido: HTTP ${startResponse.status} — ${(await startResponse.text()).slice(0, 400)}`
+        );
+      }
+
+      const started = await startResponse.json() as { id?: string; name?: string };
+      const operationName = started.id || started.name;
 
       if (!operationName) {
         throw new Error(
@@ -564,6 +611,7 @@ mediaRouter.post(
         id: jobId,
         userId: uid,
         operationName,
+        provider: 'omni_interactions',
         type: 'video',
         prompt: sanitizedPrompt,
         aspectRatio,
@@ -672,7 +720,113 @@ mediaRouter.get(
       });
     }
 
-    if (job.status === 'processing') {
+    if (job.status === 'processing' && job.provider === 'omni_interactions') {
+      try {
+        const pollResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/interactions/${encodeURIComponent(String(job.operationName))}`,
+          { method: 'GET', headers: { 'x-goog-api-key': getMediaApiKey() } }
+        );
+        if (!pollResponse.ok) {
+          throw new Error(`Falha ao consultar o vídeo: HTTP ${pollResponse.status} — ${(await pollResponse.text()).slice(0, 300)}`);
+        }
+        const interaction = await pollResponse.json() as Record<string, unknown> & { status?: string; error?: { message?: string } };
+        const status = String(interaction.status || '').toLowerCase();
+        if (interaction.error || /fail|cancel|expired/.test(status)) {
+          const failedAt = new Date().toISOString();
+          await releaseVideoReservation({
+            userId: job.userId,
+            reservationId: job.reservationId,
+            jobId,
+            operation: 'Estorno após falha na geração de vídeo',
+          });
+          const message = interaction.error?.message || `O provedor informou "${status}" na geração do vídeo.`;
+          await docRef.update({ status: 'failed', progress: 0, error: message, failedAt, updatedAt: failedAt });
+          job.status = 'failed';
+          job.progress = 0;
+          job.error = message;
+          job.updatedAt = failedAt;
+        } else if (status === 'completed') {
+          const video = findOmniVideo(interaction);
+          if (!video) throw new Error('A geração terminou sem retornar um vídeo.');
+          const completedAt = new Date().toISOString();
+          let storagePath: string | null = null;
+          let videoUrl: string | null = video.uri || null;
+          if (video.data) {
+            const { getMediaStorageBucket } = await import('../lib/firebaseAdmin.js');
+            const bucket = await getMediaStorageBucket();
+            storagePath = `media/${job.userId}/videos/${jobId}.mp4`;
+            await bucket.file(storagePath).save(Buffer.from(video.data, 'base64'), {
+              resumable: false,
+              contentType: video.mimeType || 'video/mp4',
+              metadata: { cacheControl: 'private, no-store' },
+            });
+            videoUrl = null;
+          }
+          await docRef.update({
+            status: 'completed',
+            progress: 100,
+            ...(videoUrl ? { videoUrl } : {}),
+            ...(storagePath ? { storagePath } : {}),
+            completedAt,
+            updatedAt: completedAt,
+          });
+          await CreditWalletService.confirmConsumption({
+            userId: job.userId,
+            reservationId: job.reservationId,
+            amountConsumed: job.creditsReserved || VIDEO_COSTS.lite,
+            operation: `Geração de vídeo concluída (${job.quality || 'lite'})`,
+            idempotencyKey: `consume-video-${jobId}`,
+          });
+          await adminDb.collection('media_generations').doc(jobId).set({
+            id: jobId,
+            userId: job.userId,
+            type: 'video',
+            prompt: job.prompt,
+            ...(videoUrl ? { url: videoUrl } : {}),
+            ...(storagePath ? { storagePath } : {}),
+            aspectRatio: job.aspectRatio,
+            quality: job.quality || 'lite',
+            model: job.model,
+            status: 'completed',
+            storageStatus: storagePath ? 'private_bucket' : 'temporary_provider_delivery',
+            creditsSpent: job.creditsReserved || VIDEO_COSTS.lite,
+            createdAt: job.createdAt,
+            completedAt,
+            updatedAt: completedAt,
+          });
+          job.status = 'completed';
+          job.progress = 100;
+          job.videoUrl = videoUrl;
+          job.storagePath = storagePath;
+          job.updatedAt = completedAt;
+        } else {
+          const nextProgress = Math.min(90, Number(job.progress || 10) + 10);
+          await docRef.update({ progress: nextProgress, pollFailures: 0, updatedAt: new Date().toISOString() });
+          job.progress = nextProgress;
+        }
+      } catch (error: any) {
+        const pollFailures = Number(job.pollFailures || 0) + 1;
+        console.warn(`Falha ${pollFailures} ao consultar vídeo ${jobId}:`, error?.message || error);
+        if (pollFailures >= 3) {
+          const failedAt = new Date().toISOString();
+          await releaseVideoReservation({
+            userId: job.userId,
+            reservationId: job.reservationId,
+            jobId,
+            operation: 'Estorno após falha definitiva na geração de vídeo',
+          });
+          await docRef.update({ status: 'failed', progress: 0, pollFailures, error: error?.message || 'Falha ao consultar geração de vídeo.', failedAt, updatedAt: failedAt });
+          job.status = 'failed';
+          job.progress = 0;
+          job.error = error?.message || 'Falha ao consultar geração de vídeo.';
+          job.updatedAt = failedAt;
+        } else {
+          await docRef.update({ pollFailures, updatedAt: new Date().toISOString() });
+        }
+      }
+    }
+
+    if (job.status === 'processing' && job.provider !== 'omni_interactions') {
       try {
         
 
@@ -927,6 +1081,25 @@ mediaRouter.get(
     }
 
     if (
+      job.status === 'completed' &&
+      typeof job.storagePath === 'string' &&
+      job.storagePath === `media/${job.userId}/videos/${jobId}.mp4`
+    ) {
+      try {
+        const { getMediaStorageBucket } = await import('../lib/firebaseAdmin.js');
+        const bucket = await getMediaStorageBucket();
+        const [videoBytes] = await bucket.file(job.storagePath).download();
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.send(videoBytes);
+      } catch (error) {
+        console.error('Falha ao recuperar vídeo:', error);
+        return res.status(503).json({ error: 'Não foi possível recuperar o vídeo.' });
+      }
+    }
+
+    if (
       job.status !== 'completed' ||
       typeof job.videoUrl !== 'string' ||
       !job.videoUrl
@@ -1122,7 +1295,9 @@ mediaRouter.post(
     try {
       providerCancelled =
         await cancelProviderVideoOperation(
-          job.operationName
+          job.provider === 'omni_interactions'
+            ? `interactions/${job.operationName}`
+            : job.operationName
         );
     } catch (error: any) {
       console.warn(
