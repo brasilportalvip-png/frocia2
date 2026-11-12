@@ -1,4 +1,4 @@
-import { VAGUE_IMAGE_TOPIC } from '../../shared/frocIntentRouter';
+import { CONTEXT_DEPENDENT_TOPIC, VAGUE_IMAGE_TOPIC } from '../../shared/frocIntentRouter';
 const FROC_NAME_PATTERN = '(?:froc|frock|frog|rock|froke|fr[oó]qui)';
 /** Como o reconhecimento de voz costuma ouvir "Froc" (Flávio, Floki, Frank, Proc, Bradesco...). */
 const MISHEARD_NAME = '(?:froc|frock|frog|frogue|froggy|froke|fr[oó]qui|froque|frok|flock|floki|fl[aá]vio|frank|franco|proc|broc|brock|croc|troc|rock|roque|bradesco)';
@@ -51,7 +51,7 @@ export function classifyFrocMediaVoiceCommand(
   const imagePrompt = cleaned.replace(IMAGE_COMMAND_PATTERN, '').trim();
   const imageTopic = imagePrompt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   // "faz a imagem certa", "cria a imagem de novo": reclamação, não tema → a conversa decide.
-  if (imagePrompt !== cleaned && imageTopic && VAGUE_IMAGE_TOPIC.test(imageTopic)) return null;
+  if (imagePrompt !== cleaned && imageTopic && (VAGUE_IMAGE_TOPIC.test(imageTopic) || CONTEXT_DEPENDENT_TOPIC.test(imageTopic))) return null;
   if (imagePrompt !== cleaned) {
     return { mode: 'Imagem', prompt: imagePrompt || cleaned };
   }

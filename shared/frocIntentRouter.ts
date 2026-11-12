@@ -97,6 +97,14 @@ export const VAGUE_IMAGE_TOPIC =
 
 const REDO_OR_COMPLAINT = /\b(?:novo|novamente|certa|certo|correta|correto|direito|direita|pedi|pedido|caralho|porra|merda|site|link|pagina|igual|mesma|mesmo|verdade|real|erro|erros)\b/;
 
+/**
+ * Tema que depende da conversa ("para o Google Ads desse site", "do app", "como está aí acima"):
+ * o gerador de imagem não sabe o que é "esse site". Vai para a conversa, que leu o site e
+ * escreve a descrição completa da imagem.
+ */
+export const CONTEXT_DEPENDENT_TOPIC =
+  /\b(?:(?:desse|deste|dessa|desta|nesse|neste|nessa|nesta|esse|este|essa|esta|do|da|no|na|meu|minha|seu|sua|nosso|nossa)\s+(?:site|sites|app|aplicativo|marca|anuncio|anuncios|plano|planos|produto|empresa|loja|pagina|negocio|projeto|campanha|link|perfil)|google ads|facebook ads|meta ads|criativos?|acima|anterior|anteriores|que (?:eu )?(?:pedi|mandei|falei|enviei))\b/;
+
 const RESEARCH = /(?:^|\s)(?:pesquise|pesquisa sobre|pesquisar sobre|faca uma pesquisa|faz uma pesquisa|fazer uma pesquisa|investigue|procure na (?:internet|web)|busque na (?:internet|web)|procura na (?:internet|web)|busca na (?:internet|web)|pesquisa na (?:internet|web)|pesquise na (?:internet|web))\b/;
 
 interface Word { raw: string; norm: string; endsClause: boolean }
@@ -231,6 +239,8 @@ export function routeFrocRequest(text: string, context: FrocRouteContext = {}): 
     if (rawTopic && VAGUE_IMAGE_TOPIC.test(rawTopic) && REDO_OR_COMPLAINT.test(rawTopic) && !parts.slice(partIndex + 1).flat().length) return null;
     while (rest.length && ((LINKS.has(rest[0].norm) && rest[0].norm !== 'que') || LEADING_ADJECTIVES.has(rest[0].norm))) rest = rest.slice(1);
     const tail = parts.slice(partIndex + 1).flat();
+    const fullTopic = [...rest, ...tail].map((word) => word.norm).join(' ');
+    if (CONTEXT_DEPENDENT_TOPIC.test(fullTopic)) return null;
     let prompt = cleanPrompt([...rest, ...tail]);
     const promptNorm = prompt.split(' ').map(stripWord).filter(Boolean).join(' ');
 
@@ -252,4 +262,12 @@ export function routeFrocRequest(text: string, context: FrocRouteContext = {}): 
     return { mode: 'Pesquisa', prompt: original };
   }
   return null;
+}
+
+/** Formato pedido na descrição: "horizontal", "banner", "1200x628" → 16:9; "4:3" → 4:3; resto quadrado. */
+export function pickImageAspectRatio(prompt: string): '1:1' | '16:9' | '4:3' {
+  const n = String(prompt || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (/\b4\s*[:x]\s*3\b/.test(n)) return '4:3';
+  if (/\b(?:horizontal|paisagem|panoramic[ao]|widescreen|banner|capa|youtube|16\s*[:x]\s*9|1[.,]91\s*[:x]\s*1|1200\s*x\s*628|1920\s*x\s*1080)\b/.test(n)) return '16:9';
+  return '1:1';
 }
