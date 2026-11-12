@@ -230,12 +230,21 @@ export function ProfessionalBuildPanel({
               Limite estimado com correções e mídias:{" "}
               {build.estimatedMaximumCredits}.
             </p>
-            {build.error && (
+            {build.error && build.status === "failed" && (
               <p
                 role="alert"
                 className="mt-3 rounded-lg border border-red-400/20 p-3 text-sm text-red-200"
               >
                 {build.error}
+              </p>
+            )}
+            {build.error && build.status !== "failed" && (
+              <p
+                role="status"
+                data-testid="factory-build-retrying"
+                className="mt-3 rounded-lg border border-amber-400/20 p-3 text-sm text-amber-200"
+              >
+                Ajustando e tentando de novo automaticamente: {build.error}
               </p>
             )}
             {build.status === "configuration_required" && (

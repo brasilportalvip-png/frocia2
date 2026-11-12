@@ -328,19 +328,64 @@ export interface FactoryModel {
     outputTokens: number;
   }>;
 }
-export const realFactoryModel: FactoryModel = {
-  async generate(input) {
-    const response = await GeminiProvider.generate({
+/** JSON completo? (o modelo pensa antes de responder e o pensamento gasta o mesmo limite de saída) */
+export function isCompleteJson(text: string): boolean {
+  try {
+    JSON.parse(
+      String(text || "")
+        .trim()
+        .replace(/^```(?:json)?\s*/, "")
+        .replace(/\s*```$/, ""),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+export const FACTORY_MAX_OUTPUT_TOKENS = 65536;
+export function createFactoryModel(
+  call: (input: Parameters<FactoryModel["generate"]>[0]) => Promise<{
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+  }>,
+  model: () => string,
+): FactoryModel {
+  return {
+    async generate(input) {
+      let budget = Math.min(
+        FACTORY_MAX_OUTPUT_TOKENS,
+        Math.max(32768, input.maxOutputTokens || 0),
+      );
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let last = { text: "", inputTokens: 0, outputTokens: 0 };
+      const started = Date.now();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        last = await call({ ...input, maxOutputTokens: budget });
+        inputTokens += last.inputTokens || 0;
+        outputTokens += last.outputTokens || 0;
+        if (isCompleteJson(last.text)) break;
+        // sem tempo para outra tentativa nesta chamada: a etapa é retomada na próxima
+        if (Date.now() - started > 100_000) break;
+        budget = FACTORY_MAX_OUTPUT_TOKENS;
+      }
+      return { ...last, inputTokens, outputTokens, model: model() };
+    },
+  };
+}
+export const realFactoryModel: FactoryModel = createFactoryModel(
+  (input) =>
+    GeminiProvider.generate({
       ...input,
       model: env.GEMINI_CODE_MODEL,
       responseFormat: "json",
       temperature: 0.3,
       timeoutMs: 180000,
       maxRetries: 0,
-    });
-    return { ...response, model: env.GEMINI_CODE_MODEL };
-  },
-};
+    }),
+  () => env.GEMINI_CODE_MODEL,
+);
 const json = (s: string) =>
   JSON.parse(
     s
