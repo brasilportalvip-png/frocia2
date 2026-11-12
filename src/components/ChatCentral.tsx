@@ -9,7 +9,7 @@ import { getProgressiveSpeechOpening, normalizeTextForSpeech, splitTextForProgre
 import { classifyFrocVoiceTranscript, hasFrocWakePhrase, isAndroidChromeVoiceClient } from '../services/voiceCommandService';
 import { executeSiteCommandText, onSiteCommandOutcome, useSiteCommand, type SiteCommandOutcome } from '../services/siteCommandBus';
 import { decideBargeIn, isSilenceCommand, meaningfulWordCount } from '../services/voiceBargeIn';
-import { routeFrocRequest, splitFrocClauses } from '../../shared/frocIntentRouter';
+import { isMediaCreationRequest, routeFrocRequest, splitFrocClauses } from '../../shared/frocIntentRouter';
 import {
   createNeuralSpeechAudio,
   streamNeuralSpeechAudio
@@ -1352,6 +1352,7 @@ const requestedMode: ChatMode =
     : routed
       ? routed.mode
       : creationIntent &&
+          !isMediaCreationRequest(textToSend) &&
           /\b(site|website|aplicativo|aplicacao|app|sistema|loja virtual|pagina web)\b/.test(normalizedRequest)
         ? 'Criador de projetos'
         : 'Inteligente');

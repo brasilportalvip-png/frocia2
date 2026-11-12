@@ -293,11 +293,13 @@ export function attachCitationMarkers(
     const markerIndex = text.indexOf(marker);
     if (markerIndex < 0) return citation;
     const span = sentenceSpan(text, markerIndex);
+    // O trecho apoiado sai do objeto (antes ficava como valor indefinido): o Firestore recusa isso e a pesquisa inteira
+    // falhava ao salvar ("Cannot use undefined as a Firestore value").
+    const { supportedText: _unused, ...rest } = citation as MessageCitation & { supportedText?: string };
     return {
-      ...citation,
+      ...rest,
       startIndex: span.start,
       endIndex: span.end,
-       supportedText: undefined,
     };
   });
 }

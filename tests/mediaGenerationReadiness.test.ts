@@ -175,52 +175,31 @@ describe(
           "'gemini-3.1-flash-image'"
         );
 
+        // Veo 3.1 "preview" foi desligado em 22/10/2026: o vídeo usa o Gemini Omni Flash.
         expect(mediaRoutesSource).toContain(
-          "'veo-3.1-lite-generate-preview'"
-        );
-
-        expect(mediaRoutesSource).toContain(
-          "'veo-3.1-fast-generate-preview'"
+          "'gemini-omni-1.1-flash'"
         );
 
         expect(mediaRoutesSource).toContain(
-          "'veo-3.1-generate-preview'"
+          "https://generativelanguage.googleapis.com/v1beta/interactions"
         );
 
-        expect(mediaRoutesSource).not.toContain(
-          "'imagen-3.0-generate-002'"
-        );
-
-        expect(mediaRoutesSource).not.toContain(
-          "'veo-2.0-generate-001'"
-        );
-
-        expect(mediaRoutesSource).not.toContain(
-          "'veo-3.1-lite-generate-001'"
-        );
-
-        expect(mediaRoutesSource).not.toContain(
-          "'veo-3.1-fast-generate-001'"
-        );
-
-        expect(mediaRoutesSource).not.toContain(
-          "'veo-3.1-generate-001'"
-        );
+        for (const retired of [
+          "'veo-3.1-lite-generate-preview'",
+          "'veo-3.1-fast-generate-preview'",
+          "'veo-3.1-generate-preview'",
+          "'imagen-3.0-generate-002'",
+          "'veo-2.0-generate-001'",
+        ]) {
+          expect(mediaRoutesSource).not.toContain(retired);
+        }
 
         expect(envExampleSource).toContain(
           'GEMINI_IMAGE_MODEL="gemini-3.1-flash-image"'
         );
 
         expect(envExampleSource).toContain(
-          'VEO_LITE_MODEL="veo-3.1-lite-generate-preview"'
-        );
-
-        expect(envExampleSource).toContain(
-          'VEO_FAST_MODEL="veo-3.1-fast-generate-preview"'
-        );
-
-        expect(envExampleSource).toContain(
-          'VEO_STANDARD_MODEL="veo-3.1-generate-preview"'
+          'OMNI_VIDEO_MODEL="gemini-omni-1.1-flash"'
         );
       }
     );
