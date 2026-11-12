@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { extractSiteUrl, readSiteAsContext, refersToSite, resolveSiteTarget } from '../server/services/siteReaderService';
 import { extractHumanStrings } from '../server/services/externalImportService';
-import { routeFrocRequest } from '../shared/frocIntentRouter';
+import { pickImageAspectRatio, routeFrocRequest } from '../shared/frocIntentRouter';
 import { classifyFrocMediaVoiceCommand } from '../src/services/voiceCommandService';
 
 describe('A Froc abre o site que a pessoa manda (não adivinha)', () => {
@@ -78,8 +78,46 @@ describe('Reclamação não vira tema de imagem', () => {
     }
   });
 
+  it('"imagem para o Google Ads desse site" passa pela conversa, que leu o site', () => {
+    for (const fala of [
+      'cria uma imagem para o Google Ads desse site',
+      'cria uma imagem do site Magia do Tarot, Magia das Crenças, como está aí acima',
+      'gera uma imagem do meu app',
+      'faz uma imagem para a campanha do plano especial',
+    ]) {
+      expect(routeFrocRequest(fala)).toBeNull();
+      expect(classifyFrocMediaVoiceCommand(fala)).toBeNull();
+    }
+    expect(resolveSiteTarget('cria uma imagem para o Google Ads desse site', [{ role: 'user', content: 'meu site é https://www.magiadascrencas.com.br/' }])).toBe('https://www.magiadascrencas.com.br/');
+    const rules = fs.readFileSync(path.resolve(process.cwd(), 'server/ai/contextBuilder.ts'), 'utf8');
+    expect(rules).toContain('escreva no marcador a descrição COMPLETA da cena');
+    expect(rules).toContain('Você não vê as imagens já criadas');
+  });
+
   it('pedido de imagem de verdade continua indo direto', () => {
     expect(routeFrocRequest('cria uma imagem de um gato astronauta')).toMatchObject({ mode: 'Imagem' });
+    expect(routeFrocRequest('cria uma imagem de pessoas reais jogando tarot numa mesa')).toMatchObject({ mode: 'Imagem', prompt: 'pessoas reais jogando tarot numa mesa' });
     expect(classifyFrocMediaVoiceCommand('crie uma imagem de um gato astronauta')).toMatchObject({ mode: 'Imagem', prompt: 'um gato astronauta' });
+  });
+});
+
+describe('Imagem para anúncio sai no formato e não some no caminho', () => {
+  it('formato pela descrição: horizontal/banner → 16:9, 4:3, resto quadrado', () => {
+    expect(pickImageAspectRatio('banner horizontal 1200x628 para Google Ads')).toBe('16:9');
+    expect(pickImageAspectRatio('capa para YouTube')).toBe('16:9');
+    expect(pickImageAspectRatio('imagem 4:3 de cartas de tarot')).toBe('4:3');
+    expect(pickImageAspectRatio('cartas de tarot na mesa, ultrarrealista')).toBe('1:1');
+    const app = fs.readFileSync(path.resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    expect(app).toContain('aspectRatio: pickImageAspectRatio(prompt)');
+  });
+
+  it('a checagem de fontes e o verificador não apagam o pedido de imagem', () => {
+    const routes = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/aiRoutes.ts'), 'utf8');
+    const guard = routes.indexOf('const creationMarkers = fullOutput.match(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(routes.indexOf('ResearchEvidenceService.finalize({'));
+    // A pessoa vê a fonte com título e link, sem o bloco enorme de prova.
+    expect(routes.indexOf('const { supportedText: _proof, ...visible }')).toBeGreaterThan(routes.indexOf('IndependentResponseVerifier.verify({'));
+    expect(routes.indexOf('fullOutput = `${fullOutput.trim()}\\n${creationMarkers[0]}`;')).toBeGreaterThan(routes.indexOf('IndependentResponseVerifier.verify({'));
   });
 });

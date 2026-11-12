@@ -1,3 +1,4 @@
+import { pickImageAspectRatio } from '../shared/frocIntentRouter';
 import { committeeNavigation } from './services/committeeNavigation';
 import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
@@ -2045,7 +2046,7 @@ const handleGeneralChat = async (
 
             const image = await MediaGenerationService.generateImage({
               prompt,
-              aspectRatio: '1:1',
+              aspectRatio: pickImageAspectRatio(prompt),
             });
 
             setChatMessages((current) =>

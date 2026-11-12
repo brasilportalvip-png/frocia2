@@ -1030,6 +1030,11 @@ recentMessages:
           )
         );
 
+      // O marcador de criação ([[FROC_ACTION:...]]) é uma ordem para o site, não um fato:
+      // a checagem de fontes e o verificador podiam reescrever a resposta e apagá-lo
+      // (a imagem pedida simplesmente não saía). Guarda e devolve no fim.
+      const creationMarkers = fullOutput.match(/\[\[FROC_ACTION:(?:image|video|site)\|[\s\S]*?\]\]/gi) || [];
+
       // O site que a pessoa mandou é a fonte oficial do que ela perguntou: entra nas fontes
       // (o filtro de "página direta" descartava a página inicial) e vai como prova para o
       // verificador, que antes trocava a resposta certa por "não tenho acesso à internet".
@@ -1083,6 +1088,19 @@ recentMessages:
           status: verification.approved ? 'approved' : verification.revisedResponse ? 'revised' : 'not_confirmed',
           reason: verification.reason,
         });
+      }
+
+      // A prova completa do site serviu ao verificador; para a pessoa, a fonte mostra só o título e o link.
+      if (siteRead.citation) {
+        streamCitations = streamCitations.map((citation) => {
+          if (citation.uri !== siteRead.citation!.uri) return citation;
+          const { supportedText: _proof, ...visible } = citation as typeof citation & { supportedText?: string };
+          return { ...visible, snippet: siteRead.citation!.title };
+        });
+      }
+
+      if (creationMarkers.length && !/\[\[FROC_ACTION:/i.test(fullOutput)) {
+        fullOutput = `${fullOutput.trim()}\n${creationMarkers[0]}`;
       }
 
       if (bufferForEvidence) {
