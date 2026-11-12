@@ -44,6 +44,9 @@ describe('A Froc abre o site que a pessoa manda (não adivinha)', () => {
     const routes = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/aiRoutes.ts'), 'utf8');
     expect(routes).toContain('resolveSiteTarget(sanitizedPrompt, conversationContext.recentMessages)');
     expect(routes).toContain('siteReadContext,');
+    // Mesmo quando a frase pede auditoria ("analisa esse site"), os textos das telas também são lidos.
+    expect(routes).not.toContain('if (!siteAuditReport) {');
+    expect(routes.indexOf('const siteReadPromise')).toBeLessThan(routes.indexOf('if (plan.classification.siteAuditUrl)'));
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'server/ai/contextBuilder.ts'), 'utf8');
     expect(rules).toContain('[SITES E LINKS]');
     expect(rules).toContain('Um marcador por resposta');
