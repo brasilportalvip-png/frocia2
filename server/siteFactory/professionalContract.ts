@@ -155,13 +155,63 @@ export function sourceDigest(files: Array<{ path: string; content: string }>) {
     )
     .digest("hex");
 }
+/**
+ * O modelo às vezes entrega o projeto quase certo: um campo a mais, uma descrição
+ * longa demais, uma variável com valor vazio. Isso não deve derrubar a etapa inteira.
+ * Remove campos desconhecidos e encurta textos curtos (nunca o conteúdo dos arquivos);
+ * o que não dá para consertar sozinho volta como erro detalhado.
+ */
+export function parseBundleLeniently(data: unknown): ProfessionalBundle {
+  const at = (root: any, path: ReadonlyArray<PropertyKey>) =>
+    path.reduce((node: any, key) => (node == null ? node : node[key as any]), root);
+  if (data && typeof data === "object" && Array.isArray((data as any).variables))
+    for (const v of (data as any).variables)
+      if (v && typeof v === "object" && (v.value === "" || v.value === null)) delete v.value;
+  for (let pass = 0; pass < 5; pass++) {
+    const result = bundleSchema.safeParse(data);
+    if (result.success) return result.data;
+    let repaired = false;
+    for (const issue of result.error.issues as any[]) {
+      if (issue.code === "unrecognized_keys") {
+        const node = at(data, issue.path);
+        if (node && typeof node === "object")
+          for (const key of issue.keys || []) {
+            delete node[key];
+            repaired = true;
+          }
+      } else if (
+        issue.code === "too_big" &&
+        (issue.origin === "string" || issue.type === "string") &&
+        issue.path.length &&
+        issue.path[issue.path.length - 1] !== "content"
+      ) {
+        const parent = at(data, issue.path.slice(0, -1));
+        const key = issue.path[issue.path.length - 1];
+        if (parent && typeof parent[key] === "string") {
+          parent[key] = parent[key].slice(0, Number(issue.maximum));
+          repaired = true;
+        }
+      }
+    }
+    if (!repaired) throw result.error;
+  }
+  return bundleSchema.parse(data);
+}
+/** Resumo curto dos problemas de formato, para o modelo corrigir na próxima tentativa. */
+export function describeContractIssues(error: unknown, limit = 12): string {
+  const issues: any[] = (error as any)?.issues || [];
+  return issues
+    .slice(0, limit)
+    .map((issue) => (issue.path?.length ? issue.path.join(".") : "(raiz)") + ": " + issue.message)
+    .join("; ");
+}
 export function parseBundle(raw: string): ProfessionalBundle {
   if (Buffer.byteLength(raw) > 650000)
     throw new FactoryError(
       "bundle_too_large",
       "O projeto excedeu o limite de geração.",
     );
-  const bundle = bundleSchema.parse(
+  const bundle = parseBundleLeniently(
     JSON.parse(raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "")),
   );
   const paths = new Set<string>();
