@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { extractSiteUrl, refersToSite, resolveSiteTarget } from '../server/services/siteReaderService';
+import { extractSiteUrl, readSiteAsContext, refersToSite, resolveSiteTarget } from '../server/services/siteReaderService';
 import { extractHumanStrings } from '../server/services/externalImportService';
 import { routeFrocRequest } from '../shared/frocIntentRouter';
 import { classifyFrocMediaVoiceCommand } from '../src/services/voiceCommandService';
@@ -50,6 +50,23 @@ describe('A Froc abre o site que a pessoa manda (não adivinha)', () => {
     const rules = fs.readFileSync(path.resolve(process.cwd(), 'server/ai/contextBuilder.ts'), 'utf8');
     expect(rules).toContain('[SITES E LINKS]');
     expect(rules).toContain('Um marcador por resposta');
+  });
+});
+
+describe('O verificador e as fontes recebem o site lido', () => {
+  it('o site lido entra como fonte e como prova para o verificador (não troca a resposta por "sem acesso")', () => {
+    const routes = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/aiRoutes.ts'), 'utf8');
+    expect(routes).toContain('if (siteRead.citation && !streamCitations.some(');
+    expect(routes).toContain('requiresSearch: enableSearchGrounding && !siteRead.citation,');
+    expect(routes.indexOf('if (siteRead.citation && !streamCitations.some(')).toBeLessThan(routes.indexOf('IndependentResponseVerifier.verify({'));
+    expect(routes.indexOf('CitationService.filterDirectWebCitations(')).toBeLessThan(routes.indexOf('if (siteRead.citation && !streamCitations.some('));
+  });
+
+  it('endereço interno é recusado com o motivo, sem citação e sem inventar', async () => {
+    const result = await readSiteAsContext('http://127.0.0.1/admin');
+    expect(result.citation).toBeNull();
+    expect(result.context).toContain('NÃO CONSEGUI');
+    expect(result.context).toContain('Não invente o conteúdo do site.');
   });
 });
 

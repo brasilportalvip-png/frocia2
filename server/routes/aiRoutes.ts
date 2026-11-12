@@ -874,7 +874,9 @@ recentMessages:
       // Link na mensagem (ou "o site" depois de ter mandado um): a Froc ABRE o site de verdade,
       // inclusive os textos das telas (planos, preços), junto com a auditoria quando houver.
       const siteTarget = resolveSiteTarget(sanitizedPrompt, conversationContext.recentMessages);
-      const siteReadPromise = siteTarget ? readSiteAsContext(siteTarget) : Promise.resolve('');
+      const siteReadPromise = siteTarget
+        ? readSiteAsContext(siteTarget)
+        : Promise.resolve({ context: '', citation: null });
 
       if (plan.classification.siteAuditUrl) {
         await SiteAuditPolicyService.assertAllowed({
@@ -894,7 +896,8 @@ recentMessages:
         });
       }
 
-      const siteReadContext = await siteReadPromise;
+      const siteRead = await siteReadPromise;
+      const siteReadContext = siteRead.context;
 
       if (
         SocialSearchService.shouldSearch(
@@ -1027,11 +1030,19 @@ recentMessages:
           )
         );
 
+      // O site que a pessoa mandou é a fonte oficial do que ela perguntou: entra nas fontes
+      // (o filtro de "página direta" descartava a página inicial) e vai como prova para o
+      // verificador, que antes trocava a resposta certa por "não tenho acesso à internet".
+      if (siteRead.citation && !streamCitations.some((citation) => citation.uri === siteRead.citation!.uri)) {
+        streamCitations = [{ ...siteRead.citation, index: streamCitations.length + 1 }, ...streamCitations]
+          .map((citation, index) => ({ ...citation, index: index + 1 }));
+      }
+
       const evidence =
         ResearchEvidenceService.finalize({
           text: fullOutput,
           citations: streamCitations,
-          requiresSearch: enableSearchGrounding,
+          requiresSearch: enableSearchGrounding && !siteRead.citation,
           sensitivity:
             plan.classification.sensitivity,
           knowledgeBaseRequested:

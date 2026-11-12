@@ -1,4 +1,11 @@
 import { readPublicSiteTexts } from './externalImportService.js';
+import type { MessageCitation } from '../ai/types/ai.js';
+
+/** O site lido vira texto para a IA E prova (citação) para o verificador e para as fontes. */
+export interface SiteReadResult {
+  context: string;
+  citation: (MessageCitation & { supportedText?: string }) | null;
+}
 
 /**
  * A Froc LÊ o site de verdade sempre que a pessoa manda um link (ou fala "o site" depois
@@ -60,7 +67,7 @@ function clip(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
-export async function readSiteAsContext(url: string, timeoutMs = 15_000): Promise<string> {
+export async function readSiteAsContext(url: string, timeoutMs = 15_000): Promise<SiteReadResult> {
   try {
     const site = await Promise.race([
       readPublicSiteTexts(url, { timeoutMs: 8_000, maxScripts: 3, maxChars: 9_000 }),
@@ -81,14 +88,31 @@ export async function readSiteAsContext(url: string, timeoutMs = 15_000): Promis
         : 'Não encontrei textos de telas além da página inicial.',
       '[/SITE LIDO]',
     ];
-    return lines.filter(Boolean).join('\n');
+    const evidence = [site.description || '', ...site.appTexts, site.pageText].filter(Boolean).join(' | ');
+    let domain = '';
+    try { domain = new URL(site.finalUrl).hostname.replace(/^www\./, ''); } catch { domain = ''; }
+    return {
+      context: lines.filter(Boolean).join('\n'),
+      citation: {
+        title: clip(site.title, 160) || domain,
+        uri: site.finalUrl,
+        snippet: clip(evidence, 480),
+        supportedText: clip(evidence, 4_000),
+        sourceType: 'web',
+        domain,
+        retrievedAt: new Date().toISOString(),
+      },
+    };
   } catch (error) {
     const reason = error instanceof Error && error.message ? error.message : 'falha desconhecida';
-    return [
-      '',
-      `[TENTEI ABRIR O SITE ${url} E NÃO CONSEGUI: ${clip(reason, 200)}]`,
-      'Diga isso com honestidade em uma frase, com o motivo, e peça para a pessoa colar o texto principal ou mandar um print. Não invente o conteúdo do site.',
-      '[/SITE]',
-    ].join('\n');
+    return {
+      context: [
+        '',
+        `[TENTEI ABRIR O SITE ${url} E NÃO CONSEGUI: ${clip(reason, 200)}]`,
+        'Diga isso com honestidade em uma frase, com o motivo, e peça para a pessoa colar o texto principal ou mandar um print. Não invente o conteúdo do site.',
+        '[/SITE]',
+      ].join('\n'),
+      citation: null,
+    };
   }
 }
