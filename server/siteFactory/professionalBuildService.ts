@@ -23,6 +23,7 @@ import {
   FactoryError,
   ProfessionalBundle,
   parseBundle,
+  describeContractIssues,
   PROFESSIONAL_GENERATION_CONTRACT,
   sourceDigest,
   stableJson,
@@ -912,7 +913,7 @@ export class ProfessionalBuildService {
               ? "O projeto não cumpriu o contrato de entrega. Retome para corrigir."
               : "A etapa não foi concluída. Confira a configuração do provedor e retome.";
       if (
-        b.errors < 3 &&
+        b.errors < 5 &&
         (error instanceof SyntaxError ||
           (error as any)?.name === "ZodError" ||
           (error instanceof FactoryError &&
@@ -920,7 +921,14 @@ export class ProfessionalBuildService {
               error.code,
             )))
       ) {
-        b.feedback = [b.error];
+        b.feedback =
+          (error as any)?.name === "ZodError"
+            ? [
+                b.error,
+                "Corrija exatamente estes pontos do formato de entrega: " +
+                  describeContractIssues(error),
+              ]
+            : [b.error];
         b.status = b.phase < 10 ? "planning" : "generating";
       }
       b.updatedAt = new Date().toISOString();
