@@ -26,6 +26,7 @@ import {
   describeContractIssues,
   PROFESSIONAL_GENERATION_CONTRACT,
   sourceDigest,
+  fileProblem,
   stableJson,
 } from "./professionalContract.js";
 import {
@@ -105,6 +106,10 @@ export interface GenerationProgress {
   manifest: Array<{ path: string; purpose: string; keep?: boolean }>;
   /** Lista (e não mapa): nomes com "/" e "." não são chaves seguras no Firestore. */
   files: Array<{ path: string; content: string }>;
+  /** Plano refeito depois de falha na montagem: o que já foi escrito fica, salvo keep:false. */
+  replan?: boolean;
+  /** Arquivos recusados no último lote e o motivo, para o próximo lote corrigir. */
+  retryNotes?: Array<{ path: string; reason: string }>;
 }
 export interface BuildRepository {
   create(build: ProfessionalBuild): Promise<ProfessionalBuild>;
@@ -360,6 +365,8 @@ export function isCompleteJson(text: string): boolean {
 export const FACTORY_MAX_OUTPUT_TOKENS = 65536;
 /** Arquivos escritos por chamada ao modelo na geração em partes. */
 export const FILE_BATCH_SIZE = 5;
+/** Lotes escritos ao mesmo tempo em cada passo (cada um cabe sozinho no tempo do servidor). */
+export const PARALLEL_FILE_BATCHES = 3;
 export const MAX_MANIFEST_FILES = 60;
 const MANIFEST_PATH =
   /^(?:index\.html|(?:src|api|public|tests)\/[A-Za-z0-9_./-]+)$/;
@@ -373,6 +380,7 @@ NÃO escreva o conteúdo dos arquivos agora. Devolva JSON com TODOS os campos do
 - requirements[].files deve citar caminhos do fileManifest.`;
 export const CHUNKED_FILES_PROTOCOL = `GERAÇÃO EM PARTES — ETAPA 2 (ARQUIVOS):
 Escreva o conteúdo COMPLETO e final SOMENTE dos arquivos listados em writeNow, seguindo plan e fileManifest. Importe dos outros arquivos usando exatamente os nomes descritos no purpose de cada um e o código já escrito em writtenFiles. Quando previousContent existir, corrija-o conforme feedback em vez de começar do zero.
+Nunca escreva os marcadores TODO, FIXME, lorem ipsum, YOUR_API_KEY ou COLOQUE_AQUI, nem em comentários. Se rejectedLastTime existir, corrija exatamente o motivo indicado.
 Devolva JSON {"files":[{"path","content"}]} contendo exatamente os caminhos de writeNow.`;
 const EXPORT_PATTERN =
   /export\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|class|interface|type|enum)\s+([A-Za-z0-9_$]+)/g;
@@ -640,15 +648,32 @@ export class ProfessionalBuildService {
     b.billing = null;
     await this.repository.save(b, token);
   }
-  private async generated(
+  /** Vários lotes de arquivos em paralelo, com uma única reserva de créditos. */
+  private async generatedMany(
     b: ProfessionalBuild,
     token: string,
-    amount: number,
+    amountEach: number,
     system: string,
-    message: string,
+    messages: string[],
     maxOutputTokens: number,
-    includeReferences = true,
   ) {
+    await this.openModelCall(b, token, amountEach * messages.length);
+    const results = await Promise.allSettled(
+      messages.map((message) =>
+        this.model.generate({
+          systemInstruction: system,
+          userMessage: message,
+          maxOutputTokens,
+          attachments: [],
+        }),
+      ),
+    );
+    b.modelCall = null;
+    if (results.every((r) => r.status === "rejected"))
+      throw (results[0] as PromiseRejectedResult).reason;
+    return results.map((r) => (r.status === "fulfilled" ? r.value : null));
+  }
+  private async openModelCall(b: ProfessionalBuild, token: string, amount: number) {
     if (b.generationCreditLimit && b.consumedCredits + amount > b.generationCreditLimit)
       throw new FactoryError('maintenance_budget_exhausted', 'O limite de créditos desta manutenção foi atingido.');
     const bill: Billing = {
@@ -676,6 +701,17 @@ export class ProfessionalBuildService {
     });
     bill.reservationId = reserved.reservationId;
     await this.repository.save(b, token);
+  }
+  private async generated(
+    b: ProfessionalBuild,
+    token: string,
+    amount: number,
+    system: string,
+    message: string,
+    maxOutputTokens: number,
+    includeReferences = true,
+  ) {
+    await this.openModelCall(b, token, amount);
     const attachments: Array<{ type: string; data: string; mimeType: string }> =
       [];
     if (includeReferences && b.references.length && (b.phase === 0 || b.phase === 10)) {
@@ -1054,23 +1090,28 @@ export class ProfessionalBuildService {
       g.manifest = manifest.map((f: any) => ({
         path: f.path,
         purpose: String(f.purpose).slice(0, 600),
-        keep: f.keep === true && written.has(f.path),
+        // Depois de falha na montagem, o que já foi escrito fica (a menos que keep:false);
+        // em correções pedidas pela revisão, só fica o que o plano mandar manter.
+        keep: written.has(f.path) && (g.replan ? f.keep !== false : f.keep === true),
       }));
       // Só ficam os arquivos que o plano mandou manter; o resto será (re)escrito.
       for (const path of Array.from(written.keys()))
         if (!g.manifest.some((f) => f.keep && f.path === path)) written.delete(path);
       sync();
       g.plan = plan;
+      g.replan = false;
       return null;
     }
     const pending = g.manifest.filter((f) => !written.has(f.path));
     if (pending.length) {
-      const batch = pending.slice(0, FILE_BATCH_SIZE);
-      const previousContent = Object.fromEntries(
-        (b.bundle?.files || [])
-          .filter((f) => batch.some((x) => x.path === f.path))
-          .map((f) => [f.path, f.content.slice(0, 40000)]),
-      );
+      const groups: Array<typeof pending> = [];
+      for (
+        let i = 0;
+        i < pending.length && groups.length < PARALLEL_FILE_BATCHES;
+        i += FILE_BATCH_SIZE
+      )
+        groups.push(pending.slice(i, i + FILE_BATCH_SIZE));
+      const notes = g.retryNotes || [];
       let budget = 70000;
       const writtenFiles = Array.from(written, ([path, content]) => {
         if (content.length <= budget) {
@@ -1079,12 +1120,14 @@ export class ProfessionalBuildService {
         }
         return { path, exports: exportsOf(content) };
       });
-      const result = await this.generated(
-        b,
-        token,
-        2,
-        policy + "\n\n" + CHUNKED_FILES_PROTOCOL,
-        JSON.stringify({
+      const messages = groups.map((batch) => {
+        const previousContent = Object.fromEntries(
+          (b.bundle?.files || [])
+            .filter((f) => batch.some((x) => x.path === f.path))
+            .map((f) => [f.path, f.content.slice(0, 40000)]),
+        );
+        const rejected = notes.filter((n) => batch.some((x) => x.path === n.path));
+        return JSON.stringify({
           brief: b.brief,
           plan: g.plan,
           fileManifest: g.manifest,
@@ -1093,32 +1136,57 @@ export class ProfessionalBuildService {
           writtenFiles,
           writeNow: batch,
           ...(Object.keys(previousContent).length ? { previousContent } : {}),
-        }),
+          ...(rejected.length ? { rejectedLastTime: rejected } : {}),
+        });
+      });
+      const results = await this.generatedMany(
+        b,
+        token,
+        2,
+        policy + "\n\n" + CHUNKED_FILES_PROTOCOL,
+        messages,
         32768,
-        false,
       );
-      const out = json(result.text);
       let accepted = 0;
-      for (const f of Array.isArray(out?.files) ? out.files : []) {
-        if (
-          f &&
-          typeof f.path === "string" &&
-          typeof f.content === "string" &&
-          f.content.trim() &&
-          f.content.length <= 200000 &&
-          batch.some((x) => x.path === f.path)
-        ) {
+      const nextNotes: Array<{ path: string; reason: string }> = [];
+      results.forEach((result, index) => {
+        const batch = groups[index];
+        let out: any = null;
+        try {
+          out = result ? json(result.text) : null;
+        } catch {
+          out = null;
+        }
+        for (const f of Array.isArray(out?.files) ? out.files : []) {
+          if (
+            !f ||
+            typeof f.path !== "string" ||
+            typeof f.content !== "string" ||
+            !f.content.trim() ||
+            f.content.length > 200000 ||
+            !batch.some((x) => x.path === f.path)
+          )
+            continue;
+          // Cada arquivo é conferido na hora: um problema num arquivo não derruba o projeto inteiro.
+          const problem = fileProblem(f.path, f.content);
+          if (problem) {
+            nextNotes.push({ path: f.path, reason: problem });
+            continue;
+          }
           if (!written.has(f.path)) accepted++;
           written.set(f.path, f.content);
         }
-      }
+      });
+      g.retryNotes = nextNotes.slice(0, 40);
       sync();
       if (!accepted)
         throw new FactoryError(
           "invalid_files_batch",
-          "O lote de arquivos veio vazio. Gerando de novo.",
+          nextNotes.length
+            ? "Arquivos recusados (" + nextNotes.map((n) => n.path).join(", ").slice(0, 300) + "). Gerando de novo."
+            : "O lote de arquivos veio vazio. Gerando de novo.",
         );
-      if (pending.length - accepted > 0) return null;
+      if (g.manifest.some((f) => !written.has(f.path))) return null;
     }
     try {
       return parseBundle(
@@ -1128,8 +1196,9 @@ export class ProfessionalBuildService {
         }),
       );
     } catch (error) {
-      // Plano inconsistente com os arquivos: refaz o plano mantendo o que já foi escrito.
+      // Plano inconsistente com os arquivos: refaz só o plano; os arquivos escritos ficam.
       g.plan = null;
+      g.replan = true;
       throw error;
     }
   }
