@@ -520,15 +520,12 @@ export function parseBundle(raw: string): ProfessionalBundle {
       bundle.payments.provider === "stripe"
         ? "STRIPE_SECRET_KEY"
         : "MERCADO_PAGO_ACCESS_TOKEN";
-    if (
-      bundle.variables.some(
-        (v) => v.name === secretName && v.environment === "both",
-      )
-    )
-      throw new FactoryError(
-        "payment_environment_not_separated",
-        "Defina " + secretName + " separadamente para preview e production.",
-      );
+    // A varredura de process.env acima (ou a própria IA) pode declarar a credencial
+    // "para ambos". Em vez de reprovar (o que travava a construção em loop), troca pela
+    // versão de teste (preview) e a de produção, criadas logo abaixo.
+    bundle.variables = bundle.variables.filter(
+      (v) => !(v.name === secretName && v.environment === "both"),
+    );
     for (const environment of ["preview", "production"] as const)
       if (
         !bundle.variables.some(

@@ -95,3 +95,18 @@ describe("variáveis de pagamento", () => {
     expect(bundle.variables.filter((v) => v.name === "PUBLIC_SITE_URL").map((v) => v.environment)).toEqual(["production"]);
   });
 });
+
+describe("credencial de pagamento só usada no código", () => {
+  it("não reprova quando a IA não declara a variável e o código usa process.env", () => {
+    const raw: any = structuredClone(fixtureBundle());
+    raw.productType = "web-application";
+    raw.files.push({ path: "api/pagamento.ts", content: "export default function handler(){return process.env.MERCADO_PAGO_ACCESS_TOKEN?1:0}" });
+    raw.payments = { required: true, provider: "mercado-pago", currency: "BRL" };
+    raw.integrations = [{ name: "Pagamento Mercado Pago", healthPath: "/api/pagamento", required: true }];
+    raw.variables = [];
+    const bundle = parseBundle(JSON.stringify(raw));
+    expect(
+      bundle.variables.filter((v) => v.name === "MERCADO_PAGO_ACCESS_TOKEN").map((v) => v.environment).sort(),
+    ).toEqual(["preview", "production"]);
+  });
+});
