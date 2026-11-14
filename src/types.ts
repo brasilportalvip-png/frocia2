@@ -4,6 +4,8 @@ export type AppNavigationMode = 'landing' | 'studio' | 'dashboard' | 'pricing' |
 
 export interface GeneratedSite {
   professionalBuildId?: string;
+  /** Versão do código da fábrica que está na prévia do editor. */
+  previewDigest?: string;
   productionUrl?: string;
   id: string;
   title: string;

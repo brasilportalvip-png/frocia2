@@ -64,6 +64,7 @@ import {
 } from '../ai/githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
 import { readSiteAsContext, resolveSiteTarget } from '../services/siteReaderService.js';
+import { loadFactoryChatContext } from '../siteFactory/factoryChatContext.js';
 import { IndependentResponseVerifier } from '../ai/independentResponseVerifier.js';
 import {
   GithubCodeReading,
@@ -366,10 +367,22 @@ aiRouter.post(
       knowledgeBaseIds = [],
       attachments: submittedAttachments = [],
       tools = [],
-      activeProjectContext,
+      activeProjectContext: submittedProjectContext,
       modelOverride,
       idempotencyKey: providedKey
     } = parsedRequest;
+
+    // Projeto em construção na fábrica: o servidor lê o estado real (etapa, arquivos,
+    // erros, variáveis) para o chat acompanhar e ajudar, em vez de dizer que não vê o site.
+    const factoryBuildContext = await loadFactoryChatContext(
+      { uid, tenantId: req.user!.tenantId },
+      (req.body as Record<string, unknown> | undefined)?.activeBuild
+    );
+    const activeProjectContext =
+      [submittedProjectContext, factoryBuildContext]
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, 60000) || undefined;
 
     const safety =
       SafetyService.inspectPrompt(prompt);

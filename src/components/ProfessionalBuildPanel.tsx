@@ -8,13 +8,110 @@ interface Props {
   onClose(): void;
   onReady?(url: string, title: string): void;
   onRebuilt?(buildId: string): void;
+  onPreview?(html: string, digest: string): void;
+  previewDigest?: string;
+  /** Mensagem do disparo do executor (GitHub Actions), quando ele não pôde ser iniciado. */
+  dispatchNotice?: string | null;
 }
+const TERMINAL = ["ready", "failed", "cancelled", "configuration_required"];
+
+/**
+ * Faz a construção andar: consulta o estado e pede o próximo passo a cada 5 segundos.
+ * Usado pelo painel e, com o painel fechado, pelo executor em segundo plano do editor,
+ * para a construção não parar só porque a pessoa fechou a janela.
+ */
+export function useFactoryBuildRunner(
+  projectId: string,
+  buildId: string,
+  handlers: {
+    onBuild?(build: any): void;
+    onError?(message: string): void;
+    onPreview?(html: string, digest: string): void;
+    previewDigest?: string;
+  },
+  restartKey: unknown = null,
+) {
+  const latest = useRef(handlers);
+  latest.current = handlers;
+  const base =
+    "/api/professional-factory/projects/" +
+    encodeURIComponent(projectId) +
+    "/builds/" +
+    encodeURIComponent(buildId);
+  useEffect(() => {
+    let closed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    let previewDigest = latest.current.previewDigest || "";
+    let previewBusy = false;
+    const loadPreview = async (digest: string) => {
+      if (previewBusy || !digest || digest === previewDigest || !latest.current.onPreview) return;
+      previewBusy = true;
+      try {
+        const result = await apiClient<any>(base + "/preview", { signal: controller.signal });
+        if (!closed && result.preview?.html) {
+          previewDigest = digest;
+          latest.current.onPreview?.(result.preview.html, digest);
+        }
+      } catch {
+        // Prévia é um extra: se falhar, a construção continua normalmente.
+      } finally {
+        previewBusy = false;
+      }
+    };
+    async function poll() {
+      let terminal = false;
+      try {
+        let result = await apiClient<any>(base, { signal: controller.signal });
+        if (closed) return;
+        latest.current.onBuild?.(result.build);
+        if (!TERMINAL.includes(result.build.status)) {
+          result = await apiClient<any>(base + "/advance", {
+            method: "POST",
+            body: "{}",
+            signal: controller.signal,
+          });
+          if (!closed) latest.current.onBuild?.(result.build);
+        }
+        if (result.build.sourceDigest) void loadPreview(result.build.sourceDigest);
+        terminal = ["ready", "cancelled"].includes(result.build.status);
+      } catch (e: any) {
+        if (!controller.signal.aborted)
+          latest.current.onError?.(e.message || "Não foi possível consultar o progresso.");
+      } finally {
+        if (!closed && !terminal) timer = setTimeout(poll, 5000);
+      }
+    }
+    void poll();
+    return () => {
+      closed = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [base, restartKey]);
+}
+
+/** Executor invisível: mantém a construção andando com o painel fechado. */
+export function FactoryBuildRunner(props: {
+  projectId: string;
+  buildId: string;
+  previewDigest?: string;
+  onBuild?(build: any): void;
+  onPreview?(html: string, digest: string): void;
+}) {
+  useFactoryBuildRunner(props.projectId, props.buildId, props);
+  return null;
+}
+
 export function ProfessionalBuildPanel({
   projectId,
   buildId,
   onClose,
   onReady,
   onRebuilt,
+  onPreview,
+  previewDigest,
+  dispatchNotice,
 }: Props) {
   const [build, setBuild] = useState<any>(null),
     [error, setError] = useState(""),
@@ -30,47 +127,31 @@ export function ProfessionalBuildPanel({
   const ready = useRef(onReady);
   ready.current = onReady;
   const readyCalled = useRef(false);
+  useFactoryBuildRunner(
+    projectId,
+    buildId,
+    {
+      previewDigest,
+      onPreview,
+      onError: setError,
+      onBuild: (next) => {
+        if (closed.current) return;
+        setBuild(next);
+        setError("");
+        if (next.ready && !readyCalled.current) {
+          readyCalled.current = true;
+          ready.current?.(next.publication.url, next.title);
+        }
+      },
+    },
+    config,
+  );
   useEffect(() => {
     closed.current = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      try {
-        const result = await apiClient<any>(base, {
-          signal: controller.signal,
-        });
-        if (closed.current) return;
-        setBuild(result.build);
-        if (result.build.ready && !readyCalled.current) {
-          readyCalled.current = true;
-          ready.current?.(result.build.publication.url, result.build.title);
-        }
-        if (
-          !["ready", "failed", "cancelled", "configuration_required"].includes(
-            result.build.status,
-          )
-        ) {
-          const step = await apiClient<any>(base + "/advance", {
-            method: "POST",
-            body: "{}",
-            signal: controller.signal,
-          });
-          if (!closed.current) setBuild(step.build);
-        }
-      } catch (e: any) {
-        if (!controller.signal.aborted)
-          setError(e.message || "Não foi possível consultar o progresso.");
-      } finally {
-        if (!closed.current) timer = setTimeout(poll, 5000);
-      }
-    }
-    void poll();
     return () => {
       closed.current = true;
-      controller.abort();
-      clearTimeout(timer);
     };
-  }, [base, config]);
+  }, []);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     dialog.current?.focus();
@@ -215,7 +296,10 @@ export function ProfessionalBuildPanel({
             <p role="status" className="mt-4 text-sm">
               {build.ready
                 ? "Entrega verificada"
-                : labels[build.phase] || "Aguardando"}{" "}
+                : labels[build.phase] || "Aguardando"}
+              {build.generation
+                ? ` (arquivos ${build.generation.written}/${build.generation.planned || "?"})`
+                : ""}{" "}
               · {build.progress}%
             </p>
             <progress
@@ -230,6 +314,27 @@ export function ProfessionalBuildPanel({
               Limite estimado com correções e mídias:{" "}
               {build.estimatedMaximumCredits}.
             </p>
+            {build.waitingExecutor && (
+              <p
+                role="status"
+                className="mt-3 rounded-lg border border-sky-400/20 p-3 text-sm text-sky-200"
+              >
+                O código já está pronto e aparece na prévia do editor. Os testes
+                isolados rodam no executor automático, que passa a cada 20
+                minutos. Você pode fechar este painel e continuar conversando.
+                {dispatchNotice ? " Aviso do executor: " + dispatchNotice : ""}
+              </p>
+            )}
+            {build.stalled && (
+              <p
+                role="alert"
+                className="mt-3 rounded-lg border border-amber-400/30 p-3 text-sm text-amber-200"
+              >
+                A construção ficou sem avançar por alguns minutos (o servidor
+                pode ter encerrado uma etapa longa). Toque em “Retomar
+                construção”: nada do que já foi feito é perdido.
+              </p>
+            )}
             {build.error && build.status === "failed" && (
               <p
                 role="alert"
@@ -346,7 +451,7 @@ export function ProfessionalBuildPanel({
                   Baixar código completo
                 </button>
               )}
-              {["failed", "configuration_required"].includes(build.status) && (
+              {(["failed", "configuration_required"].includes(build.status) || build.stalled) && (
                 <button
                   type="button"
                   disabled={busy}

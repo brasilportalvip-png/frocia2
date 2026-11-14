@@ -1,6 +1,6 @@
 import { isMediaCreationRequest, pickImageAspectRatio } from '../shared/frocIntentRouter';
 import { committeeNavigation } from './services/committeeNavigation';
-import { ProfessionalBuildPanel } from './components/ProfessionalBuildPanel';
+import { ProfessionalBuildPanel, FactoryBuildRunner } from './components/ProfessionalBuildPanel';
 import { ProjectConfigurationPanel } from './components/ProjectConfigurationPanel';
 import React, {
   useState,
@@ -186,6 +186,8 @@ export default function App() {
 
   const [savedSites, setSavedSites] = useState<GeneratedSite[]>([]);
   const [professionalBuildId, setProfessionalBuildId] = useState<string | null>(null);
+  const [factoryDispatchNotice, setFactoryDispatchNotice] = useState<string | null>(null);
+  const [backgroundBuildStatus, setBackgroundBuildStatus] = useState<string | null>(null);
   const [isProjectConfigurationOpen, setIsProjectConfigurationOpen] = useState(false);
   const [activeSite, setActiveSite] = useState<GeneratedSite | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -622,28 +624,50 @@ const fetchConversations = async () => {
     }
   };
 
+  // Atualiza um projeto salvo sem depender de cópias antigas do estado (o executor da
+  // construção roda em segundo plano e chama isto várias vezes).
+  const patchSite = (siteId: string, patch: Partial<GeneratedSite>) => {
+    setActiveSite((current) => (current && current.id === siteId ? { ...current, ...patch } : current));
+    setSavedSites((current) => {
+      const next = current.map((site) => (site.id === siteId ? { ...site, ...patch } : site));
+      try {
+        localStorage.setItem(getPartitionedKey(LOCAL_STORAGE_KEY_PREFIX, currentUser.id), JSON.stringify(next));
+      } catch (storageError) {
+        console.warn('Erro ao salvar no localStorage:', storageError);
+      }
+      return next;
+    });
+  };
+  const handleFactoryPreview = (siteId: string, html: string, digest: string) => {
+    patchSite(siteId, { html, previewDigest: digest, updatedAt: Date.now() });
+  };
+
   // Abre no editor um site estático importado do GitHub (evento vindo do importador).
   useEffect(() => {
     const onOpenImportedSite = (event: Event) => {
       const detail = (event as CustomEvent).detail as {
         html: string; title: string; repository: string; sourceUrl: string; fullDownloadUrl: string;
+        sourceKind?: 'zip' | 'github';
         sourceDigest?: string;
         report: { complete: boolean; message: string; kind?: string; bundle?: { packages?: string[]; missingEnv?: string[]; notes?: string[] } };
       } | undefined;
       if (!detail?.html) return;
+      const fromZip = detail.sourceKind === 'zip';
+      const origin = fromZip ? `arquivo ZIP "${detail.repository}"` : detail.sourceUrl;
       const importedSite: GeneratedSite = {
-        id: `local-gh-${Date.now()}`,
+        id: `local-${fromZip ? 'zip' : 'gh'}-${Date.now()}`,
         title: detail.title || detail.repository,
-        description: `Importado de ${detail.sourceUrl}`,
-        prompt: `Site importado do GitHub: ${detail.sourceUrl}`,
-        category: 'Importado do GitHub',
+        description: `Importado de ${origin}`,
+        prompt: fromZip ? `Site importado de ${origin}` : `Site importado do GitHub: ${detail.sourceUrl}`,
+        category: fromZip ? 'Importado de ZIP' : 'Importado do GitHub',
         colorPalette: 'Original do projeto',
         tone: 'Original',
         html: detail.html,
-        compiledFromSource: detail.report.kind === 'react_bundled',
-        sourceUrl: detail.sourceUrl,
+        // ZIP não tem fonte remota para recompilar: alterações pelo chat editam a prévia montada.
+        compiledFromSource: !fromZip && detail.report.kind === 'react_bundled',
+        sourceUrl: fromZip ? undefined : detail.sourceUrl,
         contextDigest: [
-          `Origem: ${detail.sourceUrl}`,
+          `Origem: ${origin}`,
           `Relatório da importação: ${detail.report.message}`,
           detail.report.bundle?.packages?.length ? `Pacotes usados: ${detail.report.bundle.packages.join(', ')}` : '',
           detail.report.bundle?.missingEnv?.length
@@ -661,7 +685,7 @@ const fetchConversations = async () => {
           id: `msg-${Date.now()}`,
           sender: 'ai',
           text: `Site "${importedSite.title}" aberto no editor.\n\n${detail.report.message}${
-            detail.report.complete ? '\n\nTudo foi trazido. O que você quer alterar?' : `\n\nO que ficou de fora está listado acima. Projeto completo para download: ${detail.fullDownloadUrl}`
+            detail.report.complete || fromZip ? '\n\nTudo foi trazido. O que você quer alterar?' : `\n\nO que ficou de fora está listado acima. Projeto completo para download: ${detail.fullDownloadUrl}`
           }${
             detail.report.bundle?.missingEnv?.length
               ? `\n\nEste projeto usa variáveis de ambiente: ${detail.report.bundle.missingEnv.join(', ')}. Na prévia elas ficam vazias (por segurança, chaves reais não vão para dentro da página). Me diga como quer configurá-las: eu explico onde colocar cada uma ao publicar.`
@@ -780,9 +804,11 @@ const fetchConversations = async () => {
     const attachments = toAIAttachmentPayloads(files);
     const saved = await apiClient<{project:GeneratedSite}>('/api/projects', {method:'POST',signal:requestController.signal,body:JSON.stringify({...data,title:'Novo projeto em construção',description:data.prompt.slice(0,1000),html:'<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Construção em andamento</title></head><body><h1>Seu projeto está em construção</h1><p>Acompanhe as etapas no painel de entrega.</p></body></html>'})});
     const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(saved.project.id)+'/builds',{method:'POST',signal:requestController.signal,body:JSON.stringify({brief:{...data,autoPublish:true,media:{images:/imagem|imagens|fotograf|cinematogr/i.test(data.prompt)?2:0,video:/v[ií]deo|veo\s*3/i.test(data.prompt)}},idempotencyKey:crypto.randomUUID(),attachments})});
+    setFactoryDispatchNotice(result?.dispatch && result.dispatch.success === false ? String(result.dispatch.message || '') : null);
+    setBackgroundBuildStatus(null);
     const project={...saved.project,professionalBuildId:result.build.id};
     setActiveSite(project);saveSitesToStorage([project,...savedSites]);setProfessionalBuildId(result.build.id);
-    setChatMessages([{id:'factory-'+Date.now(),sender:'ai',timestamp:Date.now(),text:'Iniciei a construção completa do seu projeto. A equipe vai gerar o código, revisar, testar e verificar a publicação. Se faltarem credenciais ou dados do negócio, você poderá preenchê-los no painel, sem editar código.'}]);
+    setChatMessages([{id:'factory-'+Date.now(),sender:'ai',timestamp:Date.now(),text:'Iniciei a construção completa do seu projeto. Os especialistas planejam, depois eu escrevo o código em partes, reviso, testo e publico. Assim que o código ficar pronto, a prévia aparece aqui no editor.\n\nEnquanto isso, pode conversar comigo: eu acompanho a construção em tempo real (etapa, arquivos, erros e variáveis) e posso explicar ou alterar qualquer parte. Se faltarem credenciais ou dados do negócio, você preenche no botão "Variáveis e agentes", sem editar código.'}]);
   } catch (error: any) {
     if (
       error?.code ===
@@ -943,8 +969,16 @@ const fetchConversations = async () => {
 
     if (activeSite.professionalBuildId) {
       setIsRefining(true);setErrorMsg(null);
-      try {const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(activeSite.id)+'/builds/'+encodeURIComponent(activeSite.professionalBuildId)+'/change',{method:'POST',body:JSON.stringify({instructions:instruction,idempotencyKey:crypto.randomUUID()})});const updated={...activeSite,professionalBuildId:result.build.id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(result.build.id);}
-      catch(e:any){setErrorMsg(e.message||'Não foi possível solicitar a alteração.');}
+      setChatMessages(prev=>[...prev,{id:`usr-${Date.now()}`,sender:'user',text:instruction,timestamp:Date.now()}]);
+      try {
+        const result=await apiClient<any>('/api/professional-factory/projects/'+encodeURIComponent(activeSite.id)+'/builds/'+encodeURIComponent(activeSite.professionalBuildId)+'/change',{method:'POST',body:JSON.stringify({instructions:instruction,idempotencyKey:crypto.randomUUID()})});
+        const updated={...activeSite,professionalBuildId:result.build.id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(result.build.id);
+        setChatMessages(prev=>[...prev,{id:`ai-${Date.now()}`,sender:'ai',timestamp:Date.now(),text:'Entendi. Estou aplicando a alteração no projeto: reescrevo só os arquivos afetados, reviso e testo de novo. Acompanhe no painel da construção; a prévia do editor atualiza quando o código novo ficar pronto.'}]);
+      }
+      catch(e:any){
+        const message=e?.message||'Não foi possível solicitar a alteração.';
+        setChatMessages(prev=>[...prev,{id:`ai-${Date.now()}`,sender:'ai',timestamp:Date.now(),text:/Aguarde|construção atual/i.test(message)?'A construção ainda está em andamento, então guardei seu pedido aqui no chat. Assim que ela terminar (ou se você cancelar no painel), peça de novo e eu aplico a alteração.':message}]);
+      }
       finally{setIsRefining(false);}return;
     }
 
@@ -1033,7 +1067,9 @@ const buildActiveProjectContext = (site: GeneratedSite | null): string => {
     site.description ? `Descrição: ${site.description}` : '',
     site.prompt ? `Pedido original: ${site.prompt.slice(0, 1500)}` : '',
     site.contextDigest ? `\n${site.contextDigest}` : '',
-    site.contextDigest ? '' : `\nHTML da página (trecho):\n${strippedHtml.slice(0, 14000)}`
+    site.contextDigest || (site.professionalBuildId && /Seu projeto está em construção/.test(site.html || ''))
+      ? ''
+      : `\nHTML da página (trecho):\n${strippedHtml.slice(0, 14000)}`
   ].filter(Boolean).join('\n').slice(0, 38000);
 };
 
@@ -1212,7 +1248,11 @@ const handleGeneralChat = async (
   attachments,
   knowledgeBaseIds,
   idempotencyKey: stableExecutionKey,
-  ...(activeProjectContext ? { activeProjectContext } : {})
+  ...(activeProjectContext ? { activeProjectContext } : {}),
+  // Projeto da fábrica: o servidor lê a construção real (etapa, arquivos, erros, variáveis).
+  ...(activeSite?.professionalBuildId && activeSite.id && !activeSite.id.startsWith('local-')
+    ? { activeBuild: { projectId: activeSite.id, buildId: activeSite.professionalBuildId } }
+    : {})
 };
 
     let result: AIExecutionResult;
@@ -2270,8 +2310,18 @@ const handleGeneralChat = async (
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
       />
 
+      {!professionalBuildId && activeSite?.id && activeSite.professionalBuildId && !activeSite.id.startsWith('local-') && !['ready','cancelled'].includes(backgroundBuildStatus || '') && (
+        <FactoryBuildRunner
+          key={'runner-'+activeSite.professionalBuildId}
+          projectId={activeSite.id}
+          buildId={activeSite.professionalBuildId}
+          previewDigest={activeSite.previewDigest}
+          onBuild={(build)=>setBackgroundBuildStatus(build?.status||null)}
+          onPreview={(html,digest)=>handleFactoryPreview(activeSite.id,html,digest)}
+        />
+      )}
       {professionalBuildId && activeSite?.id && (
-        <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{const updated={...activeSite,professionalBuildId:id};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));setProfessionalBuildId(id);}} onReady={(url,title)=>{const updated={...activeSite,title,productionUrl:url};setActiveSite(updated);saveSitesToStorage(savedSites.map(s=>s.id===updated.id?updated:s));void refreshProfile();}}/>
+        <ProfessionalBuildPanel key={professionalBuildId} projectId={activeSite.id} buildId={professionalBuildId} previewDigest={activeSite.previewDigest} dispatchNotice={factoryDispatchNotice} onPreview={(html,digest)=>handleFactoryPreview(activeSite.id,html,digest)} onClose={()=>setProfessionalBuildId(null)} onRebuilt={(id)=>{patchSite(activeSite.id,{professionalBuildId:id});setProfessionalBuildId(id);}} onReady={(url,title)=>{patchSite(activeSite.id,{title,productionUrl:url});void refreshProfile();}}/>
       )}
       {isProjectConfigurationOpen && activeSite?.id && (
         <ProjectConfigurationPanel key={activeSite.id} projectId={activeSite.id} title={activeSite.title} onClose={() => setIsProjectConfigurationOpen(false)} />

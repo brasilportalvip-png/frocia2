@@ -16,6 +16,9 @@ import {
 import { getProfessionalFactory } from "../siteFactory/professionalRuntime.js";
 import { GithubAutomationService } from "../selfEvolution/githubAutomationService.js";
 import { ProfessionalMaintenanceService } from '../siteFactory/professionalMaintenanceService.js';
+import { compileRepoFiles } from "../services/githubSiteImportService.js";
+import { normalizeFiles } from "../services/staticSiteBundler.js";
+import { sourceDigest } from "../siteFactory/professionalContract.js";
 export const professionalFactoryRouter = Router();
 professionalFactoryRouter.use(
   requireAuth,
@@ -210,6 +213,59 @@ professionalFactoryRouter.get(
         'attachment; filename="froc-project-' + b.id.slice(0, 12) + '.zip"',
       );
       return res.send(Buffer.from(zipped));
+    } catch (e) {
+      return error(res, e);
+    }
+  },
+);
+
+/**
+ * Prévia do código gerado no editor, antes mesmo dos testes isolados e da publicação.
+ * O servidor compila o React/TypeScript em um HTML único; o backend do projeto não roda
+ * aqui, então chamadas à API aparecem vazias na prévia.
+ */
+professionalFactoryRouter.get(
+  "/projects/:projectId/builds/:id/preview",
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const s = await scope(req),
+        service = getProfessionalFactory();
+      const b = await service.get(req.params.id, s);
+      if (!b.bundle)
+        return res.status(409).json({
+          error: {
+            code: "preview_not_ready",
+            message: "O código ainda está sendo escrito. A prévia aparece assim que a geração terminar.",
+          },
+        });
+      const publicConfig: Record<string, string> = {};
+      for (const v of b.bundle.variables)
+        if (v.visibility === "public") publicConfig[v.name] = "";
+      const stub =
+        "window.FROC_PUBLIC_CONFIG=Object.assign(" +
+        JSON.stringify(publicConfig) +
+        ",{PUBLIC_SITE_URL:location.origin,PUBLIC_BUSINESS_NAME:" +
+        JSON.stringify(b.bundle.title) +
+        "});window.FrocConfigReady=Promise.resolve();";
+      const files: Record<string, Uint8Array> = {};
+      for (const f of service.files(b).files) {
+        // Sem o lock, os pacotes vêm prontos do esm.sh: a prévia compila em segundos.
+        if (f.path === "package-lock.json") continue;
+        files[f.path] = strToU8(f.path === "public/froc-config.js" ? stub : f.content);
+      }
+      const result = await compileRepoFiles(
+        files,
+        { owner: "froc", repo: b.bundle.title, branch: "previa" },
+        normalizeFiles(files),
+      );
+      return res.json({
+        preview: {
+          html: result.html,
+          title: b.bundle.title,
+          digest: sourceDigest(b.bundle.files),
+          message: result.report.message,
+        },
+      });
     } catch (e) {
       return error(res, e);
     }

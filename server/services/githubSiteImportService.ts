@@ -168,3 +168,51 @@ export async function importGithubSite(sourceUrl: string): Promise<GithubSiteImp
     fullDownloadUrl: loaded.fullDownloadUrl,
   };
 }
+
+/** Limite do ZIP enviado pelo navegador (o corpo da requisição na Vercel vai até ~4,5 MB). */
+export const MAX_UPLOADED_ZIP_BYTES = 3_300_000;
+
+/**
+ * Abre no editor um projeto enviado em ZIP: mesmo caminho do GitHub (site estático é
+ * montado direto; React/Vite/TypeScript é compilado no servidor).
+ */
+export async function importZipSite(fileName: string, zipBytes: Uint8Array): Promise<GithubSiteImportResult> {
+  if (zipBytes.byteLength > MAX_UPLOADED_ZIP_BYTES) {
+    throw new ExternalImportError('zip_too_large', 'O ZIP passa de 3,3 MB. Tire as pastas node_modules, dist e imagens grandes, ou publique no GitHub e importe pelo link.', 413);
+  }
+  let unzippedTotal = 0;
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(zipBytes, {
+      filter: (file) => {
+        if (file.name.endsWith('/')) return false;
+        if (/(^|\/)(?:node_modules|\.git|dist|build)\//.test(file.name)) return false;
+        if (/(^|\/)\.env(?:\.|$)/i.test(file.name) && !/\.example$/i.test(file.name)) return false;
+        if (file.originalSize > MAX_SINGLE_FILE_BYTES) return false;
+        unzippedTotal += file.originalSize;
+        if (unzippedTotal > MAX_UNZIPPED_TOTAL_BYTES) {
+          throw new ExternalImportError('zip_too_large', 'O ZIP é grande demais para abrir no editor.', 413);
+        }
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error instanceof ExternalImportError) throw error;
+    throw new ExternalImportError('zip_invalid', 'Não consegui ler este ZIP. Confira se o arquivo não está corrompido.', 400);
+  }
+  if (!Object.keys(files).length) {
+    throw new ExternalImportError('zip_empty', 'O ZIP não tem arquivos de site.', 400);
+  }
+  const name = (fileName || 'projeto.zip').replace(/\.zip$/i, '').replace(/[^\w .-]+/g, '').slice(0, 80) || 'projeto';
+  const ctx = { owner: 'zip', repo: name, branch: 'local' };
+  const normalized = normalizeFiles(files);
+  const result = await compileRepoFiles(files, ctx, normalized);
+  return {
+    ...result,
+    sourceDigest: buildSourceDigest(normalized.files),
+    repository: name,
+    sourceUrl: '',
+    branch: 'local',
+    fullDownloadUrl: '',
+  };
+}

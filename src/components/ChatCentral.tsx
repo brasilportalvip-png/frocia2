@@ -1245,6 +1245,27 @@ export const ChatCentral: React.FC<
     }
   };
 
+  // Abre o ZIP como projeto no editor: o servidor monta/compila o site e o código
+  // fica disponível para a conversa, igual a um projeto importado do GitHub.
+  const handleOpenZipInEditor = async () => {
+    const zip = zipForInspection;
+    const base64 =
+      zip?.contentBase64 ||
+      (zip?.dataUrl && zip.dataUrl.includes(',') ? zip.dataUrl.slice(zip.dataUrl.indexOf(',') + 1) : '');
+    if (!zip || !base64) throw new Error('Envie o ZIP de novo para abrir no editor.');
+    if (base64.length > 4_600_000)
+      throw new Error('O ZIP passa de 3,3 MB. Tire node_modules, dist e imagens grandes, ou publique no GitHub e importe pelo link.');
+    const { apiClient } = await import('../services/apiClient');
+    const result = await apiClient<{ site?: any }>('/api/imports/zip-site', {
+      method: 'POST',
+      body: JSON.stringify({ fileName: zip.name, zipBase64: base64 })
+    });
+    const site = result.site;
+    if (!site?.html) throw new Error(site?.report?.message || 'O ZIP não tem um site que dê para abrir.');
+    window.dispatchEvent(new CustomEvent('froc:open-imported-site', { detail: site }));
+    setZipForInspection(null);
+  };
+
   const handleZipConversion = async (
     analysis: ZipProjectAnalysis
   ) => {
@@ -2153,6 +2174,7 @@ await onSendMessage(
         onConvertProject={(analysis) => {
           void handleZipConversion(analysis);
         }}
+        onOpenInEditor={handleOpenZipInEditor}
       />
 
       <KnowledgeBaseModal

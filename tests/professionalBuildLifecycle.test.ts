@@ -162,7 +162,9 @@ describe("professional build durable lifecycle", () => {
         .size,
     ).toBe(50);
     expect(s.model.generate).toHaveBeenCalledTimes(12);
-    expect(b.consumedCredits).toBe(45);
+    // 10 pareceres x 2 + plano da geração em partes (4; aqui o modelo já devolveu o
+    // projeto completo nessa chamada) + revisão (5). Antes a geração única custava 20.
+    expect(b.consumedCredits).toBe(29);
     expect(b.status).not.toBe("ready");
   });
   it("blocks missing configuration and proceeds through certification before publishing", async () => {

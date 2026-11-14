@@ -93,6 +93,18 @@ export interface ProfessionalBuild extends BuildScope {
   media: any | null;
   references: FactoryReference[];
   monitoring?: { status: string; checkedAt: string; failures: string[]; consecutiveFailures?: number };
+  /**
+   * Geração em partes: primeiro o plano (sem conteúdo), depois os arquivos em lotes pequenos.
+   * Cada chamada ao modelo cabe no tempo de uma função do servidor; o progresso fica salvo
+   * entre as chamadas, então a construção nunca precisa gerar o projeto inteiro de uma vez.
+   */
+  generation?: GenerationProgress | null;
+}
+export interface GenerationProgress {
+  plan: Record<string, unknown> | null;
+  manifest: Array<{ path: string; purpose: string; keep?: boolean }>;
+  /** Lista (e não mapa): nomes com "/" e "." não são chaves seguras no Firestore. */
+  files: Array<{ path: string; content: string }>;
 }
 export interface BuildRepository {
   create(build: ProfessionalBuild): Promise<ProfessionalBuild>;
@@ -346,6 +358,27 @@ export function isCompleteJson(text: string): boolean {
   }
 }
 export const FACTORY_MAX_OUTPUT_TOKENS = 65536;
+/** Arquivos escritos por chamada ao modelo na geração em partes. */
+export const FILE_BATCH_SIZE = 5;
+export const MAX_MANIFEST_FILES = 60;
+const MANIFEST_PATH =
+  /^(?:index\.html|(?:src|api|public|tests)\/[A-Za-z0-9_./-]+)$/;
+const RESERVED_MANIFEST_PATH =
+  /(?:^|\/)(?:\.env|node_modules|\.git)|\.(?:pem|key|p12)$/i;
+export const CHUNKED_PLAN_PROTOCOL = `GERAÇÃO EM PARTES — ETAPA 1 (PLANO):
+NÃO escreva o conteúdo dos arquivos agora. Devolva JSON com TODOS os campos do contrato EXCETO "files" e, no lugar de "files", devolva "fileManifest": [{path, purpose, keep}].
+- fileManifest lista TODOS os arquivos do projeto (no máximo 60), incluindo index.html e src/main.tsx, nas pastas src, api, public e tests.
+- purpose (até 600 caracteres): o que o arquivo faz e exatamente o que exporta (nomes de componentes, funções, tipos, rotas e formato dos dados), para que os outros arquivos importem com os nomes certos.
+- keep: true SOMENTE para arquivos de existingFiles que devem continuar exatamente iguais; arquivos novos ou que precisam de correção (veja feedback) usam keep: false.
+- requirements[].files deve citar caminhos do fileManifest.`;
+export const CHUNKED_FILES_PROTOCOL = `GERAÇÃO EM PARTES — ETAPA 2 (ARQUIVOS):
+Escreva o conteúdo COMPLETO e final SOMENTE dos arquivos listados em writeNow, seguindo plan e fileManifest. Importe dos outros arquivos usando exatamente os nomes descritos no purpose de cada um e o código já escrito em writtenFiles. Quando previousContent existir, corrija-o conforme feedback em vez de começar do zero.
+Devolva JSON {"files":[{"path","content"}]} contendo exatamente os caminhos de writeNow.`;
+const EXPORT_PATTERN =
+  /export\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|class|interface|type|enum)\s+([A-Za-z0-9_$]+)/g;
+function exportsOf(content: string) {
+  return Array.from(content.matchAll(EXPORT_PATTERN), (m) => m[1]).slice(0, 30);
+}
 export const MAX_MODEL_CALL_ATTEMPTS = 3;
 export function createFactoryModel(
   call: (input: Parameters<FactoryModel["generate"]>[0]) => Promise<{
@@ -371,7 +404,7 @@ export function createFactoryModel(
         outputTokens += last.outputTokens || 0;
         if (isCompleteJson(last.text)) break;
         // sem tempo para outra tentativa nesta chamada: a etapa é retomada na próxima
-        if (Date.now() - started > 100_000) break;
+        if (Date.now() - started > 60_000) break;
         budget = Math.min(FACTORY_MAX_OUTPUT_TOKENS, budget * 2);
       }
       return { ...last, inputTokens, outputTokens, model: model() };
@@ -497,6 +530,23 @@ export class ProfessionalBuildService {
         } : {}),
       },
     );
+    // Alteração em projeto já gerado: reaproveita o planejamento dos especialistas e vai
+    // direto para a geração em partes, que reescreve só os arquivos afetados.
+    if (previous.bundle && next.phase === 0 && !next.reports.length) {
+      const token = randomUUID();
+      const claimed = await this.repository.claim(next.id, scope, token, Date.now());
+      if (claimed && claimed.phase === 0) {
+        claimed.reports = previous.reports;
+        claimed.phase = 10;
+        claimed.status = "generating";
+        claimed.feedback = [
+          "ALTERAÇÃO SOLICITADA PELA PESSOA (aplique exatamente isto e mantenha o resto igual): " +
+            instructions.slice(0, 4000),
+        ];
+        claimed.lease = null;
+        await this.repository.save(claimed, token);
+      }
+    }
     // The previous bundle is initialized atomically with the new build. A
     // duplicate change request must never overwrite a newer generated bundle.
     return this.get(next.id, scope);
@@ -597,6 +647,7 @@ export class ProfessionalBuildService {
     system: string,
     message: string,
     maxOutputTokens: number,
+    includeReferences = true,
   ) {
     if (b.generationCreditLimit && b.consumedCredits + amount > b.generationCreditLimit)
       throw new FactoryError('maintenance_budget_exhausted', 'O limite de créditos desta manutenção foi atingido.');
@@ -627,7 +678,7 @@ export class ProfessionalBuildService {
     await this.repository.save(b, token);
     const attachments: Array<{ type: string; data: string; mimeType: string }> =
       [];
-    if (b.references.length && (b.phase === 0 || b.phase === 10)) {
+    if (includeReferences && b.references.length && (b.phase === 0 || b.phase === 10)) {
       const { getMediaStorageBucket } = await import("../lib/firebaseAdmin.js");
       const bucket = await getMediaStorageBucket();
       for (const reference of b.references) {
@@ -769,24 +820,12 @@ export class ProfessionalBuildService {
             return b;
           }
         }
-        const result = await this.generated(
-          b,
-          token,
-          20,
-          creationTeamPolicy("project") +
-            "\n\n" +
-            PROFESSIONAL_GENERATION_CONTRACT,
-          JSON.stringify({
-            brief: b.brief,
-            reports: b.reports,
-            feedback: b.feedback,
-            media: b.media,
-            previousBundle: b.bundle,
-          }),
-          65536,
-        );
-        b.bundle = parseBundle(result.text);
-        b.phase = 11;
+        const assembled = await this.generateStep(b, token);
+        if (assembled) {
+          b.bundle = assembled;
+          b.generation = null;
+          b.phase = 11;
+        }
       } else if (b.phase === 11) {
         b.status = "reviewing";
         const result = await this.generated(
@@ -937,6 +976,163 @@ export class ProfessionalBuildService {
       return b;
     }
   }
+  /**
+   * Um passo da geração em partes. Devolve o projeto montado quando todos os
+   * arquivos estiverem escritos; senão devolve null e o próximo avanço continua.
+   */
+  private async generateStep(
+    b: ProfessionalBuild,
+    token: string,
+  ): Promise<ProfessionalBundle | null> {
+    const g: GenerationProgress = (b.generation ||= {
+      plan: null,
+      manifest: [],
+      files: (b.bundle?.files || []).map((f) => ({ path: f.path, content: f.content })),
+    });
+    const written = new Map(g.files.map((f) => [f.path, f.content]));
+    const sync = () => {
+      g.files = Array.from(written, ([path, content]) => ({ path, content }));
+    };
+    const policy =
+      creationTeamPolicy("project") + "\n\n" + PROFESSIONAL_GENERATION_CONTRACT;
+    if (!g.plan) {
+      const result = await this.generated(
+        b,
+        token,
+        4,
+        policy + "\n\n" + CHUNKED_PLAN_PROTOCOL,
+        JSON.stringify({
+          brief: b.brief,
+          reports: b.reports,
+          feedback: b.feedback,
+          media: b.media,
+          existingFiles: Array.from(written, ([path, content]) => ({
+            path,
+            exports: exportsOf(content),
+          })),
+        }),
+        24576,
+      );
+      const plan = json(result.text);
+      // Projeto pequeno: o modelo pode já devolver tudo pronto (arquivos com conteúdo).
+      if (
+        !Array.isArray(plan?.fileManifest) &&
+        Array.isArray(plan?.files) &&
+        plan.files.length &&
+        plan.files.every((f: any) => typeof f?.content === "string" && f.content.trim())
+      )
+        return parseBundle(JSON.stringify(plan));
+      const manifest = Array.isArray(plan?.fileManifest) ? plan.fileManifest : null;
+      const seen = new Set<string>();
+      if (
+        !manifest ||
+        manifest.length < 3 ||
+        manifest.length > MAX_MANIFEST_FILES ||
+        manifest.some((f: any) => {
+          const bad =
+            !f ||
+            typeof f.path !== "string" ||
+            f.path.length > 200 ||
+            !MANIFEST_PATH.test(f.path) ||
+            RESERVED_MANIFEST_PATH.test(f.path) ||
+            f.path.split("/").some((v: string) => !v || v === "." || v === "..") ||
+            seen.has(f.path) ||
+            typeof f.purpose !== "string";
+          seen.add(f?.path);
+          return bad;
+        }) ||
+        !seen.has("index.html")
+      )
+        throw new FactoryError(
+          "invalid_file_manifest",
+          "O plano de arquivos veio incompleto (é preciso listar index.html e todos os arquivos, no máximo " +
+            MAX_MANIFEST_FILES +
+            ").",
+        );
+      delete plan.fileManifest;
+      delete plan.files;
+      g.manifest = manifest.map((f: any) => ({
+        path: f.path,
+        purpose: String(f.purpose).slice(0, 600),
+        keep: f.keep === true && written.has(f.path),
+      }));
+      // Só ficam os arquivos que o plano mandou manter; o resto será (re)escrito.
+      for (const path of Array.from(written.keys()))
+        if (!g.manifest.some((f) => f.keep && f.path === path)) written.delete(path);
+      sync();
+      g.plan = plan;
+      return null;
+    }
+    const pending = g.manifest.filter((f) => !written.has(f.path));
+    if (pending.length) {
+      const batch = pending.slice(0, FILE_BATCH_SIZE);
+      const previousContent = Object.fromEntries(
+        (b.bundle?.files || [])
+          .filter((f) => batch.some((x) => x.path === f.path))
+          .map((f) => [f.path, f.content.slice(0, 40000)]),
+      );
+      let budget = 70000;
+      const writtenFiles = Array.from(written, ([path, content]) => {
+        if (content.length <= budget) {
+          budget -= content.length;
+          return { path, content };
+        }
+        return { path, exports: exportsOf(content) };
+      });
+      const result = await this.generated(
+        b,
+        token,
+        2,
+        policy + "\n\n" + CHUNKED_FILES_PROTOCOL,
+        JSON.stringify({
+          brief: b.brief,
+          plan: g.plan,
+          fileManifest: g.manifest,
+          feedback: b.feedback,
+          media: b.media,
+          writtenFiles,
+          writeNow: batch,
+          ...(Object.keys(previousContent).length ? { previousContent } : {}),
+        }),
+        32768,
+        false,
+      );
+      const out = json(result.text);
+      let accepted = 0;
+      for (const f of Array.isArray(out?.files) ? out.files : []) {
+        if (
+          f &&
+          typeof f.path === "string" &&
+          typeof f.content === "string" &&
+          f.content.trim() &&
+          f.content.length <= 200000 &&
+          batch.some((x) => x.path === f.path)
+        ) {
+          if (!written.has(f.path)) accepted++;
+          written.set(f.path, f.content);
+        }
+      }
+      sync();
+      if (!accepted)
+        throw new FactoryError(
+          "invalid_files_batch",
+          "O lote de arquivos veio vazio. Gerando de novo.",
+        );
+      if (pending.length - accepted > 0) return null;
+    }
+    try {
+      return parseBundle(
+        JSON.stringify({
+          ...g.plan,
+          files: g.manifest.map((f) => ({ path: f.path, content: written.get(f.path)! })),
+        }),
+      );
+    } catch (error) {
+      // Plano inconsistente com os arquivos: refaz o plano mantendo o que já foi escrito.
+      g.plan = null;
+      throw error;
+    }
+  }
   async missingVariables(b: ProfessionalBuild) {
     if (!b.bundle) return [];
     const [preview, production] = await Promise.all([
@@ -1047,7 +1243,30 @@ export class ProfessionalBuildService {
       projectId: b.projectId,
       status: b.status,
       phase: b.phase,
-      progress: Math.floor((b.phase / 15) * 100),
+      progress: Math.floor(
+        ((b.phase +
+          (b.phase === 10 && b.generation?.manifest.length
+            ? b.generation.files.length / b.generation.manifest.length
+            : 0)) /
+          15) *
+          100,
+      ),
+      generation:
+        b.phase === 10 && b.generation
+          ? {
+              planned: b.generation.manifest.length,
+              written: b.generation.files.length,
+            }
+          : null,
+      updatedAt: b.updatedAt,
+      // Sem etapa rodando e sem avanço há mais de 6 minutos: o painel oferece "Retomar".
+      stalled:
+        !["ready", "failed", "cancelled", "configuration_required"].includes(b.status) &&
+        !(b.lease && b.lease.expires > Date.now()) &&
+        Date.now() - Date.parse(b.updatedAt) > 6 * 60 * 1000 &&
+        !(b.phase === 13 && b.certificate?.status === "waiting_executor"),
+      waitingExecutor: b.phase === 13 && b.certificate?.status === "waiting_executor",
+      sourceDigest: b.bundle ? sourceDigest(b.bundle.files) : null,
       title: b.bundle?.title || "Novo projeto",
       error: b.error,
       consumedCredits:
