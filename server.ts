@@ -167,6 +167,8 @@ export async function createApp() {
     ],
     express.json({ limit: '14mb' })
   );
+  // Projeto em ZIP aberto no editor: até ~3,3 MB de arquivo (4,6 MB em base64).
+  app.use('/api/imports/zip-site', express.json({ limit: '5mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use(requestIntegrityMiddleware);
   app.use(operationalTelemetryMiddleware);

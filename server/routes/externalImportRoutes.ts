@@ -7,7 +7,7 @@ import {
   ExternalImportError,
   ExternalImportService
 } from '../services/externalImportService.js';
-import { importGithubSite } from '../services/githubSiteImportService.js';
+import { importGithubSite, importZipSite, MAX_UPLOADED_ZIP_BYTES } from '../services/githubSiteImportService.js';
 import { editGithubProject, exportEditedProject, sanitizeOverrides } from '../services/projectAiEditService.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
 import { FeatureFlagService, FeatureFlagDisabledError } from '../services/featureFlagService.js';
@@ -130,6 +130,47 @@ externalImportRouter.post(
       console.error('Falha inesperada ao importar site do GitHub:', { correlationId: req.correlationId, userId: req.user?.uid, error });
       return res.status(500).json({
         error: { code: 'github_site_import_failed', message: 'Não foi possível abrir o site do GitHub agora.', correlationId: req.correlationId }
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/imports/zip-site
+ * Abre no editor um projeto enviado em ZIP (site pronto ou React/Vite/TypeScript),
+ * com o código disponível para o chat. Não consome créditos.
+ */
+externalImportRouter.post(
+  '/zip-site',
+  requireAuth,
+  githubSiteLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    const parsed = z
+      .object({
+        fileName: z.string().trim().min(1).max(200),
+        zipBase64: z.string().min(20).max(Math.ceil(MAX_UPLOADED_ZIP_BYTES * 1.4))
+      })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: { code: 'invalid_zip_request', message: 'Envie um arquivo ZIP de até 3,3 MB.', correlationId: req.correlationId }
+      });
+    }
+    try {
+      const bytes = new Uint8Array(Buffer.from(parsed.data.zipBase64.replace(/^data:[^,]*,/, ''), 'base64'));
+      const site = await importZipSite(parsed.data.fileName, bytes);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ site: { ...site, sourceKind: 'zip' } });
+    } catch (error) {
+      if (error instanceof ExternalImportError) {
+        return res.status(error.status).json({
+          error: { code: error.code, message: error.message, correlationId: req.correlationId }
+        });
+      }
+      console.error('Falha inesperada ao abrir ZIP:', { correlationId: req.correlationId, userId: req.user?.uid, error });
+      return res.status(500).json({
+        error: { code: 'zip_site_import_failed', message: 'Não foi possível abrir o ZIP agora.', correlationId: req.correlationId }
       });
     }
   }

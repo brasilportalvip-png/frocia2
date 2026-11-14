@@ -23,6 +23,8 @@ interface ZipInspectorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConvertProject: (analysis: ZipProjectAnalysis) => void;
+  /** Abre o ZIP como projeto no editor (prévia + código disponível para o chat). */
+  onOpenInEditor?: () => Promise<void>;
   initialFile?: UploadedFile | null;
 }
 
@@ -38,8 +40,23 @@ export const ZipInspectorModal: React.FC<ZipInspectorModalProps> = ({
   isOpen,
   onClose,
   onConvertProject,
+  onOpenInEditor,
   initialFile
 }) => {
+  const [isOpeningInEditor, setIsOpeningInEditor] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const handleOpenInEditor = async () => {
+    if (!onOpenInEditor || isOpeningInEditor) return;
+    setIsOpeningInEditor(true);
+    setOpenError(null);
+    try {
+      await onOpenInEditor();
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : 'Não foi possível abrir o ZIP no editor.');
+    } finally {
+      setIsOpeningInEditor(false);
+    }
+  };
   const [activeTab, setActiveTab] = useState<InspectorTab>('stack');
   const [analysis, setAnalysis] = useState<RealZipProjectAnalysis | null>(null);
   const [isInspecting, setIsInspecting] = useState(false);
@@ -402,7 +419,7 @@ export const ZipInspectorModal: React.FC<ZipInspectorModalProps> = ({
 
             <div className="flex shrink-0 flex-col items-stretch justify-between gap-3 border-t border-white/10 pt-3 sm:flex-row sm:items-center">
               <span className="text-xs text-white/55">
-                A análise incluirá arquivos textuais reais e metadados do ZIP.
+                {openError ? <span role="alert" className="text-red-300">{openError}</span> : 'Abra no editor para ver o site e conversar sobre o código, ou anexe só a análise.'}
               </span>
               <div className="flex items-center justify-end gap-3">
                 <button
@@ -412,6 +429,16 @@ export const ZipInspectorModal: React.FC<ZipInspectorModalProps> = ({
                 >
                   Fechar
                 </button>
+                {onOpenInEditor && (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenInEditor()}
+                    disabled={isOpeningInEditor}
+                    className="rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:brightness-110 disabled:opacity-60"
+                  >
+                    {isOpeningInEditor ? 'Abrindo e compilando…' : 'Abrir no editor'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleAttachAnalysis}
