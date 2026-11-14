@@ -697,6 +697,7 @@ if (plan.classification.requiresIndependentVerification) {
     preVerificationEvidence.researchStatus,
   ragStatus:
     preVerificationEvidence.ragStatus,
+  projectContext: activeProjectContext,
      citations: citations.map((citation) => ({
   title: citation.title,
   uri: citation.uri,

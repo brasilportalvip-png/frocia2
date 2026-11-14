@@ -12,6 +12,12 @@ export interface IndependentVerificationInput {
   sensitivity: string;
   researchStatus?: string;
   ragStatus?: string;
+  /**
+   * Dados reais do projeto aberto no editor (construção, arquivos, código), lidos do
+   * sistema. Sem isto o verificador não via o projeto e trocava respostas certas por
+   * "não tenho acesso / não sei de qual site você fala".
+   */
+  projectContext?: string;
  citations?: Array<{
   title?: string;
   uri?: string;
@@ -53,6 +59,11 @@ function cleanRisks(value: unknown): string[] {
     .slice(0, 20);
 }
 
+/** Resposta que diz não ver/conhecer o projeto ou pede para a pessoa dizer qual é o site. */
+export function deniesProjectAccess(text: string): boolean {
+  return /n[aã]o\s+(?:tenho|possuo|consigo\s+ter)\s+(?:acesso|contexto|informa[cç][oõ]es)|como\s+(?:sou\s+)?(?:uma?\s+)?(?:intelig[eê]ncia\s+artificial|ia|assistente)|(?:forne[cç]a|informe|me\s+diga)\s+(?:mais\s+)?(?:detalhes|o\s+nome\s+do\s+(?:projeto|site))|a\s+qual\s+site\s+voc[eê]\s+est[aá]\s+se\s+referindo|minha\s+mensagem\s+ficou\s+incompleta|sua\s+mensagem\s+ficou\s+incompleta/i.test(text);
+}
+
 export class IndependentResponseVerifier {
   static async verify(
     input: IndependentVerificationInput
@@ -82,6 +93,8 @@ export class IndependentResponseVerifier {
           'A revisedResponse deve usar somente fatos sustentados pelo prompt original, pela resposta já validável e pelas evidências/citações fornecidas.',
           'Não introduza nomes, números, datas, versões, links, eventos ou conclusões factuais novas que não estejam sustentadas pela evidência recebida.',
           'Se não houver evidência suficiente para corrigir com segurança, não invente uma correção.',
+          'Quando houver projectContext, ele traz dados REAIS do projeto aberto no editor, lidos agora do sistema (etapa da construção, plano, arquivos e código). Afirmações compatíveis com projectContext são sustentadas.',
+          'Nunca reescreva a resposta para dizer que a IA não tem acesso ou contexto sobre o projeto/site, nem para pedir que a pessoa informe de qual site está falando, quando houver projectContext.',
           'Retorne somente JSON válido com approved, revisedResponse, reason e risks.',
         ].join('\n'),
 
@@ -95,6 +108,9 @@ export class IndependentResponseVerifier {
           ragStatus:
             input.ragStatus || 'not_requested',
           citations: input.citations || [],
+          ...(input.projectContext
+            ? { projectContext: input.projectContext.slice(0, 24000) }
+            : {}),
         }),
       });
 
@@ -137,6 +153,21 @@ export class IndependentResponseVerifier {
         typeof parsed.reason === 'string'
           ? parsed.reason.trim().slice(0, 2000)
           : '';
+
+      // Com projeto aberto, uma "correção" que nega acesso ao projeto é sempre pior que a
+      // resposta original, que foi escrita com os dados reais do projeto.
+      if (
+        input.projectContext &&
+        !approved &&
+        (!revisedResponse || deniesProjectAccess(revisedResponse))
+      ) {
+        return {
+          approved: true,
+          reason: reason || 'Resposta baseada nos dados reais do projeto aberto.',
+          risks: cleanRisks(parsed.risks),
+          ...usage,
+        };
+      }
 
       const risks = cleanRisks(parsed.risks);
 
