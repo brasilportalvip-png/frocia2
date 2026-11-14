@@ -64,8 +64,8 @@ import {
 } from '../ai/githubResearchService.js';
 import { GithubAppService } from '../services/githubAppService.js';
 import { readSiteAsContext, resolveSiteTarget } from '../services/siteReaderService.js';
-import { loadFactoryChatContext } from '../siteFactory/factoryChatContext.js';
-import { IndependentResponseVerifier } from '../ai/independentResponseVerifier.js';
+import { loadFactoryChatContext, describeFactoryStatusForPerson } from '../siteFactory/factoryChatContext.js';
+import { IndependentResponseVerifier, deniesProjectAccess } from '../ai/independentResponseVerifier.js';
 import {
   GithubCodeReading,
   githubCodeReadingContext,
@@ -1088,6 +1088,7 @@ recentMessages:
           sensitivity: plan.classification.sensitivity,
           researchStatus: evidence.researchStatus,
           ragStatus: evidence.ragStatus,
+          projectContext: activeProjectContext,
           citations: streamCitations.map((citation) => ({
             title: citation.title,
             uri: citation.uri,
@@ -1114,6 +1115,11 @@ recentMessages:
 
       if (creationMarkers.length && !/\[\[FROC_ACTION:/i.test(fullOutput)) {
         fullOutput = `${fullOutput.trim()}\n${creationMarkers[0]}`;
+      }
+
+      // Última garantia: com uma construção aberta, a Froc.IA nunca responde que não vê o projeto.
+      if (bufferForEvidence && factoryBuildContext && deniesProjectAccess(fullOutput)) {
+        fullOutput = describeFactoryStatusForPerson(factoryBuildContext);
       }
 
       if (bufferForEvidence) {

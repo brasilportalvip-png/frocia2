@@ -156,3 +156,33 @@ export async function loadFactoryChatContext(
     return "";
   }
 }
+
+/**
+ * Resumo em linguagem simples do estado da construção, montado só com os dados reais
+ * (usado quando o modelo, por engano, responderia que não vê o projeto).
+ */
+export function describeFactoryStatusForPerson(context: string): string {
+  const pick = (label: string) =>
+    context
+      .split("\n")
+      .find((line) => line.startsWith("- " + label))
+      ?.slice(2)
+      .trim();
+  const lines = [
+    "Estou acompanhando a construção do seu projeto agora:",
+    pick("Situação"),
+    pick("Arquivos planejados"),
+    pick("Projeto gerado"),
+    pick("Último erro registrado"),
+    pick("Prévia publicada"),
+    pick("Os testes isolados"),
+  ].filter(Boolean) as string[];
+  const missing = context.includes("Variáveis que a pessoa ainda precisa preencher")
+    ? '\nFaltam algumas variáveis: preencha no botão "Variáveis e agentes" do painel.'
+    : "";
+  return (
+    lines.join("\n") +
+    missing +
+    "\n\nPode me perguntar sobre qualquer parte do projeto ou pedir alterações, por exemplo: \"troque a cor do botão para azul\"."
+  );
+}
