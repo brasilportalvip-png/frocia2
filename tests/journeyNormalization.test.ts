@@ -110,3 +110,12 @@ describe("credencial de pagamento só usada no código", () => {
     ).toEqual(["preview", "production"]);
   });
 });
+
+describe("páginas públicas", () => {
+  it("normaliza endereços e descarta rotas dinâmicas em vez de reprovar", () => {
+    const raw: any = structuredClone(fixtureBundle());
+    raw.publicPages = ["/", "/motorista/", "https://x.vercel.app/frete?tipo=mudanca", "/viagem/:id", "/cargas/*", "/promoções", "/sobre nós", "#topo"];
+    const bundle = parseBundle(JSON.stringify(raw));
+    expect(bundle.publicPages).toEqual(["/", "/motorista", "/frete", "/promocoes", "/sobre-nos"]);
+  });
+});

@@ -265,6 +265,31 @@ export function normalizeJourneysAndRequirements(data: any): void {
         });
     }
   }
+  // Páginas públicas: rotas dinâmicas ("/viagem/:id", "/frete/*"), endereços completos,
+  // "?busca", "#ancora" e acentos reprovavam o projeto. Normaliza e descarta o que não é
+  // uma página fixa; "/" sempre fica.
+  if (Array.isArray(data.publicPages)) {
+    const pages: string[] = [];
+    for (const raw of data.publicPages) {
+      if (typeof raw !== "string") continue;
+      let page = raw.trim();
+      try {
+        if (/^https?:\/\//i.test(page)) page = new URL(page).pathname;
+      } catch {
+        continue;
+      }
+      page = page.split(/[?#]/)[0].normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (!page.startsWith("/")) page = "/" + page;
+      page = page.replace(/\/{2,}/g, "/");
+      if (page.length > 1) page = page.replace(/\/$/, "");
+      if (/[:*\[\]{}]/.test(page)) continue; // rota dinâmica: não é página fixa
+      page = page.replace(/\s+/g, "-");
+      if (!/^\/(?!\/)[A-Za-z0-9/_-]*$/.test(page) || page.length > 200) continue;
+      if (!pages.includes(page)) pages.push(page);
+    }
+    if (!pages.includes("/")) pages.unshift("/");
+    data.publicPages = pages.slice(0, 50);
+  }
   // Variáveis: tira duplicadas e separa a credencial de pagamento em teste (preview) e
   // produção. Antes, "MERCADO_PAGO_ACCESS_TOKEN para ambos" reprovava o projeto inteiro e a
   // construção pedia "Retomar" sem parar, porque a IA repetia o mesmo formato.

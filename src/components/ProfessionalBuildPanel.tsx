@@ -352,6 +352,12 @@ export function ProfessionalBuildPanel({
                 Ajustando e tentando de novo automaticamente: {build.error}
               </p>
             )}
+            {build.error && build.errorDetail && (
+              <details className="mt-2 text-xs text-slate-400">
+                <summary className="cursor-pointer">Detalhe técnico do erro</summary>
+                <p className="mt-1 whitespace-pre-wrap break-words">{build.errorDetail}</p>
+              </details>
+            )}
             {build.status === "configuration_required" && (
               <div className="mt-4 rounded-xl border border-violet-400/30 bg-violet-500/10 p-4">
                 <h3 className="font-semibold">

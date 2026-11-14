@@ -1358,6 +1358,11 @@ export class ProfessionalBuildService {
       sourceDigest: b.bundle ? sourceDigest(b.bundle.files) : null,
       title: b.bundle?.title || "Novo projeto",
       error: b.error,
+      // Detalhe técnico do último erro (ex.: qual campo do formato falhou), para o painel.
+      errorDetail:
+        b.error && b.feedback?.length > 1
+          ? b.feedback.slice(1).join(" ").slice(0, 1500)
+          : null,
       consumedCredits:
         b.consumedCredits +
         (b.media?.assets || []).reduce(
