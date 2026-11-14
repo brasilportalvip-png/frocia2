@@ -100,6 +100,8 @@ export interface ProfessionalBuild extends BuildScope {
    * entre as chamadas, então a construção nunca precisa gerar o projeto inteiro de uma vez.
    */
   generation?: GenerationProgress | null;
+  /** Variáveis ainda não preenchidas: o site foi publicado sem as partes que dependem delas. */
+  deferredVariables?: Array<{ name: string; environment: string; purpose: string }>;
   /** Quantas vezes a pessoa tocou em "Retomar construção". */
   manualResumes?: number;
 }
@@ -590,7 +592,8 @@ export class ProfessionalBuildService {
         claimed.bundle = previous.bundle;
         claimed.reports = previous.reports;
         claimed.phase = 12;
-        claimed.status = "configuration_required";
+        // Segue sozinha: a etapa 12 confere as variáveis e continua (com ou sem pendências).
+        claimed.status = "certifying";
         claimed.lease = null;
         await this.repository.save(claimed, token);
       }
@@ -898,12 +901,17 @@ export class ProfessionalBuildService {
           b.phase = 10;
         } else b.phase = 12;
       } else if (b.phase === 12) {
+        // Variáveis que faltam não travam mais a entrega: o site é testado e publicado
+        // sem elas (as partes que dependem delas ficam "em configuração") e, quando a
+        // pessoa preencher, "Aplicar novas configurações" testa tudo e republica.
         const missing = await this.missingVariables(b);
-        if (missing.length) b.status = "configuration_required";
-        else {
-          b.status = "certifying";
-          b.phase = 13;
-        }
+        b.deferredVariables = missing.map((v) => ({
+          name: v.name,
+          environment: v.environment,
+          purpose: v.purpose,
+        }));
+        b.status = "certifying";
+        b.phase = 13;
       } else if (b.phase === 13) {
         b.status = "certifying";
         b.certificate = await this.adapter.certify(b, this.files(b).files);
@@ -1375,6 +1383,7 @@ export class ProfessionalBuildService {
       media: b.media,
       ready: b.status === "ready",
       monitoring: b.monitoring || null,
+      deferredVariables: b.deferredVariables || [],
       autoPublish: b.brief.autoPublish,
     };
   }

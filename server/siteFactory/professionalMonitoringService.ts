@@ -54,7 +54,8 @@ export async function monitorProfessionalProjects(
         failures.push(
           "A versão publicada não corresponde à entrega verificada.",
         );
-      for (const i of b.bundle!.integrations) {
+      // Integrações sem variáveis preenchidas ainda não estão ativas: não contam como falha.
+      for (const i of b.deferredVariables?.length ? [] : b.bundle!.integrations) {
         const r = await request(origin.origin + i.healthPath, {
           signal: AbortSignal.timeout(15000),
           redirect: "error",

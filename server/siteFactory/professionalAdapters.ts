@@ -20,6 +20,10 @@ async function responseJson(response: Response) {
   const text = await response.text();
   return text ? JSON.parse(text) : {};
 }
+/** Publicação feita com variáveis ainda não preenchidas pela pessoa. */
+function isDeferred(b: ProfessionalBuild) {
+  return Boolean(b.deferredVariables && b.deferredVariables.length);
+}
 export class ProfessionalAdapters implements FactoryAdapter {
   constructor(
     private readonly vault = new ProjectVariableService(),
@@ -267,12 +271,22 @@ export class ProfessionalAdapters implements FactoryAdapter {
     const defs = b.bundle!.variables.filter(
       (v) => v.environment === environment || v.environment === "both",
     );
-    const entries = defs.map((v) => ({
-      key: v.name,
-      value: variables[v.name],
-      type: "encrypted",
-      target: [environment],
-    }));
+    // Publicação com configuração pendente: valores públicos essenciais recebem um padrão
+    // seguro e variáveis vazias não são enviadas (a Vercel recusaria o lote inteiro).
+    const defaults: Record<string, string> = isDeferred(b)
+      ? {
+          PUBLIC_SITE_URL: "https://" + p.projectName + ".vercel.app",
+          PUBLIC_BUSINESS_NAME: b.bundle!.title,
+        }
+      : {};
+    const entries = defs
+      .map((v) => ({
+        key: v.name,
+        value: variables[v.name] || defaults[v.name],
+        type: "encrypted",
+        target: [environment],
+      }))
+      .filter((entry) => typeof entry.value === "string" && entry.value !== "");
     entries.push({
       key: "FROC_DEPLOYMENT_ENVIRONMENT",
       value: environment,
@@ -359,8 +373,10 @@ export class ProfessionalAdapters implements FactoryAdapter {
       url,
       environment,
       publicPages: b.bundle!.publicPages,
-      journeys: b.bundle!.journeys,
-      integrations: b.bundle!.integrations,
+      // Com configuração pendente, o robô confere páginas, telas e consentimento; as
+      // jornadas e integrações são testadas quando as variáveis forem preenchidas.
+      journeys: isDeferred(b) ? [] : b.bundle!.journeys,
+      integrations: isDeferred(b) ? [] : b.bundle!.integrations,
       testVariables,
     });
     if (result.status === "passed") {
@@ -370,12 +386,16 @@ export class ProfessionalAdapters implements FactoryAdapter {
         ),
         "consent",
         "links",
-        ...b
-          .bundle!.journeys.filter(
-            (j) => j.environment === "both" || j.environment === environment,
-          )
-          .map((j) => j.id),
-        ...b.bundle!.integrations.map((i) => "integration:" + i.name),
+        ...(isDeferred(b)
+          ? []
+          : [
+              ...b
+                .bundle!.journeys.filter(
+                  (j) => j.environment === "both" || j.environment === environment,
+                )
+                .map((j) => j.id),
+              ...b.bundle!.integrations.map((i) => "integration:" + i.name),
+            ]),
       ];
       if (
         !Array.isArray(result.results) ||
@@ -598,7 +618,9 @@ export class ProfessionalAdapters implements FactoryAdapter {
         return p;
       }
       if (!p.paymentProof) {
-        p.paymentProof = await this.paymentCheck(b);
+        p.paymentProof = isDeferred(b)
+          ? { required: b.bundle!.payments.required, deferred: true }
+          : await this.paymentCheck(b);
         return p;
       }
       if (!p.productionId) {
@@ -645,7 +667,10 @@ export class ProfessionalAdapters implements FactoryAdapter {
         return p;
       }
       const values = await this.vault.resolve(b, "production", true);
-      const canonical = new URL(values.PUBLIC_SITE_URL);
+      const canonical = new URL(
+        values.PUBLIC_SITE_URL ||
+          (isDeferred(b) ? "https://" + p.projectName + ".vercel.app" : ""),
+      );
       if (
         canonical.protocol !== "https:" ||
         canonical.username ||
@@ -721,7 +746,12 @@ export class ProfessionalAdapters implements FactoryAdapter {
           }
         }
       }
-      return { ...p, status: "ready", verifiedAt: new Date().toISOString() };
+      return {
+        ...p,
+        status: "ready",
+        verifiedAt: new Date().toISOString(),
+        ...(isDeferred(b) ? { deferredConfiguration: b.deferredVariables } : {}),
+      };
     } catch (error) {
       if (p.productionId) {
         try {
