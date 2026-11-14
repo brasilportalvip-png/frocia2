@@ -100,6 +100,8 @@ export interface ProfessionalBuild extends BuildScope {
    * entre as chamadas, então a construção nunca precisa gerar o projeto inteiro de uma vez.
    */
   generation?: GenerationProgress | null;
+  /** Quantas vezes a pessoa tocou em "Retomar construção". */
+  manualResumes?: number;
 }
 export interface GenerationProgress {
   plan: Record<string, unknown> | null;
@@ -388,6 +390,7 @@ function exportsOf(content: string) {
   return Array.from(content.matchAll(EXPORT_PATTERN), (m) => m[1]).slice(0, 30);
 }
 export const MAX_MODEL_CALL_ATTEMPTS = 3;
+export const MAX_MANUAL_RESUMES = 15;
 export function createFactoryModel(
   call: (input: Parameters<FactoryModel["generate"]>[0]) => Promise<{
     text: string;
@@ -1234,11 +1237,16 @@ export class ProfessionalBuildService {
   async resume(id: string, scope: BuildScope) {
     const b = await this.get(id, scope);
     if (b.status === "cancelled" || b.status === "ready") return b;
-    if (b.errors >= 8)
+    // Cada toque em "Retomar" libera uma nova rodada curta de tentativas automáticas.
+    // O teto é por retomadas manuais (e não por erros acumulados), para uma construção
+    // com o código já escrito não ficar presa para sempre.
+    const manualResumes = (b.manualResumes || 0) + 1;
+    if (manualResumes > MAX_MANUAL_RESUMES)
       throw new FactoryError(
         "resume_limit",
-        "Limite de retomadas atingido. Gere uma nova tarefa com o diagnóstico.",
+        "Limite de retomadas atingido. Fale com a Froc.IA no chat para gerar uma nova construção aproveitando o que já foi feito.",
       );
+    const errors = Math.min(b.errors, 3);
     // Claims ignore failed tasks: atomically reopen via repository implementation.
     if (this.repository instanceof FirestoreBuildRepository) {
       const ref = adminDb.collection("site_factory_builds").doc(id);
@@ -1264,12 +1272,16 @@ export class ProfessionalBuildService {
                     : "publishing",
           error: null,
           modelCall: null,
+          errors,
+          manualResumes,
         });
       });
     } else if (this.repository instanceof InMemoryBuildRepository) {
       b.status = "queued";
       b.error = null;
       b.modelCall = null;
+      b.errors = errors;
+      b.manualResumes = manualResumes;
       this.repository.builds.set(id, b);
     }
     return this.advance(id, scope);

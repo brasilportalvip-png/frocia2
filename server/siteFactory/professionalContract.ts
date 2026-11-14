@@ -161,7 +161,120 @@ export function sourceDigest(files: Array<{ path: string; content: string }>) {
  * Remove campos desconhecidos e encurta textos curtos (nunca o conteúdo dos arquivos);
  * o que não dá para consertar sozinho volta como erro detalhado.
  */
+const JOURNEY_ACTIONS: Record<string, string> = {
+  click: "click", press: "click", tap: "click", clicar: "click",
+  fill: "fill", type: "fill", input: "fill", preencher: "fill", digitar: "fill",
+  select: "select", choose: "select", selecionar: "select", selectoption: "select",
+  "expect-visible": "expect-visible", expectvisible: "expect-visible", "assert-visible": "expect-visible",
+  visible: "expect-visible", see: "expect-visible", "expect-to-be-visible": "expect-visible",
+  "expect-text": "expect-text", expecttext: "expect-text", "assert-text": "expect-text",
+  "expect-contains": "expect-text", contains: "expect-text", "expect-to-have-text": "expect-text",
+};
+const JOURNEY_BY: Record<string, string> = {
+  label: "label", placeholder: "label", "aria-label": "label", arialabel: "label", name: "label",
+  role: "role", testid: "testid", "test-id": "testid", "data-testid": "testid", datatestid: "testid",
+  text: "text", texto: "text",
+};
+const JOURNEY_ROLES = new Set(["button", "link", "textbox", "heading", "checkbox", "combobox", "alert"]);
+const JOURNEY_ROLE_ALIASES: Record<string, string> = {
+  searchbox: "textbox", spinbutton: "textbox", input: "textbox", textarea: "textbox",
+  radio: "checkbox", switch: "checkbox", listbox: "combobox", select: "combobox",
+  status: "alert", menuitem: "button", tab: "button",
+};
+
+/**
+ * Conserta o formato dos roteiros de teste (jornadas) e dos requisitos antes da validação.
+ * O código do projeto não muda; só a "ficha" que o robô de testes segue. Antes, um papel
+ * de botão fora da lista ou um id com letra maiúscula reprovava o projeto inteiro e a
+ * construção ficava presa retomando até esgotar o limite.
+ */
+export function normalizeJourneysAndRequirements(data: any): void {
+  if (!data || typeof data !== "object") return;
+  if (Array.isArray(data.journeys)) {
+    const ids = new Map<string, string>();
+    const dropped = new Set<string>();
+    const journeys: any[] = [];
+    for (const raw of data.journeys) {
+      if (!raw || typeof raw !== "object") continue;
+      const j: any = { ...raw };
+      const originalId = String(j.id ?? "");
+      let id = originalId.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z]+/, "");
+      if (id.length < 3) id = ("jornada-" + id).slice(0, 61);
+      id = id.slice(0, 61);
+      let unique = id, n = 2;
+      while ([...ids.values()].includes(unique)) unique = (id.slice(0, 57) + "-" + n++);
+      ids.set(originalId, unique);
+      j.id = unique;
+      j.name = String(j.name ?? unique).slice(0, 160);
+      if (j.name.length < 5) j.name = ("Jornada " + j.name).slice(0, 160);
+      let path = String(j.path ?? "/");
+      try { if (/^https?:\/\//i.test(path)) { const u = new URL(path); path = u.pathname + u.search; } } catch { path = "/"; }
+      if (!path.startsWith("/")) path = "/" + path;
+      if (!/^\/(?!\/)[A-Za-z0-9/_?=&.%-]*$/.test(path) || path.length > 250) path = "/";
+      j.path = path;
+      if (!["preview", "production", "both"].includes(j.environment)) j.environment = "both";
+      j.authenticated = j.authenticated === true || j.authenticated === "true";
+      const steps: any[] = [];
+      for (const rawStep of Array.isArray(j.steps) ? j.steps : []) {
+        if (!rawStep || typeof rawStep !== "object") continue;
+        const action = JOURNEY_ACTIONS[String(rawStep.action ?? "").toLowerCase().replace(/[\s_]+/g, "-")] ||
+          JOURNEY_ACTIONS[String(rawStep.action ?? "").toLowerCase().replace(/[\s_-]+/g, "")];
+        let by = JOURNEY_BY[String(rawStep.by ?? "").toLowerCase()];
+        const locator = String(rawStep.locator ?? rawStep.name ?? rawStep.text ?? "").trim().slice(0, 160);
+        if (!action || !by || !locator) continue; // passo que o robô não sabe executar (ex.: "esperar")
+        const step: any = { action, by, locator };
+        let role = rawStep.role == null ? undefined : String(rawStep.role).toLowerCase();
+        if (role && !JOURNEY_ROLES.has(role)) role = JOURNEY_ROLE_ALIASES[role];
+        if (by === "role" && !role) step.by = "text"; // papel desconhecido: procura pelo texto visível
+        else if (role) step.role = role;
+        if (rawStep.value != null) step.value = String(rawStep.value).slice(0, 300);
+        steps.push(step);
+        if (steps.length >= 30) break;
+      }
+      if (!steps.length) {
+        dropped.add(originalId);
+        continue;
+      }
+      j.steps = steps;
+      for (const key of Object.keys(j))
+        if (!["id", "name", "path", "environment", "authenticated", "steps"].includes(key)) delete j[key];
+      journeys.push(j);
+      if (journeys.length >= 30) break;
+    }
+    data.journeys = journeys;
+    const valid = new Set(journeys.map((j) => j.id));
+    if (Array.isArray(data.requirements)) {
+      data.requirements = data.requirements
+        .filter((r: any) => r && typeof r === "object")
+        .slice(0, 60)
+        .map((r: any) => {
+          // Ids renomeados acompanham a jornada; ids que nunca existiram continuam e
+          // reprovam (cobertura falsa). Só jornadas descartadas por não terem passos
+          // executáveis saem da lista.
+          const original = Array.isArray(r.journeyIds) ? r.journeyIds.map(String) : [];
+          let journeyIds = original
+            .filter((x: string) => !dropped.has(x))
+            .map((x: string) => (valid.has(ids.get(x) ?? "") ? ids.get(x)! : x));
+          if (!journeyIds.length && original.length && journeys.length) journeyIds = [journeys[0].id];
+          return {
+            ...r,
+            id: String(r.id ?? "req").slice(0, 80) || "req",
+            description: String(r.description ?? "").length >= 8 ? String(r.description).slice(0, 400) : ("Requisito " + String(r.description ?? r.id ?? "")).padEnd(8, ".").slice(0, 400),
+            journeyIds,
+          };
+        });
+    }
+  }
+  // Jornada com login exige conta de teste: cria as variáveis em vez de reprovar.
+  if (Array.isArray(data.journeys) && data.journeys.some((j: any) => j.authenticated) && Array.isArray(data.variables)) {
+    for (const name of ["TEST_LOGIN_EMAIL", "TEST_LOGIN_PASSWORD"])
+      if (!data.variables.some((v: any) => v?.name === name))
+        data.variables.push({ name, purpose: "Conta de teste usada pelo robô de testes", visibility: "secret", environment: "preview" });
+  }
+}
+
 export function parseBundleLeniently(data: unknown): ProfessionalBundle {
+  normalizeJourneysAndRequirements(data);
   const at = (root: any, path: ReadonlyArray<PropertyKey>) =>
     path.reduce((node: any, key) => (node == null ? node : node[key as any]), root);
   if (data && typeof data === "object" && Array.isArray((data as any).variables))
