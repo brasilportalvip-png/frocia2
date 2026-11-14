@@ -4,6 +4,7 @@ import {
   CHUNKED_FILES_PROTOCOL,
   CHUNKED_PLAN_PROTOCOL,
   FILE_BATCH_SIZE,
+  PARALLEL_FILE_BATCHES,
   InMemoryBuildRepository,
   ProfessionalBuildService,
   type FactoryAdapter,
@@ -14,7 +15,7 @@ import {
   ProjectVariableService,
 } from "../server/siteFactory/projectVariableService.js";
 import { env } from "../server/config/env.js";
-import { sourceDigest } from "../server/siteFactory/professionalContract.js";
+import { sourceDigest, placeholderIn, fileProblem } from "../server/siteFactory/professionalContract.js";
 import { describeBuildForChat } from "../server/siteFactory/factoryChatContext.js";
 import { fixtureBundle, stageReport } from "./helpers/professionalFactoryFixture.js";
 
@@ -23,7 +24,7 @@ const scope = { projectId: "project-c", tenantId: "tenant-c", userId: "owner-c" 
 /** Projeto com muitos arquivos, para exigir vários lotes. */
 function bigBundle() {
   const base = fixtureBundle();
-  const extra = Array.from({ length: 9 }, (_, i) => ({
+  const extra = Array.from({ length: 20 }, (_, i) => ({
     path: `src/parts/part${i}.ts`,
     content: `export const part${i} = ${i};`,
   }));
@@ -94,8 +95,9 @@ describe("geração do projeto em partes (não estoura o tempo do servidor)", ()
     const view = await s.service.publicView(current);
     expect(view.generation).toEqual({ planned: s.target.files.length, written: 0 });
 
-    const batches = Math.ceil(s.target.files.length / FILE_BATCH_SIZE);
-    for (let i = 0; i < batches; i++) current = await s.service.advance(b.id, scope);
+    const perStep = FILE_BATCH_SIZE * PARALLEL_FILE_BATCHES;
+    const steps = Math.ceil(s.target.files.length / perStep);
+    for (let i = 0; i < steps; i++) current = await s.service.advance(b.id, scope);
     expect(current.phase).toBe(11);
     expect(current.generation).toBeNull();
     expect(current.bundle?.files.map((f) => f.path).sort()).toEqual(
@@ -117,13 +119,48 @@ describe("geração do projeto em partes (não estoura o tempo do servidor)", ()
     const b = await s.service.start(scope, { prompt: "Crie um app de corridas como a Uber." }, "retry-123456");
     for (let i = 0; i < 12; i++) await s.service.advance(b.id, scope);
     const before = await s.service.get(b.id, scope);
-    expect(before.generation?.files.length).toBe(FILE_BATCH_SIZE);
-    vi.mocked(s.model.generate).mockResolvedValueOnce({ text: '{"files":[]}', model: "m", inputTokens: 1, outputTokens: 1 });
+    const perStep = FILE_BATCH_SIZE * PARALLEL_FILE_BATCHES;
+    expect(before.generation?.files.length).toBe(perStep);
+    const remainingGroups = Math.ceil((s.target.files.length - perStep) / FILE_BATCH_SIZE);
+    for (let i = 0; i < remainingGroups; i++)
+      vi.mocked(s.model.generate).mockResolvedValueOnce({ text: '{"files":[]}', model: "m", inputTokens: 1, outputTokens: 1 });
     const failed = await s.service.advance(b.id, scope);
     expect(failed.status).toBe("generating");
-    expect(failed.generation?.files.length).toBe(FILE_BATCH_SIZE);
+    expect(failed.generation?.files.length).toBe(perStep);
     const resumed = await s.service.advance(b.id, scope);
-    expect(resumed.generation?.files.length ?? resumed.bundle?.files.length).toBeGreaterThan(FILE_BATCH_SIZE);
+    expect(resumed.phase).toBe(11);
+    expect(resumed.bundle?.files.length).toBe(s.target.files.length);
+  });
+
+  it("arquivo com marcador provisório é recusado sozinho e refeito, sem derrubar o projeto", async () => {
+    const s = setup({ chunked: true });
+    const b = await s.service.start(scope, { prompt: "Crie um app de corridas como a Uber." }, "todo-123456");
+    for (let i = 0; i < 11; i++) await s.service.advance(b.id, scope);
+    const original = vi.mocked(s.model.generate).getMockImplementation()!;
+    let poisoned = false;
+    vi.mocked(s.model.generate).mockImplementation(async (input) => {
+      const result = await original(input);
+      if (!poisoned && input.systemInstruction.includes(CHUNKED_FILES_PROTOCOL)) {
+        poisoned = true;
+        const out = JSON.parse(result.text);
+        out.files[0].content += "\n// TODO terminar";
+        return { ...result, text: JSON.stringify(out) };
+      }
+      return result;
+    });
+    const step = await s.service.advance(b.id, scope);
+    expect(step.generation?.retryNotes?.[0]?.reason).toContain("TODO");
+    let current = step;
+    for (let i = 0; i < 4 && current.phase === 10; i++) current = await s.service.advance(b.id, scope);
+    expect(current.phase).toBe(11);
+    expect(current.bundle?.files.some((f) => /\bTODO\b/.test(f.content))).toBe(false);
+  });
+
+  it("'todo' em português não é marcador provisório", () => {
+    expect(placeholderIn("<p>Veja todo o histórico do dia todo</p>")).toBeNull();
+    expect(placeholderIn("// TODO: implementar")).toBe("TODO");
+    expect(placeholderIn("Lorem ipsum dolor")).not.toBeNull();
+    expect(fileProblem("src/App.tsx", "Mostrar todo o percurso")).toBeNull();
   });
 
   it("alteração pelo chat reaproveita o planejamento e reescreve só o necessário", async () => {
@@ -141,7 +178,7 @@ describe("geração do projeto em partes (não estoura o tempo do servidor)", ()
   it("o chat recebe o estado real da construção e o código", async () => {
     const s = setup({ chunked: true });
     const b = await s.service.start(scope, { prompt: "Crie um app de corridas como a Uber." }, "chat-123456");
-    for (let i = 0; i < 13; i++) await s.service.advance(b.id, scope);
+    for (let i = 0; i < 12; i++) await s.service.advance(b.id, scope);
     const text = describeBuildForChat(await s.service.get(b.id, scope), []);
     expect(text).toContain("Crie um app de corridas como a Uber.");
     expect(text).toContain("Plano de arquivos");

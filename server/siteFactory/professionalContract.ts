@@ -205,6 +205,31 @@ export function describeContractIssues(error: unknown, limit = 12): string {
     .map((issue) => (issue.path?.length ? issue.path.join(".") : "(raiz)") + ": " + issue.message)
     .join("; ");
 }
+/**
+ * Marcador de código provisório. TODO/FIXME só em MAIÚSCULAS: em português "todo" é palavra
+ * comum ("todo o histórico", "o dia todo") e antes reprovava projetos inteiros sem motivo.
+ */
+export function placeholderIn(content: string): string | null {
+  const upper = /\b(?:TODO|FIXME)\b/.exec(content);
+  if (upper) return upper[0];
+  const other = /\b(?:lorem ipsum|YOUR_API_KEY|COLOQUE_AQUI)\b/i.exec(content);
+  return other ? other[0] : null;
+}
+/** Problema que impede um arquivo isolado de entrar no projeto (ou null se estiver ok). */
+export function fileProblem(path: string, content: string): string | null {
+  if (
+    /^(?:public\/(?:\.well-known\/froc-release\.json|froc-|sitemap|robots|legal\/|consent)|api\/froc-|tests\/froc-|src\/froc-)/.test(path)
+  )
+    return "caminho reservado ao sistema de entrega; use outro nome";
+  if (
+    /(?:sk_live_|sk_test_|ghp_|github_pat_)[a-zA-Z0-9]{8}|-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)
+  )
+    return "contém algo parecido com uma credencial; leia segredos de process.env";
+  const mark = placeholderIn(content);
+  if (mark)
+    return "contém o marcador provisório \"" + mark + "\"; escreva a implementação final sem esse marcador";
+  return null;
+}
 export function parseBundle(raw: string): ProfessionalBundle {
   if (Buffer.byteLength(raw) > 650000)
     throw new FactoryError(
@@ -235,14 +260,10 @@ export function parseBundle(raw: string): ProfessionalBundle {
         "credential_in_source",
         "A geração tentou colocar uma credencial no código.",
       );
-    if (
-      /\b(?:TODO|FIXME|LOREM IPSUM|YOUR_API_KEY|COLOQUE_AQUI)\b/i.test(
-        file.content,
-      )
-    )
+    if (placeholderIn(file.content))
       throw new FactoryError(
         "incomplete_source",
-        "A geração deixou conteúdo provisório.",
+        "A geração deixou conteúdo provisório em " + file.path + ".",
       );
     paths.add(file.path);
   }
