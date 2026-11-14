@@ -265,6 +265,36 @@ export function normalizeJourneysAndRequirements(data: any): void {
         });
     }
   }
+  // Variáveis: tira duplicadas e separa a credencial de pagamento em teste (preview) e
+  // produção. Antes, "MERCADO_PAGO_ACCESS_TOKEN para ambos" reprovava o projeto inteiro e a
+  // construção pedia "Retomar" sem parar, porque a IA repetia o mesmo formato.
+  if (Array.isArray(data.variables)) {
+    const PAYMENT_SECRETS = new Set(["MERCADO_PAGO_ACCESS_TOKEN", "STRIPE_SECRET_KEY"]);
+    const out: any[] = [];
+    const seen = new Set<string>();
+    const push = (v: any) => {
+      const k = v.name + "|" + v.environment;
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(v);
+    };
+    const vars = data.variables.filter((v: any) => v && typeof v === "object" && typeof v.name === "string");
+    for (const v of vars) {
+      if (!["preview", "production", "both"].includes(v.environment)) v.environment = "both";
+      if (PAYMENT_SECRETS.has(v.name) && v.environment === "both") {
+        for (const environment of ["preview", "production"])
+          push({ ...v, visibility: "secret", environment, purpose: String(v.purpose || "Credencial de pagamento") + (environment === "preview" ? " (teste)" : " (produção)") });
+        continue;
+      }
+      // Mesmo nome em "ambos" e num ambiente específico: fica só o específico.
+      if (v.environment === "both" && vars.some((o: any) => o !== v && o.name === v.name && o.environment !== "both")) continue;
+      push(v);
+    }
+    // Mesma variável com visibilidades diferentes: vale a mais protegida (secret).
+    for (const v of out)
+      if (out.some((o) => o.name === v.name && o.visibility === "secret")) v.visibility = "secret";
+    data.variables = out;
+  }
   // Jornada com login exige conta de teste: cria as variáveis em vez de reprovar.
   if (Array.isArray(data.journeys) && data.journeys.some((j: any) => j.authenticated) && Array.isArray(data.variables)) {
     for (const name of ["TEST_LOGIN_EMAIL", "TEST_LOGIN_PASSWORD"])

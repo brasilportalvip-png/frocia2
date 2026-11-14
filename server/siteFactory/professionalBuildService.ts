@@ -1003,7 +1003,7 @@ export class ProfessionalBuildService {
         (error instanceof SyntaxError ||
           (error as any)?.name === "ZodError" ||
           (error instanceof FactoryError &&
-            /^(?:invalid_|missing_|uncovered_|incomplete_|backend_|reserved_|duplicate_|payment_not|variable_value)/.test(
+            /^(?:invalid_|missing_|uncovered_|incomplete_|backend_|reserved_|duplicate_|payment_|variable_value|test_account|credential_in_source)/.test(
               error.code,
             )))
       ) {

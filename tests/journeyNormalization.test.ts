@@ -75,3 +75,23 @@ describe("retomar construção", () => {
     await expect(service.resume(b.id, scope)).rejects.toThrow(/Limite de retomadas/);
   });
 });
+
+describe("variáveis de pagamento", () => {
+  it("separa MERCADO_PAGO_ACCESS_TOKEN 'para ambos' em teste e produção, sem reprovar", () => {
+    const raw: any = structuredClone(fixtureBundle());
+    raw.productType = "web-application";
+    raw.files.push({ path: "api/pagamento.ts", content: "export default function handler(){return process.env.MERCADO_PAGO_ACCESS_TOKEN?1:0}" });
+    raw.payments = { required: true, provider: "mercado-pago", currency: "BRL" };
+    raw.integrations = [{ name: "Pagamento Mercado Pago", healthPath: "/api/pagamento", required: true }];
+    raw.variables = [
+      { name: "MERCADO_PAGO_ACCESS_TOKEN", purpose: "Token do Mercado Pago", visibility: "secret", environment: "both" },
+      { name: "MERCADO_PAGO_ACCESS_TOKEN", purpose: "Token do Mercado Pago", visibility: "secret", environment: "both" },
+      { name: "PUBLIC_SITE_URL", purpose: "Endereço", visibility: "public", environment: "both" },
+      { name: "PUBLIC_SITE_URL", purpose: "Endereço", visibility: "public", environment: "production" },
+    ];
+    const bundle = parseBundle(JSON.stringify(raw));
+    const token = bundle.variables.filter((v) => v.name === "MERCADO_PAGO_ACCESS_TOKEN").map((v) => v.environment).sort();
+    expect(token).toEqual(["preview", "production"]);
+    expect(bundle.variables.filter((v) => v.name === "PUBLIC_SITE_URL").map((v) => v.environment)).toEqual(["production"]);
+  });
+});
