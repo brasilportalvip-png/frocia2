@@ -91,6 +91,12 @@ export function describeBuildForChat(b: ProfessionalBuild, missing: Array<{ name
         .map((v) => `  • ${v.name} (${v.environment}): ${v.purpose}`)
         .join("\n")}`,
     );
+  if (b.deferredVariables?.length)
+    lines.push(
+      `- A construção segue (ou foi publicada) SEM estas variáveis, que a pessoa preenche depois em "Variáveis e agentes" e então toca em "Aplicar novas configurações" para testar e republicar: ${b.deferredVariables
+        .map((v) => `${v.name} (${v.purpose})`)
+        .join("; ")}. Até lá, as partes que dependem delas (ex.: pagamento) ficam inativas.`,
+    );
   if (b.publication?.previewUrl) lines.push(`- Prévia publicada: ${b.publication.previewUrl}`);
   if (b.publication?.url && b.status === "ready") lines.push(`- Endereço final: ${b.publication.url}`);
   if (b.phase === 13 && b.certificate?.status === "waiting_executor")

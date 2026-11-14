@@ -167,16 +167,22 @@ describe("professional build durable lifecycle", () => {
     expect(b.consumedCredits).toBe(29);
     expect(b.status).not.toBe("ready");
   });
-  it("blocks missing configuration and proceeds through certification before publishing", async () => {
+  it("segue sem as variáveis que faltam, publica com configuração pendente e completa depois", async () => {
     const s = setup();
     const b = await planned(s);
-    const missing = await s.service.advance(b.id, scope);
-    expect(missing.status).toBe("configuration_required");
-    expect(s.adapter.certify).not.toHaveBeenCalled();
+    const pending = await s.service.advance(b.id, scope);
+    expect(pending.status).toBe("certifying");
+    expect(pending.phase).toBe(13);
+    expect(pending.deferredVariables?.map((v) => v.name)).toContain("PUBLIC_CONTACT_EMAIL");
+    expect((await s.service.advance(b.id, scope)).phase).toBe(14);
+    expect(s.adapter.certify).toHaveBeenCalled();
+    const ready = await s.service.advance(b.id, scope);
+    expect(ready.status).toBe("ready");
+    expect((await s.service.publicView(ready)).deferredVariables.length).toBeGreaterThan(0);
     await s.vault.save(
       scope,
       0,
-      missing.bundle!.variables.map((v) => ({
+      ready.bundle!.variables.map((v) => ({
         ...v,
         value:
           v.name === "PUBLIC_CONTACT_EMAIL"
@@ -186,10 +192,11 @@ describe("professional build durable lifecycle", () => {
               : "Empresa",
       })),
     );
-    await s.service.advance(b.id, scope);
-    expect((await s.service.advance(b.id, scope)).phase).toBe(14);
-    expect(s.adapter.publish).not.toHaveBeenCalled();
-    expect((await s.service.advance(b.id, scope)).status).toBe("ready");
+    const next = await s.service.reconfigure(b.id, scope, "reconfigure-after-deferred");
+    expect(next.phase).toBe(12);
+    const complete = await s.service.advance(next.id, scope);
+    expect(complete.deferredVariables).toEqual([]);
+    expect(complete.phase).toBe(13);
   });
   it("deduplicates starts and rejects reused requests with different prompts or cross-tenant reads", async () => {
     const s = setup();

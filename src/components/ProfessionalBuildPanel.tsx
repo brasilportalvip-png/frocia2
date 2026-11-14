@@ -403,10 +403,37 @@ export function ProfessionalBuildPanel({
                 Abrir prévia
               </a>
             )}
+            {build.deferredVariables?.length > 0 && (
+              <div
+                role="status"
+                className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm"
+              >
+                <h3 className="font-semibold text-amber-100">
+                  {build.ready
+                    ? "Publicado sem estas configurações"
+                    : "Seguindo sem estas configurações (você preenche depois)"}
+                </h3>
+                <p className="mt-1 text-amber-100/80">
+                  As partes que dependem delas (por exemplo, pagamento) ficam
+                  inativas até você preencher em “Variáveis e agentes” e tocar em
+                  “Aplicar novas configurações”. Aí o sistema testa tudo e
+                  republica, sem gerar o código de novo.
+                </p>
+                <ul className="mt-2 list-disc pl-5 text-amber-100/90">
+                  {build.deferredVariables.map((v: any) => (
+                    <li key={v.name + v.environment}>
+                      {v.purpose} ({v.name})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {build.ready && (
               <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-4">
                 <h3 className="font-semibold">
-                  Projeto publicado e verificado
+                  {build.deferredVariables?.length
+                    ? "Projeto publicado (configuração pendente)"
+                    : "Projeto publicado e verificado"}
                 </h3>
                 <a
                   href={build.publication.url}
