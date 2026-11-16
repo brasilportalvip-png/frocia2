@@ -3,6 +3,8 @@ export type DeviceView = 'desktop' | 'tablet' | 'mobile';
 export type AppNavigationMode = 'landing' | 'studio' | 'dashboard' | 'pricing' | 'integrations' | 'admin';
 
 export interface GeneratedSite {
+  /** Projeto feito no criador (Froc.IA Studio / motor Forja): abre no estúdio. */
+  forja?: boolean;
   professionalBuildId?: string;
   /** Versão do código da fábrica que está na prévia do editor. */
   previewDigest?: string;

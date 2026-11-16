@@ -30,6 +30,8 @@ import { requestSiteConfirmation, setSiteCommandEnvironment, useSiteCommand } fr
 import { resolveNamedItem } from '../shared/siteCommandCatalog';
 import { clickTarget, findClickTarget, listVisibleActions, typeIntoField } from './services/siteDomActuator';
 
+// Criador de sites (mesma tela e motor do Forja Studio): carrega só quando abre.
+const ForjaStudio = lazyWithRetry(() => import('./forja/ForjaStudio'));
 const ExportModal = lazyWithRetry(() => import('./components/ExportModal').then(m => ({ default: m.ExportModal })));
 const PricingPage = lazyWithRetry(() => import('./components/PricingPage').then(m => ({ default: m.PricingPage })));
 const IntegrationsPage = lazyWithRetry(() => import('./components/IntegrationsPage').then(m => ({ default: m.IntegrationsPage })));
@@ -190,6 +192,8 @@ export default function App() {
   const [backgroundBuildStatus, setBackgroundBuildStatus] = useState<string | null>(null);
   const [isProjectConfigurationOpen, setIsProjectConfigurationOpen] = useState(false);
   const [activeSite, setActiveSite] = useState<GeneratedSite | null>(null);
+  // Estúdio de criação aberto (pedido novo ou projeto salvo).
+  const [forjaLaunch, setForjaLaunch] = useState<{ key: number; prompt?: string; projectId?: string } | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -779,6 +783,19 @@ const fetchConversations = async () => {
     setErrorMsg(
       'É necessário fazer login para gerar projetos com a Froc.IA.'
     );
+    return;
+  }
+
+  // Criação de site agora é no estúdio (motor Forja): escreve, compila, corrige e mostra
+  // a prévia ao vivo. Os créditos são cobrados por construção e devolvidos se falhar.
+  {
+    void budgetApproved;
+    const extras = [
+      data.category && data.category !== 'Software / Tecnologia' ? `Segmento: ${data.category}.` : '',
+      data.tone ? `Tom: ${data.tone}.` : '',
+      files.length ? `(O usuário anexou ${files.length} arquivo(s) na conversa; use as informações descritas no pedido.)` : '',
+    ].filter(Boolean).join(' ');
+    setForjaLaunch({ key: Date.now(), prompt: extras ? `${data.prompt}\n\n${extras}` : data.prompt });
     return;
   }
 
@@ -2355,6 +2372,10 @@ const handleGeneralChat = async (
           <Dashboard
             savedSites={savedSites}
             onSelectSite={(site) => {
+              if (site.forja) {
+                setForjaLaunch({ key: Date.now(), projectId: site.id });
+                return;
+              }
               setActiveSite(site);
               setNavMode('studio');
               if(site.professionalBuildId)setProfessionalBuildId(site.professionalBuildId);
@@ -2654,6 +2675,28 @@ const handleGeneralChat = async (
         )}
       </Suspense>
       </ErrorBoundary>
+
+      {/* Criador de sites (Froc.IA Studio) em tela cheia */}
+      {forjaLaunch && (
+        <Suspense fallback={<div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0B0F17]"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /></div>}>
+          <ForjaStudio
+            key={forjaLaunch.key}
+            initialPrompt={forjaLaunch.prompt}
+            openProjectId={forjaLaunch.projectId}
+            onClose={() => setForjaLaunch(null)}
+            onProjectSaved={({ id, name, standaloneHtml, productionUrl }) => {
+              setSavedSites((current) => {
+                const now = Date.now();
+                const existing = current.find((s) => s.id === id);
+                const updated: GeneratedSite = existing
+                  ? { ...existing, title: name, html: standaloneHtml || existing.html, forja: true, updatedAt: now, ...(productionUrl ? { productionUrl } : {}) }
+                  : { id, title: name, description: '', prompt: '', category: 'Site', colorPalette: '', tone: 'Profissional', html: standaloneHtml, forja: true, createdAt: now, updatedAt: now };
+                return [updated, ...current.filter((s) => s.id !== id)];
+              });
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Fullscreen Preview Modal */}
       {isFullscreen && activeSite && (
