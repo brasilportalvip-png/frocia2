@@ -530,6 +530,15 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       } else if (eventName === 'summary_delta') {
         const delta = String(payload.text || '');
         updateAssistantMessage((m) => ({ ...m, summary: (m.summary || '') + delta }));
+      } else if (eventName === 'review') {
+        const reviews = Array.isArray(payload.reviews) ? (payload.reviews as ChatMessage['review']) : [];
+        updateAssistantMessage((m) => ({ ...m, review: reviews }));
+      } else if (eventName === 'files_final') {
+        // Versão final exata do servidor (inclusive se uma melhoria foi desfeita).
+        const finalFiles = (payload.files && typeof payload.files === 'object' ? payload.files : {}) as Record<string, string>;
+        for (const key of Object.keys(liveFiles)) delete liveFiles[key];
+        Object.assign(liveFiles, finalFiles);
+        updateAssistantMessage((m) => m, true);
       } else if (eventName === 'bundle_ready') {
         const readyCompiled = String(payload.compiledHtml || '');
         const readyStandalone = String(payload.standaloneHtml || readyCompiled);

@@ -142,3 +142,25 @@ describe('Forja: conectar a Vercel de cada pessoa', () => {
     await expect(createForjaPublisher({}).publish({ projectName: 'x-1', html: '<html></html>' })).rejects.toMatchObject({ code: 'vercel_not_connected' });
   });
 });
+
+describe('Forja: revisão dos especialistas', () => {
+  it('lê a resposta do especialista mesmo com texto em volta e limita a 5 pontos', async () => {
+    const { parseSpecialistIssues, issuesToFix, buildSpecialistFixContents, SPECIALISTS } = await import('../server/forja/specialists');
+    expect(SPECIALISTS.map((s) => s.id)).toEqual(['design', 'conteudo', 'seguranca']);
+    const raw = 'Segue:\n```json\n{"issues":[{"severity":"high","file":"src/App.tsx","problem":"Menu não abre no celular","fix":"Ligar o botão ao estado open"},{"severity":"low","problem":"Cor","fix":"Escurecer"},{"problem":"","fix":"x"}]}\n```';
+    const issues = parseSpecialistIssues(raw);
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toMatchObject({ severity: 'alta', file: 'src/App.tsx' });
+    expect(parseSpecialistIssues('sem json')).toEqual([]);
+    const fixes = issuesToFix([{ id: 'design', name: 'Design', status: 'issues', issues }]);
+    expect(fixes).toHaveLength(1); // "baixa" é só sugestão, não chama o arquiteto
+    const contents = buildSpecialistFixContents({ originalPrompt: 'pizzaria', currentFiles: { 'src/App.tsx': 'x' }, fixes });
+    expect(contents[0].parts[0].text).toContain('Menu não abre no celular');
+    expect(contents[0].parts[0].text).toContain('<current_file path="src/App.tsx">');
+  });
+
+  it('a revisão fica salva na conversa do projeto', () => {
+    const msgs = sanitizeForjaMessages([{ id: 'a', role: 'assistant', content: '', phase: 'done', review: [{ id: 'design', name: 'Design', status: 'issues', issues: [{ severity: 'alta', problem: 'p', fix: 'f' }] }] }]);
+    expect(msgs[0].review?.[0]).toMatchObject({ id: 'design', status: 'issues' });
+  });
+});
