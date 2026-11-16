@@ -56,6 +56,7 @@ export interface ForjaStoredMessage {
   phaseLabel?: string;
   error?: string;
   files?: { path: string; status: 'writing' | 'complete'; lines: number; bytes: number }[];
+  review?: { id: string; name: string; status: 'ok' | 'issues' | 'skipped'; issues: { severity: string; problem: string; fix: string; file?: string }[] }[];
   createdAt: number;
 }
 
@@ -79,6 +80,19 @@ export function sanitizeForjaMessages(input: unknown): ForjaStoredMessage[] {
       }
       // Mensagem salva no meio da construção não pode voltar "escrevendo" para sempre.
       if (out.phase && !['done', 'error'].includes(out.phase)) out.phase = 'done';
+      if (Array.isArray(m.review)) {
+        out.review = (m.review as Record<string, unknown>[]).slice(0, 5).map((r) => ({
+          id: String(r.id || '').slice(0, 40),
+          name: String(r.name || '').slice(0, 80),
+          status: r.status === 'issues' || r.status === 'skipped' ? r.status : 'ok',
+          issues: (Array.isArray(r.issues) ? (r.issues as Record<string, unknown>[]) : []).slice(0, 5).map((i) => ({
+            severity: String(i.severity || 'media').slice(0, 10),
+            problem: String(i.problem || '').slice(0, 400),
+            fix: String(i.fix || '').slice(0, 600),
+            ...(i.file ? { file: String(i.file).slice(0, 200) } : {}),
+          })),
+        }));
+      }
       if (Array.isArray(m.files)) {
         out.files = (m.files as Record<string, unknown>[]).slice(0, 60).map((f) => ({
           path: String(f.path || '').slice(0, 200),

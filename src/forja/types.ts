@@ -26,7 +26,16 @@ export interface ChatMessage {
   phaseLabel?: string;
   files?: GeneratedFileMeta[];
   error?: string;
+  /** Revisão dos especialistas (design, textos e SEO, segurança). */
+  review?: SpecialistReviewView[];
   createdAt: number;
+}
+
+export interface SpecialistReviewView {
+  id: string;
+  name: string;
+  status: 'ok' | 'issues' | 'skipped';
+  issues: { severity: string; problem: string; fix: string; file?: string }[];
 }
 
 export interface StudioProject {
