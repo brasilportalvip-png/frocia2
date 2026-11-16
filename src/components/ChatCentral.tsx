@@ -1,3 +1,4 @@
+import { plainSupportedText } from '../services/citationText';
 import React, {
   useEffect,
   useRef,
@@ -1766,8 +1767,10 @@ await onSendMessage(
                                           </time>
                                         )}
                                         {citation.supportedText && (
+                                          // É o trecho DA RESPOSTA que esta fonte confirma (não uma citação da fonte).
                                           <span className="mt-1 block line-clamp-2 text-[10px] leading-4 text-white/55">
-                                            “{citation.supportedText}”
+                                            <span className="font-semibold text-white/45">Confirma: </span>
+                                            {plainSupportedText(citation.supportedText)}
                                           </span>
                                         )}
                                       </span>
