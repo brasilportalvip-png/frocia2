@@ -197,6 +197,11 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  // O que a Froc está fazendo enquanto ainda não há texto (pesquisando, conferindo...).
+  const [generationStatus, setGenerationStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isGenerating) setGenerationStatus(null);
+  }, [isGenerating]);
 
 const activeRequestControllerRef =
   useRef<AbortController | null>(null);
@@ -1368,7 +1373,13 @@ const handleGeneralChat = async (
         onEvent: ({ event, data }) => {
           const payload = data as any;
           if (event === 'start') executionId = payload?.executionId || '';
+          if (event === 'status' && typeof payload?.text === 'string') setGenerationStatus(payload.text);
+          if (event === 'github_research') setGenerationStatus('Lendo o repositório no GitHub…');
+          if (event === 'site_audit') setGenerationStatus('Analisando o site…');
+          if (event === 'social_search') setGenerationStatus('Pesquisando nas redes sociais…');
+          if (event === 'verification' && payload?.status === 'started') setGenerationStatus('Conferindo a resposta antes de mostrar…');
           if (event === 'token' && typeof payload?.text === 'string') {
+            setGenerationStatus(null);
             streamedText += payload.text;
             setChatMessages((current) =>
               current.map((message) =>
@@ -2512,6 +2523,7 @@ const handleGeneralChat = async (
 
               onStopGeneration={handleStopGeneration}
               isGenerating={isGenerating}
+              generationStatus={generationStatus}
               selectedMode={selectedChatMode}
               setSelectedMode={setSelectedChatMode}
               user={currentUser}

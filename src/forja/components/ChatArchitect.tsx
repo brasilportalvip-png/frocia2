@@ -31,6 +31,8 @@ interface ChatArchitectProps {
   runtimeError: RuntimeErrorEvent | null;
   onAutoFixRuntimeError: () => void;
   onDismissRuntimeError: () => void;
+  /** Custo em créditos (criar / alterar), mostrado antes de enviar. */
+  creditCost?: { create: number; edit: number } | null;
 }
 
 const PRESET_LABELS: Array<{ id: DesignPreset; label: string }> = [
@@ -55,6 +57,7 @@ export const ChatArchitect: React.FC<ChatArchitectProps> = ({
   runtimeError,
   onAutoFixRuntimeError,
   onDismissRuntimeError,
+  creditCost,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -322,6 +325,11 @@ export const ChatArchitect: React.FC<ChatArchitectProps> = ({
             )}
           </div>
         </div>
+        {creditCost && (
+          <p className="mt-2 px-1 text-[11px] text-slate-500 dark:text-slate-400">
+            {messages.length === 0 ? `Criar o site: ${creditCost.create} créditos` : `Cada alteração: ${creditCost.edit} créditos`} · se der erro, os créditos voltam.
+          </p>
+        )}
       </div>
     </aside>
   );

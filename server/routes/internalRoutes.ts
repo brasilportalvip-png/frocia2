@@ -14,7 +14,9 @@ export const internalRouter = Router();
  * Middleware verifying internal cron secret exclusively via x-cron-secret header
  * using timing-safe string comparison.
  */
-const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
+export const DEV_INTERNAL_CRON_SECRET = 'froc_dev_cron_secret_unpredictable_local_key_32_bytes';
+
+export const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
   const secretHeader = req.headers['x-cron-secret'];
   const authorization = req.headers.authorization;
   const bearer =
@@ -36,8 +38,12 @@ const requireCronSecret = (req: AuthenticatedRequest, res: any, next: any) => {
     });
   }
 
+  // Em produção, o segredo padrão de desenvolvimento (que está no código público) nunca vale:
+  // sem INTERNAL_CRON_SECRET/CRON_SECRET de verdade na Vercel, as rotas internas ficam fechadas.
+  const isProductionRuntime = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
   const expectedSecrets = [env.CRON_SECRET, env.INTERNAL_CRON_SECRET]
-    .filter((candidate): candidate is string => Boolean(candidate));
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter((candidate) => !(isProductionRuntime && candidate === DEV_INTERNAL_CRON_SECRET));
   const providedBuffer = Buffer.from(provided);
   const valid = expectedSecrets.some((expectedSecret) => {
     const expectedBuffer = Buffer.from(expectedSecret);

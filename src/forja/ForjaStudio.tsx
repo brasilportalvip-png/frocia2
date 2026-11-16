@@ -75,6 +75,12 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
   const [publishNotice, setPublishNotice] = useState<{ kind: 'ok' | 'error'; text: string; url?: string } | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   // Conta Vercel da pessoa (cada um publica na sua).
+  const [creditCost, setCreditCost] = useState<{ create: number; edit: number } | null>(null);
+  useEffect(() => {
+    apiClient<{ create: number; edit: number }>('/api/forja/pricing')
+      .then((r) => setCreditCost(r))
+      .catch(() => setCreditCost(null));
+  }, []);
   const [vercelAccount, setVercelAccount] = useState<{ connected: boolean; username?: string } | null>(null);
   const [vercelModal, setVercelModal] = useState(false);
   const [vercelBusy, setVercelBusy] = useState(false);
@@ -826,6 +832,7 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
             runtimeError={runtimeError}
             onAutoFixRuntimeError={handleAutoFixRuntimeError}
             onDismissRuntimeError={() => setRuntimeError(null)}
+            creditCost={creditCost}
           />
         </div>
 

@@ -967,6 +967,17 @@ recentMessages:
           : ''
       ].join('');
 
+      // Enquanto a resposta é montada e conferida (sem texto ainda), a pessoa vê o que está acontecendo.
+      if (bufferForEvidence) {
+        sendEvent('status', {
+          text: enableSearchGrounding
+            ? 'Pesquisando na internet e conferindo as fontes…'
+            : knowledgeBaseIds.length > 0
+              ? 'Consultando os seus documentos…'
+              : 'Escrevendo e conferindo a resposta…',
+        });
+      }
+
       const stream =
         GeminiProvider.generateStream({
           model: route.selectedModel,
