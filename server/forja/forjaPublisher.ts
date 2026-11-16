@@ -2,7 +2,7 @@
  * Botão "Publicar" do estúdio: coloca o site no ar na Vercel e devolve o link público
  * (ex.: https://pizzaria-bella-ab12cd.vercel.app). Publicar de novo atualiza o MESMO link.
  *
- * Usa a conta Vercel da Froc.IA: VERCEL_TOKEN (e VERCEL_TEAM_ID, se for um time) na Vercel.
+ * Cada pessoa publica na conta Vercel DELA (conecta uma vez com um token pessoal).
  * O site é um único index.html (código e estilos dentro), então a publicação leva segundos.
  */
 
@@ -74,7 +74,7 @@ export function createForjaPublisher(options: {
     if (allow404 && res.status === 404) return null;
     if (!res.ok) {
       const detail = (await res.text().catch(() => '')).replace(/Bearer\s+\S+/g, 'Bearer [oculto]').slice(0, 200);
-      if (res.status === 401 || res.status === 403) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou o VERCEL_TOKEN. Gere um token novo e salve na Vercel.', 503);
+      if (res.status === 401 || res.status === 403) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou o token da sua conta (ele pode ter vencido ou sido apagado). Conecte de novo.', 409);
       throw new ForjaPublishError(`vercel_http_${res.status}`, `A Vercel recusou a publicação (HTTP ${res.status}). ${detail}`.trim());
     }
     return res.json();
@@ -83,7 +83,7 @@ export function createForjaPublisher(options: {
   return {
     configured: Boolean(token),
     async publish(input: PublishInput): Promise<PublishResult> {
-      if (!token) throw new ForjaPublishError('vercel_unconfigured', 'Publicação ainda não configurada: falta o VERCEL_TOKEN na Vercel da Froc.IA.', 503);
+      if (!token) throw new ForjaPublishError('vercel_not_connected', 'Conecte a sua conta da Vercel para publicar.', 409);
       if (!input.html || !/<html[\s>]/i.test(input.html)) throw new ForjaPublishError('nothing_to_publish', 'O site ainda não tem uma versão compilada para publicar.', 400);
 
       // 1. Projeto na Vercel (cria na 1ª vez, aberto ao público, sem tela de login da Vercel).
@@ -130,4 +130,31 @@ export function createForjaPublisher(options: {
       return { url: `https://${host}`, vercelProjectId: projectId, deploymentId };
     },
   };
+}
+
+/**
+ * Confere o token que a pessoa colou e descobre a conta (e o time, se o token for de um time).
+ * Nunca devolve o token: só o nome da conta.
+ */
+export async function verifyVercelToken(token: string, fetchImpl?: FetchLike): Promise<{ username: string; teamId: string | null }> {
+  const clean = String(token || '').trim();
+  if (!/^[A-Za-z0-9_-]{16,200}$/.test(clean)) throw new ForjaPublishError('vercel_token_invalid', 'Esse não parece um token da Vercel. Copie o token inteiro, sem espaços.', 400);
+  const doFetch: FetchLike = fetchImpl ?? ((url, init) => fetch(url, init) as never);
+  const get = (path: string) =>
+    doFetch(`https://api.vercel.com${path}`, { headers: { Authorization: `Bearer ${clean}` }, signal: AbortSignal.timeout(20_000) });
+  const me = await get('/v2/user');
+  if (me.status === 401 || me.status === 403) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou esse token. Gere um novo e cole de novo.', 400);
+  if (!me.ok) throw new ForjaPublishError('vercel_unavailable', `A Vercel não respondeu agora (HTTP ${me.status}). Tente de novo.`, 502);
+  const user = ((await me.json()) as { user?: { username?: string; name?: string; email?: string; defaultTeamId?: string } }).user || {};
+  // Token de conta pessoal funciona sem time; se não funcionar, usa o time padrão da conta.
+  let teamId: string | null = null;
+  const probe = await get('/v9/projects?limit=1');
+  if (!probe.ok && user.defaultTeamId) {
+    const withTeam = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(user.defaultTeamId)}`);
+    if (withTeam.ok) teamId = user.defaultTeamId;
+    else throw new ForjaPublishError('vercel_token_scope', 'Esse token não tem permissão para criar projetos. Ao criar o token, escolha a sua conta em "Scope".', 400);
+  } else if (!probe.ok) {
+    throw new ForjaPublishError('vercel_token_scope', 'Esse token não tem permissão para criar projetos. Ao criar o token, escolha a sua conta em "Scope".', 400);
+  }
+  return { username: String(user.username || user.name || user.email || 'sua conta'), teamId };
 }
