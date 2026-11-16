@@ -142,3 +142,59 @@ describe('Forja: conectar a Vercel de cada pessoa', () => {
     await expect(createForjaPublisher({}).publish({ projectName: 'x-1', html: '<html></html>' })).rejects.toMatchObject({ code: 'vercel_not_connected' });
   });
 });
+
+describe('Forja: revisão dos especialistas', () => {
+  it('lê a resposta do especialista mesmo com texto em volta e limita a 5 pontos', async () => {
+    const { parseSpecialistIssues, issuesToFix, buildSpecialistFixContents, SPECIALISTS } = await import('../server/forja/specialists');
+    expect(SPECIALISTS.map((s) => s.id)).toEqual(['design', 'conteudo', 'seguranca']);
+    const raw = 'Segue:\n```json\n{"issues":[{"severity":"high","file":"src/App.tsx","problem":"Menu não abre no celular","fix":"Ligar o botão ao estado open"},{"severity":"low","problem":"Cor","fix":"Escurecer"},{"problem":"","fix":"x"}]}\n```';
+    const issues = parseSpecialistIssues(raw);
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toMatchObject({ severity: 'alta', file: 'src/App.tsx' });
+    expect(parseSpecialistIssues('sem json')).toEqual([]);
+    const fixes = issuesToFix([{ id: 'design', name: 'Design', status: 'issues', issues }]);
+    expect(fixes).toHaveLength(1); // "baixa" é só sugestão, não chama o arquiteto
+    const contents = buildSpecialistFixContents({ originalPrompt: 'pizzaria', currentFiles: { 'src/App.tsx': 'x' }, fixes });
+    expect(contents[0].parts[0].text).toContain('Menu não abre no celular');
+    expect(contents[0].parts[0].text).toContain('<current_file path="src/App.tsx">');
+  });
+
+  it('a revisão fica salva na conversa do projeto', () => {
+    const msgs = sanitizeForjaMessages([{ id: 'a', role: 'assistant', content: '', phase: 'done', review: [{ id: 'design', name: 'Design', status: 'issues', issues: [{ severity: 'alta', problem: 'p', fix: 'f' }] }] }]);
+    expect(msgs[0].review?.[0]).toMatchObject({ id: 'design', status: 'issues' });
+  });
+});
+
+describe('Forja: pacotes do site sem node_modules (como na Vercel)', () => {
+  it('baixa React e só os ícones usados do esm.sh, com uma cópia só do React e cache', async () => {
+    const { compileVirtualReactProject, lucideImportsIn } = await import('../server/forja/bundler');
+    const seen: string[] = [];
+    const original = globalThis.fetch;
+    const body = (url: string) =>
+      url.includes('lucide-react') ? 'import "react"; export const Check = () => null; export const Menu = () => null;'
+        : url.includes('jsx-runtime') ? 'export function jsx(t,p){return {t,p}} export const jsxs = jsx; export const Fragment = "f";'
+          : url.includes('react-dom') ? 'import "react"; export function createRoot(){ return { render(){} } }'
+            : 'export function useState(v){return [v,()=>{}]} export default { useState }';
+    globalThis.fetch = (async (url: string) => {
+      seen.push(String(url));
+      return { ok: true, status: 200, text: async () => body(String(url)) };
+    }) as never;
+    try {
+      const files = {
+        'index.html': INDEX,
+        'src/App.tsx': 'import { useState } from "react";\nimport { Check, Menu as M } from "lucide-react";\nexport default function App(){ const [a] = useState(1); return <div><Check/><M/>Froc teste remoto {a}</div>; }',
+      };
+      expect(lucideImportsIn(files)).toEqual(['Check', 'Menu']);
+      const r = await compileVirtualReactProject(files, { withErrorBridge: false, skipLocalPackages: true });
+      expect(r.errors).toEqual([]);
+      expect(r.html).toContain('Froc teste remoto');
+      expect(seen.some((u) => u.includes('lucide-react@0.546.0') && u.includes('exports=Check,Menu'))).toBe(true);
+      expect(seen.some((u) => u.includes('react-dom@19.1.0/client'))).toBe(true);
+      const count = seen.length;
+      await compileVirtualReactProject(files, { withErrorBridge: false, skipLocalPackages: true });
+      expect(seen.length).toBe(count);
+    } finally {
+      globalThis.fetch = original;
+    }
+  }, 30_000);
+});

@@ -1,5 +1,90 @@
 // esbuild só carrega quando alguém compila um site (não pesa na inicialização da API).
 const loadEsbuild = () => import('esbuild');
+
+/*
+ * Pacotes do site (React, React DOM e ícones Lucide).
+ * Na Vercel a pasta node_modules não vai junto com a função, então o compilador não achava
+ * "react" ("Could not resolve react") e a prévia ficava em branco. Agora: tenta o node_modules
+ * (desenvolvimento e testes) e, se não achar, baixa do esm.sh — o mesmo caminho que a Froc.IA
+ * já usa para abrir projetos do GitHub. Tudo entra DENTRO do HTML final (nada externo).
+ * Versões fixas: uma única cópia do React (duas cópias quebram os hooks).
+ */
+export const FORJA_REACT_VERSION = '19.1.0';
+export const FORJA_LUCIDE_VERSION = '0.546.0';
+const ESM_ORIGIN = 'https://esm.sh';
+
+export function esmUrlFor(spec: string, lucideExports?: string[] | null): string | null {
+  const v = FORJA_REACT_VERSION;
+  switch (spec) {
+    case 'react':
+      return `${ESM_ORIGIN}/react@${v}?target=es2022`;
+    case 'react/jsx-runtime':
+      return `${ESM_ORIGIN}/react@${v}/jsx-runtime?target=es2022&external=react`;
+    case 'react/jsx-dev-runtime':
+      return `${ESM_ORIGIN}/react@${v}/jsx-dev-runtime?target=es2022&external=react`;
+    case 'react-dom':
+      return `${ESM_ORIGIN}/react-dom@${v}?target=es2022&external=react`;
+    case 'react-dom/client':
+      return `${ESM_ORIGIN}/react-dom@${v}/client?target=es2022&external=react,react-dom`;
+    case 'lucide-react': {
+      // Só os ícones usados (o pacote inteiro tem milhares).
+      const only = lucideExports && lucideExports.length ? `&exports=${[...new Set(lucideExports)].sort().join(',')}` : '';
+      return `${ESM_ORIGIN}/lucide-react@${FORJA_LUCIDE_VERSION}?target=es2022&external=react${only}`;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Ícones importados com `import { A, B as C } from 'lucide-react'` (null = import com *). */
+export function lucideImportsIn(files: Record<string, string>): string[] | null {
+  const names: string[] = [];
+  for (const content of Object.values(files)) {
+    if (/import\s+\*\s+as\s+\w+\s+from\s+['"]lucide-react['"]/.test(content)) return null;
+    for (const m of content.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"]lucide-react['"]/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
+        if (/^[A-Z][A-Za-z0-9]*$/.test(name)) names.push(name);
+      }
+    }
+  }
+  return names;
+}
+
+// Cache entre compilações na mesma instância (a 2ª prévia já sai sem baixar nada).
+const remoteModules = new Map<string, Promise<string>>();
+const MAX_REMOTE_BYTES = 6_000_000;
+
+async function fetchRemoteModule(url: string): Promise<string> {
+  let lastError = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20_000), headers: { 'User-Agent': 'froc-ia-forja' } });
+      if (res.ok) {
+        const text = await res.text();
+        if (text.length > MAX_REMOTE_BYTES) throw new Error(`pacote grande demais: ${url}`);
+        return text;
+      }
+      lastError = `esm.sh respondeu ${res.status}`;
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+    } catch (e) {
+      lastError = (e as Error).message;
+    }
+    await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+  }
+  const what = url.includes('lucide-react') ? 'os ícones (lucide-react) — confira se todos os nomes de ícones existem' : 'o React';
+  throw new Error(`Não consegui baixar ${what} (${lastError}). Tente de novo em instantes.`);
+}
+
+function loadRemoteModule(url: string): Promise<string> {
+  let cached = remoteModules.get(url);
+  if (!cached) {
+    cached = fetchRemoteModule(url);
+    cached.catch(() => remoteModules.delete(url));
+    remoteModules.set(url, cached);
+  }
+  return cached;
+}
 import path from 'path';
 
 export interface BundleResult {
@@ -57,7 +142,7 @@ function resolveVirtualCandidate(
  */
 export async function compileVirtualReactProject(
   rawFiles: Record<string, string>,
-  options: { withErrorBridge?: boolean } = {}
+  options: { withErrorBridge?: boolean; /** Testes: ignora o node_modules (como na Vercel). */ skipLocalPackages?: boolean } = {}
 ): Promise<BundleResult> {
   const files: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawFiles)) {
@@ -113,6 +198,8 @@ createRoot(document.getElementById('root')!).render(<App />);
     'lucide-react',
   ]);
 
+  const lucideImports = lucideImportsIn(files);
+
   try {
     const esbuild = await loadEsbuild();
     const result = await esbuild.build({
@@ -132,7 +219,7 @@ createRoot(document.getElementById('root')!).render(<App />);
         {
           name: 'forja-virtual-fs',
           setup(build) {
-            build.onResolve({ filter: /.*/ }, (args) => {
+            build.onResolve({ filter: /.*/ }, async (args) => {
               if (args.path.startsWith('virtual:')) {
                 const norm = normalizeVirtualPath(args.path.slice(8));
                 return { path: norm, namespace: 'vfs' };
@@ -166,8 +253,32 @@ createRoot(document.getElementById('root')!).render(<App />);
                 };
               }
 
-              // Allow core packages from node_modules
+              // Dentro de um módulo baixado do esm.sh: caminhos do próprio esm.sh e pacotes fixados.
+              if (args.namespace === 'esm') {
+                if (/^https?:\/\//.test(args.path) || args.path.startsWith('/') || args.path.startsWith('.')) {
+                  return { path: new URL(args.path, args.importer).href, namespace: 'esm' };
+                }
+                const pinned = esmUrlFor(args.path);
+                if (pinned) return { path: pinned, namespace: 'esm' };
+                return { errors: [{ text: `Pacote interno não suportado: "${args.path}"` }] };
+              }
+
+              // React, React DOM e Lucide: node_modules quando existir; senão, esm.sh.
               if (allowedNodePackages.has(args.path)) {
+                if ((args.pluginData as { forjaInner?: boolean } | undefined)?.forjaInner) return undefined;
+                const local = options.skipLocalPackages
+                  ? { errors: [{ text: 'pulado' }], path: '', namespace: '', external: false, sideEffects: undefined }
+                  : await build.resolve(args.path, {
+                  kind: args.kind,
+                  resolveDir: process.cwd(),
+                  importer: args.importer,
+                  pluginData: { forjaInner: true },
+                });
+                if (local.errors.length === 0 && local.path && !local.external) {
+                  return { path: local.path, namespace: local.namespace, sideEffects: local.sideEffects };
+                }
+                const remote = esmUrlFor(args.path, args.path === 'lucide-react' ? lucideImports : null);
+                if (remote) return { path: remote, namespace: 'esm' };
                 return undefined;
               }
 
@@ -183,6 +294,11 @@ createRoot(document.getElementById('root')!).render(<App />);
               }
 
               return undefined;
+            });
+
+            build.onLoad({ filter: /.*/, namespace: 'esm' }, async (args) => {
+              const contents = await loadRemoteModule(args.path);
+              return { contents, loader: 'js' };
             });
 
             build.onLoad({ filter: /.*/, namespace: 'vfs-css' }, () => {

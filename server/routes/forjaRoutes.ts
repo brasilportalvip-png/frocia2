@@ -30,6 +30,15 @@ import {
 } from '../forja/architectPrompt.js';
 import { ArchitectStreamParser } from '../forja/streamParser.js';
 import { compileVirtualReactProject } from '../forja/bundler.js';
+import {
+  SPECIALISTS,
+  buildSpecialistFixContents,
+  issuesToFix,
+  parseSpecialistIssues,
+  specialistSystemInstruction,
+  specialistUserContent,
+  type SpecialistReview,
+} from '../forja/specialists.js';
 import { createForjaPublisher, ForjaPublishError, vercelProjectName, verifyVercelToken } from '../forja/forjaPublisher.js';
 import { decryptPersonalMemory, encryptPersonalMemory, MemoryEncryptionUnavailableError } from '../ai/memoryCryptoService.js';
 import {
@@ -153,6 +162,7 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
 
   const mergedFiles: Record<string, string> = { ...currentFiles };
   let usedModel = '';
+  const startedAt = Date.now();
 
   try {
     const ai = geminiClient();
@@ -242,7 +252,9 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
     // Compila e corrige sozinho (até 2 vezes), como no Forja Studio.
     let compiled = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
     let attempts = 0;
-    while (!compiled.ok && attempts < 2 && !closed) {
+    // Falha de download dos pacotes (React) não é erro do código: não adianta pedir correção à IA.
+    const infraOnly = (errors: string[]) => errors.length > 0 && errors.every((e) => /Não consegui baixar o React/.test(e));
+    while (!compiled.ok && attempts < 2 && !closed && !infraOnly(compiled.errors)) {
       attempts += 1;
       sendEvent('phase', { phase: 'verifying', label: `Corrigindo compilação automaticamente (tentativa ${attempts}/2)` });
       await streamTurn(buildCompileRepairContents({ originalPrompt: prompt, currentFiles: mergedFiles, compileErrors: compiled.errors }), 'LOW', true);
@@ -259,6 +271,34 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
       return;
     }
 
+    // Revisão dos especialistas (modo Completo), dentro do tempo da Vercel (300 s).
+    if (buildMode === 'full' && !closed && Date.now() - startedAt < 170_000) {
+      sendEvent('phase', { phase: 'verifying', label: 'Especialistas revisando o site: design, textos e SEO, segurança' });
+      const reviews = await runSpecialists(ai, usedModel || models[0], mergedFiles, prompt);
+      sendEvent('review', { reviews });
+      const fixes = issuesToFix(reviews);
+      if (fixes.length > 0 && !closed && Date.now() - startedAt < 210_000) {
+        const goodVersion = { ...mergedFiles };
+        sendEvent('phase', { phase: 'coding', label: `Aplicando ${fixes.length} melhoria(s) apontada(s) pelos especialistas` });
+        await streamTurn(buildSpecialistFixContents({ originalPrompt: prompt, currentFiles: mergedFiles, fixes }), 'LOW', true);
+        const improved = closed ? null : await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
+        if (improved?.ok) {
+          compiled = improved;
+        } else {
+          // A melhoria quebrou a compilação: volta para a versão boa (a revisão nunca piora o site).
+          for (const key of Object.keys(mergedFiles)) delete mergedFiles[key];
+          Object.assign(mergedFiles, goodVersion);
+          sendEvent('summary_delta', { text: '\n\n(As melhorias dos especialistas não compilaram; mantive a versão anterior, que funciona.)' });
+        }
+      }
+      if (closed) {
+        await settle(false, 'construção interrompida');
+        return;
+      }
+    }
+
+    // A tela recebe a versão final exata (inclusive quando uma melhoria foi desfeita).
+    sendEvent('files_final', { files: mergedFiles });
     sendEvent('phase', { phase: 'verifying', label: 'Build compilado com sucesso e pronto para produção' });
     const standalone = await compileVirtualReactProject(mergedFiles, { withErrorBridge: false });
     await settle(true, '');
@@ -478,3 +518,29 @@ forjaRouter.delete('/vercel', requireAuth, async (req: AuthenticatedRequest, res
   await store.collection(VERCEL_ACCOUNTS).doc(req.user!.uid).delete();
   return res.json({ connected: false });
 });
+
+// ---------------------------------------------------------------- especialistas
+
+/** Os 3 especialistas revisam ao mesmo tempo; quem falhar ou demorar é pulado (não trava). */
+async function runSpecialists(ai: GoogleGenAI, model: string, files: Record<string, string>, prompt: string): Promise<SpecialistReview[]> {
+  const content = specialistUserContent(files, prompt);
+  const one = async (spec: (typeof SPECIALISTS)[number]): Promise<SpecialistReview> => {
+    const call = ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: content }] }],
+      config: { systemInstruction: specialistSystemInstruction(spec.focus), responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: 'LOW' } } as never,
+    });
+    // Se o tempo acabar antes, a resposta atrasada é descartada sem derrubar o servidor.
+    call.catch(() => undefined);
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('tempo esgotado')), 45_000));
+    try {
+      const res = (await Promise.race([call, timeout])) as { text?: string };
+      const issues = parseSpecialistIssues(String(res.text || ''));
+      return { id: spec.id, name: spec.name, status: issues.length ? 'issues' : 'ok', issues };
+    } catch (e) {
+      console.warn('[forja] especialista', spec.id, (e as Error)?.message);
+      return { id: spec.id, name: spec.name, status: 'skipped', issues: [] };
+    }
+  };
+  return Promise.all(SPECIALISTS.map(one));
+}
