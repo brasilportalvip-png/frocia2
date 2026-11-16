@@ -58,6 +58,7 @@ import { selfEvolutionRouter } from './server/routes/selfEvolutionRoutes.js';
 import { mediaRouter } from './server/routes/mediaRoutes.js';
 import { deployRouter } from './server/routes/deployRoutes.js';
 import { siteFactoryRouter } from './server/routes/siteFactoryRoutes.js';
+import { forjaRouter } from './server/routes/forjaRoutes.js';
 import { observabilityRouter } from './server/routes/observabilityRoutes.js';
 import { operationalTelemetryMiddleware } from './server/middlewares/operationalTelemetry.js';
 import { requestIntegrityMiddleware } from './server/middlewares/requestIntegrity.js';
@@ -169,6 +170,8 @@ export async function createApp() {
   );
   // Projeto em ZIP aberto no editor: até ~3,3 MB de arquivo (4,6 MB em base64).
   app.use('/api/imports/zip-site', express.json({ limit: '5mb' }));
+  // Criador de sites: o projeto inteiro vai junto em cada pedido (até ~850 mil caracteres).
+  app.use(['/api/forja/build/stream', '/api/forja/preview/bundle', '/api/forja/projects'], express.json({ limit: '4mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use(requestIntegrityMiddleware);
   app.use(operationalTelemetryMiddleware);
@@ -185,6 +188,8 @@ export async function createApp() {
   app.use('/api/site-factory', siteFactoryRouter);
   app.use('/api/project-variables', projectVariableRouter);
   app.use('/api/professional-factory', professionalFactoryRouter);
+  // Criador de sites (motor Forja: escreve, compila e corrige sozinho, com prévia ao vivo).
+  app.use('/api/forja', forjaRouter);
 
   app.use('/api/admin/ai', adminAiRouter);
   app.use('/api/admin/observability', observabilityRouter);

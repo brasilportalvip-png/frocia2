@@ -1,0 +1,416 @@
+/**
+ * Criador de sites da Froc.IA — motor "Forja" (o mesmo sistema do Forja Studio da Gemini).
+ *
+ * Como funciona:
+ *  1. O arquiteto (Gemini) escreve o projeto React + TypeScript + Tailwind arquivo por arquivo
+ *     e cada pedaço chega na tela em tempo real (SSE).
+ *  2. O servidor compila tudo na memória com o esbuild.
+ *  3. Se a compilação falhar, o arquiteto recebe os erros e corrige sozinho (até 2 vezes).
+ *  4. A prévia funcionando e o HTML único pronto para publicar voltam para a tela.
+ *
+ * Projetos ficam salvos no Firestore (coleção forja_projects, só pelo servidor) e também
+ * aparecem em "Meus projetos" da Froc.IA (coleção projects, com o HTML pronto).
+ */
+import { Router, type Response } from 'express';
+import { GoogleGenAI } from '@google/genai';
+import { FieldValue } from 'firebase-admin/firestore';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import type { AuthenticatedRequest } from '../types.js';
+import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { env } from '../config/env.js';
+import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
+import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
+import {
+  buildCompileRepairContents,
+  buildUserContents,
+  getArchitectSystemInstruction,
+  type BuildMode,
+  type ChatTurn,
+  type DesignPreset,
+} from '../forja/architectPrompt.js';
+import { ArchitectStreamParser } from '../forja/streamParser.js';
+import { compileVirtualReactProject } from '../forja/bundler.js';
+import { createForjaPublisher, ForjaPublishError, vercelProjectName } from '../forja/forjaPublisher.js';
+import {
+  FORJA_LIMITS,
+  forjaCreditCost,
+  sanitizeForjaFiles,
+  sanitizeForjaMessages,
+  safeGeneratedPath,
+  type ForjaStoredMessage,
+} from '../forja/forjaStore.js';
+
+export const forjaRouter = Router();
+
+const COLLECTION = 'forja_projects';
+const PRESETS: DesignPreset[] = ['auto', 'editorial-light', 'corporate-dark', 'commerce-minimal'];
+
+type Contents = Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>;
+
+function geminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    throw new Error('A chave do Gemini (GEMINI_API_KEY) não está configurada no servidor.');
+  }
+  return new GoogleGenAI({ apiKey });
+}
+
+/** Modelo do arquiteto: FORJA_MODEL na Vercel, senão o modelo de engenharia da Froc.IA. */
+function architectModels(): string[] {
+  const primary = (process.env.FORJA_MODEL || env.ENGINEERING_MODEL || env.GEMINI_DEFAULT_MODEL || '').trim();
+  return configuredGeminiFailoverChain(primary).slice(0, 4);
+}
+
+function sendError(res: Response, status: number, code: string, message: string) {
+  return res.status(status).json({ error: { code, message } });
+}
+
+function db() {
+  if (!isFirebaseAdminConfigured() || !adminDb) return null;
+  return adminDb;
+}
+
+// ---------------------------------------------------------------- compilação da prévia
+
+forjaRouter.post('/preview/bundle', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const files = sanitizeForjaFiles(req.body?.files);
+  if (!files.ok) return res.status(400).json({ ok: false, errors: [files.error] });
+  if (Object.keys(files.files).length === 0) return res.status(400).json({ ok: false, errors: ['Nenhum arquivo fornecido.'] });
+  const preview = await compileVirtualReactProject(files.files, { withErrorBridge: true });
+  if (!preview.ok) return res.json({ ok: false, compiledHtml: '', standaloneHtml: '', errors: preview.errors });
+  const standalone = await compileVirtualReactProject(files.files, { withErrorBridge: false });
+  return res.json({ ok: true, compiledHtml: preview.html, standaloneHtml: standalone.html, errors: [] });
+});
+
+// ---------------------------------------------------------------- construção (streaming)
+
+forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const uid = req.user!.uid;
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, FORJA_LIMITS.promptChars) : '';
+  if (!prompt) return sendError(res, 400, 'empty_prompt', 'Descreva o site ou a alteração que deseja construir.');
+
+  const current = sanitizeForjaFiles(req.body?.currentFiles);
+  if (!current.ok) return sendError(res, 413, 'project_too_large', current.error);
+  const currentFiles = current.files;
+  const history: ChatTurn[] = (Array.isArray(req.body?.history) ? req.body.history : [])
+    .filter((t: unknown): t is ChatTurn => !!t && typeof (t as ChatTurn).content === 'string')
+    .slice(-6)
+    .map((t: ChatTurn) => ({ role: t.role === 'user' ? 'user' : 'assistant', content: t.content.slice(0, 6000) }));
+  const buildMode: BuildMode = req.body?.buildMode === 'quick' ? 'quick' : 'full';
+  const designPreset: DesignPreset = PRESETS.includes(req.body?.designPreset) ? req.body.designPreset : 'auto';
+  const isNew = Object.keys(currentFiles).length === 0;
+
+  // Créditos: reserva antes; só cobra se o site sair compilado. Se falhar, devolve.
+  const cost = forjaCreditCost(isNew);
+  const idempotencyKey = String(req.body?.idempotencyKey || `forja-${uid}-${Date.now()}`).slice(0, 120);
+  let reservationId: string | null = null;
+  if (cost > 0 && db()) {
+    try {
+      const r = await CreditWalletService.reserveCredits({ userId: uid, amount: cost, operation: isNew ? 'Criação de site (Forja)' : 'Alteração de site (Forja)', idempotencyKey });
+      reservationId = r.reservationId;
+    } catch (e) {
+      const insufficient = e instanceof InsufficientCreditsError;
+      return sendError(res, insufficient ? 402 : 500, insufficient ? 'insufficient_credits' : 'credit_reservation_failed', (e as Error).message || 'Não foi possível reservar os créditos.');
+    }
+  }
+  const settle = async (ok: boolean, reason: string) => {
+    if (!reservationId) return;
+    const id = reservationId;
+    reservationId = null;
+    try {
+      if (ok) await CreditWalletService.confirmConsumption({ userId: uid, reservationId: id, amountConsumed: cost, operation: isNew ? 'Criação de site (Forja)' : 'Alteração de site (Forja)', idempotencyKey: `cnf-${idempotencyKey}` });
+      else await CreditWalletService.releaseReservation({ userId: uid, reservationId: id, operation: `Estorno: ${reason}`.slice(0, 200), idempotencyKey: `rel-${idempotencyKey}` });
+    } catch (e) {
+      console.error('[forja] créditos', (e as Error).message);
+    }
+  };
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const sendEvent = (event: string, data: unknown) => {
+    if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  // Mantém a conexão viva enquanto o modelo pensa (proxies cortam conexões mudas).
+  const keepAlive = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+  }, 15_000);
+
+  let closed = false;
+  res.on('close', () => {
+    closed = true;
+  });
+
+  const mergedFiles: Record<string, string> = { ...currentFiles };
+  let usedModel = '';
+
+  try {
+    const ai = geminiClient();
+    const models = architectModels();
+
+    /** Abre o streaming no primeiro modelo que responder (troca de modelo antes do 1º pedaço). */
+    const openStream = async (contents: Contents, thinking: 'HIGH' | 'LOW') => {
+      let lastError: unknown = null;
+      for (const model of usedModel ? [usedModel, ...models.filter((m) => m !== usedModel)] : models) {
+        for (const withThinking of [true, false]) {
+          try {
+            const config: Record<string, unknown> = { systemInstruction: getArchitectSystemInstruction(designPreset) };
+            if (withThinking) config.thinkingConfig = { thinkingLevel: thinking };
+            const stream = await ai.models.generateContentStream({ model, contents, config: config as never });
+            usedModel = model;
+            return stream;
+          } catch (e) {
+            lastError = e;
+            const msg = String((e as Error)?.message || e);
+            // Modelo que não aceita "thinkingLevel": tenta o mesmo modelo sem ele.
+            if (withThinking && /thinking/i.test(msg)) continue;
+            break;
+          }
+        }
+      }
+      throw lastError ?? new Error('Nenhum modelo do Gemini respondeu.');
+    };
+
+    const streamTurn = async (contents: Contents, thinking: 'HIGH' | 'LOW', isRepair: boolean) => {
+      const stream = await openStream(contents, thinking);
+      const parser = new ArchitectStreamParser();
+      let phase: 'planning' | 'coding' | 'summarizing' = 'planning';
+      let written = 0;
+      const buffers: Record<string, string> = {};
+      const handle = (events: ReturnType<ArchitectStreamParser['push']>) => {
+        for (const ev of events) {
+          if (ev.type === 'plan_delta') {
+            if (!isRepair) sendEvent('plan_delta', { text: ev.text });
+          } else if (ev.type === 'file_start') {
+            if (phase !== 'coding') {
+              phase = 'coding';
+              sendEvent('phase', { phase: 'coding', label: isRepair ? 'Corrigindo erros detectados na compilação' : 'Escrevendo componentes React, TypeScript e estilos' });
+            }
+            buffers[ev.path] = '';
+            sendEvent('file_start', { path: ev.path });
+          } else if (ev.type === 'file_delta') {
+            buffers[ev.path] = (buffers[ev.path] || '') + ev.chunk;
+            sendEvent('file_delta', { path: ev.path, chunk: ev.chunk });
+          } else if (ev.type === 'file_end') {
+            const clean = safeGeneratedPath(ev.path);
+            if (clean) {
+              mergedFiles[clean] = buffers[ev.path] || '';
+              written += 1;
+            }
+            sendEvent('file_end', { path: ev.path });
+          } else if (ev.type === 'summary_delta') {
+            if (phase !== 'summarizing') {
+              phase = 'summarizing';
+              sendEvent('phase', { phase: 'verifying', label: 'Consolidando resumo da arquitetura' });
+            }
+            sendEvent('summary_delta', { text: ev.text });
+          }
+        }
+      };
+      for await (const chunk of stream) {
+        if (closed) break;
+        const text = chunk.text;
+        if (text) handle(parser.push(text));
+      }
+      if (!closed) handle(parser.flush());
+      return written;
+    };
+
+    sendEvent('phase', { phase: 'planning', label: isNew ? 'Planejando arquitetura modular e experiência do usuário' : 'Analisando projeto atual e planejando alterações' });
+
+    const count = await streamTurn(buildUserContents({ prompt, history, currentFiles }), buildMode === 'quick' ? 'LOW' : 'HIGH', false);
+    if (closed) {
+      await settle(false, 'construção interrompida');
+      return;
+    }
+    if (count === 0 && Object.keys(mergedFiles).length === 0) {
+      await settle(false, 'resposta sem arquivos');
+      sendEvent('error', { message: 'A resposta não trouxe os arquivos do site. Tente descrever o site de novo com mais detalhes (sem créditos cobrados).' });
+      return;
+    }
+
+    // Compila e corrige sozinho (até 2 vezes), como no Forja Studio.
+    let compiled = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
+    let attempts = 0;
+    while (!compiled.ok && attempts < 2 && !closed) {
+      attempts += 1;
+      sendEvent('phase', { phase: 'verifying', label: `Corrigindo compilação automaticamente (tentativa ${attempts}/2)` });
+      await streamTurn(buildCompileRepairContents({ originalPrompt: prompt, currentFiles: mergedFiles, compileErrors: compiled.errors }), 'LOW', true);
+      if (closed) break;
+      compiled = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
+    }
+    if (closed) {
+      await settle(false, 'construção interrompida');
+      return;
+    }
+    if (!compiled.ok) {
+      await settle(false, 'não compilou');
+      sendEvent('error', { message: `Não consegui compilar automaticamente (sem créditos cobrados): ${compiled.errors.slice(0, 3).join(' | ')}` });
+      return;
+    }
+
+    sendEvent('phase', { phase: 'verifying', label: 'Build compilado com sucesso e pronto para produção' });
+    const standalone = await compileVirtualReactProject(mergedFiles, { withErrorBridge: false });
+    await settle(true, '');
+    sendEvent('bundle_ready', { compiledHtml: compiled.html, standaloneHtml: standalone.html });
+    sendEvent('done', { filesCount: Object.keys(mergedFiles).length, autoRepaired: attempts > 0, model: usedModel, credits: cost });
+  } catch (err) {
+    await settle(false, 'falha no Gemini');
+    const message = err instanceof Error ? err.message : 'Erro inesperado ao gerar o projeto.';
+    console.error('[forja] build', message);
+    sendEvent('error', { message: friendlyGeminiError(message) });
+  } finally {
+    clearInterval(keepAlive);
+    if (!res.writableEnded) res.end();
+  }
+});
+
+function friendlyGeminiError(message: string) {
+  if (/RESOURCE_EXHAUSTED|429|quota/i.test(message)) return 'O Gemini está sem cota agora. Tente de novo em alguns minutos (sem créditos cobrados).';
+  if (/API key|PERMISSION_DENIED|401|403/i.test(message)) return 'A chave do Gemini foi recusada. Confira a GEMINI_API_KEY na Vercel.';
+  if (/not found|404/i.test(message)) return 'O modelo configurado para o criador não existe. Confira FORJA_MODEL na Vercel.';
+  return message;
+}
+
+// ---------------------------------------------------------------- projetos salvos
+
+forjaRouter.get('/projects', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return res.json({ projects: [] });
+  const snap = await store.collection(COLLECTION).where('userId', '==', req.user!.uid).limit(200).get();
+  const projects = snap.docs
+    .map((d) => {
+      const x = d.data();
+      return { id: d.id, name: String(x.name || 'Projeto'), slug: String(x.slug || ''), createdAt: Number(x.createdAtMs || 0), updatedAt: Number(x.updatedAtMs || 0), fileCount: Object.keys(x.files || {}).length };
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  return res.json({ projects });
+});
+
+forjaRouter.get('/projects/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const doc = await store.collection(COLLECTION).doc(req.params.id).get();
+  if (!doc.exists || doc.data()?.userId !== req.user!.uid) return sendError(res, 404, 'not_found', 'Projeto não encontrado.');
+  const x = doc.data()!;
+  return res.json({
+    project: { id: doc.id, name: x.name, slug: x.slug, createdAt: x.createdAtMs, updatedAt: x.updatedAtMs, files: x.files || {}, messages: x.messages || [], productionUrl: x.productionUrl || null, publishedAt: x.publishedAtMs || null },
+  });
+});
+
+/** Cria um projeto novo (também aparece em "Meus projetos" da Froc.IA). */
+forjaRouter.post('/projects', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const name = String(req.body?.name || 'Novo projeto').slice(0, 120);
+  const now = Date.now();
+  const ref = store.collection('projects').doc();
+  await ref.set({
+    userId: req.user!.uid,
+    tenantId: req.user!.tenantId ?? null,
+    title: name,
+    description: String(req.body?.prompt || '').slice(0, 1000),
+    prompt: String(req.body?.prompt || '').slice(0, 10000),
+    category: 'Site',
+    colorPalette: '',
+    tone: 'Profissional',
+    html: '',
+    isFavorite: false,
+    suggestedRefinements: [],
+    forja: true,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  await store.collection(COLLECTION).doc(ref.id).set({ userId: req.user!.uid, name, slug: '', files: {}, messages: [], createdAtMs: now, updatedAtMs: now });
+  return res.json({ project: { id: ref.id, name, slug: '', createdAt: now, updatedAt: now, files: {}, messages: [] } });
+});
+
+/** Salva arquivos e conversa; o HTML pronto vai para o projeto da Froc.IA (prévia e publicação). */
+forjaRouter.put('/projects/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const uid = req.user!.uid;
+  const ref = store.collection(COLLECTION).doc(req.params.id);
+  const doc = await ref.get();
+  if (doc.exists && doc.data()?.userId !== uid) return sendError(res, 404, 'not_found', 'Projeto não encontrado.');
+  const files = sanitizeForjaFiles(req.body?.files);
+  if (!files.ok) return sendError(res, 413, 'project_too_large', files.error);
+  const messages: ForjaStoredMessage[] = sanitizeForjaMessages(req.body?.messages);
+  const name = String(req.body?.name || doc.data()?.name || 'Projeto').slice(0, 120);
+  const now = Date.now();
+  await ref.set({ userId: uid, name, slug: String(req.body?.slug || '').slice(0, 120), files: files.files, messages, updatedAtMs: now, createdAtMs: doc.data()?.createdAtMs || now },
+    // Troca arquivos e conversa inteiros, sem apagar o link publicado (productionUrl etc.).
+    { mergeFields: ['userId', 'name', 'slug', 'files', 'messages', 'updatedAtMs', 'createdAtMs'] },
+  );
+
+  const html = typeof req.body?.standaloneHtml === 'string' ? req.body.standaloneHtml : '';
+  const projectRef = store.collection('projects').doc(req.params.id);
+  const project = await projectRef.get();
+  const patch: Record<string, unknown> = { title: name, updatedAt: FieldValue.serverTimestamp(), forja: true };
+  // Firestore aceita até 1 MB por documento: HTML maior fica só nos arquivos (o ZIP funciona igual).
+  if (html && html.length <= FORJA_LIMITS.htmlChars) patch.html = html;
+  if (project.exists) {
+    if (project.data()?.userId === uid) await projectRef.update(patch);
+  } else {
+    await projectRef.set({ userId: uid, tenantId: req.user!.tenantId ?? null, description: '', prompt: '', category: 'Site', colorPalette: '', tone: 'Profissional', isFavorite: false, suggestedRefinements: [], createdAt: FieldValue.serverTimestamp(), html: '', ...patch });
+  }
+  return res.json({ ok: true, updatedAt: now, htmlSaved: Boolean(patch.html) });
+});
+
+forjaRouter.delete('/projects/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const ref = store.collection(COLLECTION).doc(req.params.id);
+  const doc = await ref.get();
+  if (!doc.exists || doc.data()?.userId !== req.user!.uid) return sendError(res, 404, 'not_found', 'Projeto não encontrado.');
+  await ref.delete();
+  const project = store.collection('projects').doc(req.params.id);
+  const p = await project.get();
+  if (p.exists && p.data()?.userId === req.user!.uid && p.data()?.forja) await project.delete();
+  return res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- publicar (link próprio)
+
+/**
+ * Coloca o site no ar e devolve o link público. O servidor compila de novo a partir dos
+ * arquivos salvos (não confia no HTML enviado pela tela). Publicar outra vez atualiza o link.
+ */
+forjaRouter.post('/projects/:id/publish', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const uid = req.user!.uid;
+  const ref = store.collection(COLLECTION).doc(req.params.id);
+  const doc = await ref.get();
+  if (!doc.exists || doc.data()?.userId !== uid) return sendError(res, 404, 'not_found', 'Projeto não encontrado.');
+  const x = doc.data()!;
+  if (Date.now() - Number(x.lastPublishAtMs || 0) < 15_000) return sendError(res, 429, 'publish_too_fast', 'Aguarde alguns segundos antes de publicar de novo.');
+  const files = (x.files || {}) as Record<string, string>;
+  if (!files['src/App.tsx'] && !files['index.html']) return sendError(res, 400, 'nothing_to_publish', 'Crie o site primeiro: ainda não há arquivos para publicar.');
+
+  const compiled = await compileVirtualReactProject(files, { withErrorBridge: false });
+  if (!compiled.ok) return sendError(res, 422, 'compile_failed', `O site tem erro de compilação e não foi publicado: ${compiled.errors.slice(0, 2).join(' | ')}`);
+
+  await ref.update({ lastPublishAtMs: Date.now() });
+  const publisher = createForjaPublisher({ token: process.env.VERCEL_TOKEN, teamId: process.env.VERCEL_TEAM_ID });
+  try {
+    const result = await publisher.publish({
+      projectName: String(x.vercelProjectName || vercelProjectName(String(x.name || 'site'), doc.id)),
+      html: compiled.html,
+      vercelProjectId: x.vercelProjectId || null,
+    });
+    const now = Date.now();
+    await ref.update({ productionUrl: result.url, vercelProjectId: result.vercelProjectId, vercelProjectName: x.vercelProjectName || vercelProjectName(String(x.name || 'site'), doc.id), publishedAtMs: now });
+    const project = store.collection('projects').doc(doc.id);
+    const p = await project.get();
+    if (p.exists && p.data()?.userId === uid) await project.update({ productionUrl: result.url, updatedAt: FieldValue.serverTimestamp() });
+    return res.json({ ok: true, url: result.url, publishedAt: now });
+  } catch (e) {
+    const err = e instanceof ForjaPublishError ? e : new ForjaPublishError('publish_failed', (e as Error)?.message || 'Falha ao publicar.');
+    console.error('[forja] publicar', err.code, err.message);
+    return sendError(res, err.status, err.code, err.message);
+  }
+});

@@ -1,4 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
+/* Criador de sites (Froc.IA Studio): modo claro/escuro por classe, só dentro do estúdio. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   color-scheme: dark;
@@ -752,3 +755,23 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* ---------------------------------------------------------------- Froc.IA Studio (Forja) */
+.forja-studio {
+  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-sans);
+  color-scheme: light;
+}
+.dark .forja-studio { color-scheme: dark; }
+.forja-studio h1, .forja-studio h2, .forja-studio h3, .forja-studio .font-display { font-family: var(--font-display); }
+.forja-studio code, .forja-studio pre, .forja-studio textarea.font-mono, .forja-studio .font-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.forja-studio ::-webkit-scrollbar { width: 6px; height: 6px; }
+.forja-studio ::-webkit-scrollbar-track { background: transparent; }
+.forja-studio ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.25); border-radius: 3px; }
+.forja-studio ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.45); }

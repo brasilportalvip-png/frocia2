@@ -54,5 +54,15 @@
         }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{react,react-dom,scheduler}/**,node_modules/lucide-react/package.json,node_modules/lucide-react/dist/esm/**"
+    },
+    "api/[...path].ts": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{react,react-dom,scheduler}/**,node_modules/lucide-react/package.json,node_modules/lucide-react/dist/esm/**"
+    }
+  }
 }
