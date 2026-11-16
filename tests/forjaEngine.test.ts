@@ -109,8 +109,36 @@ describe('Forja: publicar com link próprio', () => {
     expect(deploy?.body).toMatchObject({ target: 'production', project: 'prj_1', files: [{ file: 'index.html' }] });
   });
 
-  it('sem VERCEL_TOKEN avisa o que configurar', async () => {
+});
+
+describe('Forja: conectar a Vercel de cada pessoa', () => {
+  const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+
+  it('confere o token e descobre a conta, sem precisar de time', async () => {
+    const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
+    const r = await verifyVercelToken('abcdefghijklmnopqrstuvwx', async (url: string) =>
+      url.includes('/v2/user') ? reply(200, { user: { username: 'maria' } }) : reply(200, { projects: [] }),
+    );
+    expect(r).toEqual({ username: 'maria', teamId: null });
+  });
+
+  it('usa o time padrão quando o token é de um time', async () => {
+    const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
+    const r = await verifyVercelToken('abcdefghijklmnopqrstuvwx', async (url: string) => {
+      if (url.includes('/v2/user')) return reply(200, { user: { username: 'joao', defaultTeamId: 'team_x' } });
+      return url.includes('teamId=team_x') ? reply(200, { projects: [] }) : reply(403, {});
+    });
+    expect(r).toEqual({ username: 'joao', teamId: 'team_x' });
+  });
+
+  it('recusa token inválido ou recusado com mensagem clara', async () => {
+    const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
+    await expect(verifyVercelToken('curto')).rejects.toThrow(/token da Vercel/);
+    await expect(verifyVercelToken('abcdefghijklmnopqrstuvwx', async () => reply(401, {}))).rejects.toThrow(/recusou/);
+  });
+
+  it('sem conta conectada, publicar pede para conectar', async () => {
     const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
-    await expect(createForjaPublisher({}).publish({ projectName: 'x-1', html: '<html></html>' })).rejects.toThrow(/VERCEL_TOKEN/);
+    await expect(createForjaPublisher({}).publish({ projectName: 'x-1', html: '<html></html>' })).rejects.toMatchObject({ code: 'vercel_not_connected' });
   });
 });

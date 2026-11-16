@@ -5,6 +5,7 @@ import { ChatArchitect } from './components/ChatArchitect';
 import { PreviewCanvas } from './components/PreviewCanvas';
 import { CodeExplorer } from './components/CodeExplorer';
 import { AuditPanel } from './components/AuditPanel';
+import { ConnectVercel } from './components/ConnectVercel';
 import {
   assembleStandaloneHtml,
   exportProjectAsZip,
@@ -73,6 +74,17 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
   const [publishState, setPublishState] = useState<'idle' | 'publishing' | 'error'>('idle');
   const [publishNotice, setPublishNotice] = useState<{ kind: 'ok' | 'error'; text: string; url?: string } | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Conta Vercel da pessoa (cada um publica na sua).
+  const [vercelAccount, setVercelAccount] = useState<{ connected: boolean; username?: string } | null>(null);
+  const [vercelModal, setVercelModal] = useState(false);
+  const [vercelBusy, setVercelBusy] = useState(false);
+  const [vercelError, setVercelError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiClient<{ connected: boolean; username?: string }>('/api/forja/vercel')
+      .then((r) => setVercelAccount(r))
+      .catch(() => setVercelAccount({ connected: false }));
+  }, []);
 
   const [isDark, setIsDark] = useState<boolean>(() => {
     try {
@@ -355,8 +367,13 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
   };
 
   // Publicar: salva, compila no servidor e coloca no ar (mesmo link a cada atualização).
-  const handlePublish = async () => {
+  const handlePublish = async (justConnected = false) => {
     if (!activeProject || !hasFiles || isGenerating || publishState === 'publishing') return;
+    if (!justConnected && vercelAccount && !vercelAccount.connected) {
+      setVercelError(null);
+      setVercelModal(true);
+      return;
+    }
     setPublishState('publishing');
     setPublishNotice(null);
     try {
@@ -369,10 +386,51 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       setPublishNotice({ kind: 'ok', text: 'Seu site está no ar!', url: r.url });
       onProjectSaved?.({ id: targetId, name: activeProject.name, standaloneHtml: standaloneRef.current, productionUrl: r.url });
     } catch (e) {
+      const code = (e as { code?: string })?.code;
       setPublishState('error');
+      if (code === 'vercel_not_connected' || code === 'vercel_token_refused') {
+        setVercelAccount({ connected: false });
+        setVercelError(code === 'vercel_token_refused' ? (e as Error).message : null);
+        setVercelModal(true);
+        return;
+      }
       setPublishNotice({ kind: 'error', text: (e as Error)?.message || 'Não consegui publicar agora. Tente de novo.' });
     }
   };
+
+  const handleConnectVercel = async (token: string) => {
+    setVercelBusy(true);
+    setVercelError(null);
+    try {
+      const r = await apiClient<{ connected: boolean; username: string }>('/api/forja/vercel', { method: 'POST', body: JSON.stringify({ token }) });
+      setVercelAccount({ connected: true, username: r.username });
+      setVercelModal(false);
+      setPublishState('idle');
+      // Conectou: publica na hora.
+      setTimeout(() => {
+        void publishRef.current(true);
+      }, 0);
+    } catch (e) {
+      setVercelError((e as Error)?.message || 'Não consegui conectar agora.');
+    } finally {
+      setVercelBusy(false);
+    }
+  };
+
+  const handleDisconnectVercel = async () => {
+    setVercelBusy(true);
+    try {
+      await apiClient('/api/forja/vercel', { method: 'DELETE' });
+      setVercelAccount({ connected: false });
+    } catch (e) {
+      setVercelError((e as Error)?.message || 'Não consegui desconectar agora.');
+    } finally {
+      setVercelBusy(false);
+    }
+  };
+
+  const publishRef = useRef(handlePublish);
+  publishRef.current = handlePublish;
 
   const handleClose = () => {
     if (isGenerating) handleStopStreaming();
@@ -612,7 +670,7 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         onCopyHtml={handleCopyHtml}
         onClose={handleClose}
         saveState={saveState}
-        onPublish={handlePublish}
+        onPublish={() => void handlePublish()}
         publishState={publishState}
         productionUrl={activeProject?.productionUrl}
       />
@@ -659,10 +717,29 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
               </a>
             </>
           )}
+          {publishNotice.kind === 'ok' && vercelAccount?.username && (
+            <button type="button" onClick={() => { setVercelError(null); setVercelModal(true); }} className="underline underline-offset-2 opacity-80">
+              na sua Vercel ({vercelAccount.username})
+            </button>
+          )}
           <button type="button" onClick={() => setPublishNotice(null)} aria-label="Fechar aviso" className="ml-auto p-1 rounded hover:bg-black/5 dark:hover:bg-white/10">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+      )}
+
+      {vercelModal && (
+        <ConnectVercel
+          username={vercelAccount?.connected ? vercelAccount.username : null}
+          isBusy={vercelBusy}
+          error={vercelError}
+          onConnect={handleConnectVercel}
+          onDisconnect={handleDisconnectVercel}
+          onClose={() => {
+            setVercelModal(false);
+            setPublishState('idle');
+          }}
+        />
       )}
 
       {/* Mobile Pane Switcher (< md) */}

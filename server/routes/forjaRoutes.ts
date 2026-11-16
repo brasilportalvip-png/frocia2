@@ -30,7 +30,8 @@ import {
 } from '../forja/architectPrompt.js';
 import { ArchitectStreamParser } from '../forja/streamParser.js';
 import { compileVirtualReactProject } from '../forja/bundler.js';
-import { createForjaPublisher, ForjaPublishError, vercelProjectName } from '../forja/forjaPublisher.js';
+import { createForjaPublisher, ForjaPublishError, vercelProjectName, verifyVercelToken } from '../forja/forjaPublisher.js';
+import { decryptPersonalMemory, encryptPersonalMemory, MemoryEncryptionUnavailableError } from '../ai/memoryCryptoService.js';
 import {
   FORJA_LIMITS,
   forjaCreditCost,
@@ -395,7 +396,13 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
   if (!compiled.ok) return sendError(res, 422, 'compile_failed', `O site tem erro de compilação e não foi publicado: ${compiled.errors.slice(0, 2).join(' | ')}`);
 
   await ref.update({ lastPublishAtMs: Date.now() });
-  const publisher = createForjaPublisher({ token: process.env.VERCEL_TOKEN, teamId: process.env.VERCEL_TEAM_ID });
+  // Cada pessoa publica na conta Vercel DELA (custo e responsabilidade de cada um).
+  const account = await loadVercelAccount(store, uid);
+  if (!account) {
+    await ref.update({ lastPublishAtMs: 0 });
+    return sendError(res, 409, 'vercel_not_connected', 'Conecte a sua conta da Vercel para publicar.');
+  }
+  const publisher = createForjaPublisher({ token: account.token, teamId: account.teamId || undefined });
   try {
     const result = await publisher.publish({
       projectName: String(x.vercelProjectName || vercelProjectName(String(x.name || 'site'), doc.id)),
@@ -410,7 +417,58 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
     return res.json({ ok: true, url: result.url, publishedAt: now });
   } catch (e) {
     const err = e instanceof ForjaPublishError ? e : new ForjaPublishError('publish_failed', (e as Error)?.message || 'Falha ao publicar.');
+    // Token vencido/apagado: libera para conectar de novo e tentar na hora.
+    if (err.code === 'vercel_token_refused') await ref.update({ lastPublishAtMs: 0 });
     console.error('[forja] publicar', err.code, err.message);
     return sendError(res, err.status, err.code, err.message);
   }
+});
+
+// ---------------------------------------------------------------- conta Vercel de cada pessoa
+
+const VERCEL_ACCOUNTS = 'forja_vercel_accounts';
+// O token fica criptografado (AES-256-GCM com MEMORY_ENCRYPTION_KEY) e nunca volta para a tela.
+const CRYPTO_SCOPE = 'forja-vercel';
+
+async function loadVercelAccount(store: NonNullable<ReturnType<typeof db>>, uid: string) {
+  const doc = await store.collection(VERCEL_ACCOUNTS).doc(uid).get();
+  if (!doc.exists) return null;
+  const x = doc.data()!;
+  try {
+    return { token: decryptPersonalMemory(x.token as Record<string, unknown>, CRYPTO_SCOPE, uid), teamId: (x.teamId as string) || null, username: String(x.username || '') };
+  } catch {
+    // Chave de criptografia trocada: a pessoa conecta de novo.
+    return null;
+  }
+}
+
+forjaRouter.get('/vercel', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return res.json({ connected: false });
+  const doc = await store.collection(VERCEL_ACCOUNTS).doc(req.user!.uid).get();
+  if (!doc.exists) return res.json({ connected: false });
+  return res.json({ connected: true, username: String(doc.data()?.username || ''), connectedAt: doc.data()?.connectedAtMs || null });
+});
+
+forjaRouter.post('/vercel', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  const uid = req.user!.uid;
+  try {
+    const { username, teamId } = await verifyVercelToken(String(req.body?.token || ''));
+    const token = encryptPersonalMemory(String(req.body.token).trim(), CRYPTO_SCOPE, uid);
+    await store.collection(VERCEL_ACCOUNTS).doc(uid).set({ token, teamId, username, connectedAtMs: Date.now() });
+    return res.json({ connected: true, username });
+  } catch (e) {
+    if (e instanceof MemoryEncryptionUnavailableError) return sendError(res, 503, 'encryption_unavailable', 'A Froc.IA ainda não está pronta para guardar tokens com segurança (falta MEMORY_ENCRYPTION_KEY). Avise o suporte.');
+    if (e instanceof ForjaPublishError) return sendError(res, e.status, e.code, e.message);
+    return sendError(res, 500, 'vercel_connect_failed', 'Não consegui conectar a sua Vercel agora. Tente de novo.');
+  }
+});
+
+forjaRouter.delete('/vercel', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const store = db();
+  if (!store) return sendError(res, 503, 'database_not_configured', 'Banco de dados indisponível.');
+  await store.collection(VERCEL_ACCOUNTS).doc(req.user!.uid).delete();
+  return res.json({ connected: false });
 });

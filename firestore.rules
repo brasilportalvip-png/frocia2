@@ -217,6 +217,7 @@ match /conversation_memory_segments/{segmentId} {
     match /site_factory_maintenance/{document=**} { allow read, write: if false; }
     // Criador de sites (Froc.IA Studio): só o servidor lê e grava.
     match /forja_projects/{document=**} { allow read, write: if false; }
+    match /forja_vercel_accounts/{document=**} { allow read, write: if false; }
     match /site_factory_monitor_state/{document=**} { allow read, write: if false; }
     match /site_factory_builds/{document=**} { allow read, write: if false; }
     match /site_factory_media/{document=**} { allow read, write: if false; }
