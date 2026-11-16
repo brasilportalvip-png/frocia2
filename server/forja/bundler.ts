@@ -1,4 +1,5 @@
-import * as esbuild from 'esbuild';
+// esbuild só carrega quando alguém compila um site (não pesa na inicialização da API).
+const loadEsbuild = () => import('esbuild');
 import path from 'path';
 
 export interface BundleResult {
@@ -113,6 +114,7 @@ createRoot(document.getElementById('root')!).render(<App />);
   ]);
 
   try {
+    const esbuild = await loadEsbuild();
     const result = await esbuild.build({
       entryPoints: ['virtual:src/main.tsx'],
       bundle: true,
@@ -318,7 +320,7 @@ export function assembleCompiledHtml(params: {
         type: 'FORJA_PREVIEW_ERROR',
         payload: { message: String(msg), source: src || '', line: line || 0, timestamp: Date.now() }
       }, '*');
-    } catch (_) {}
+    } catch (_) { /* janela pai indisponível */ }
   }
   window.addEventListener('error', function(e) {
     if (e && e.message) report(e.message, e.filename, e.lineno);

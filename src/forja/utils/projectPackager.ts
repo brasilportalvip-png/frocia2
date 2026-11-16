@@ -269,7 +269,7 @@ export function assembleStandaloneHtml(
         type: 'FORJA_PREVIEW_ERROR',
         payload: { message: String(msg), source: src || '', line: line || 0, timestamp: Date.now() }
       }, '*');
-    } catch (_) {}
+    } catch (_) { /* janela pai indisponível */ }
   }
   window.addEventListener('error', function(e) {
     if (e && e.message) report(e.message, e.filename, e.lineno);
