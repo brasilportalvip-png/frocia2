@@ -71,6 +71,12 @@ function db() {
   return adminDb;
 }
 
+// ---------------------------------------------------------------- preço (mostrado antes de enviar)
+
+forjaRouter.get('/pricing', requireAuth, (_req: AuthenticatedRequest, res) => {
+  return res.json({ create: forjaCreditCost(true), edit: forjaCreditCost(false) });
+});
+
 // ---------------------------------------------------------------- compilação da prévia
 
 forjaRouter.post('/preview/bundle', requireAuth, async (req: AuthenticatedRequest, res) => {

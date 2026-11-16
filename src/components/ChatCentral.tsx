@@ -78,6 +78,8 @@ interface ChatCentralProps {
   ) => Promise<void>;
   onStopGeneration: () => void;
   isGenerating: boolean;
+  /** O que a Froc está fazendo agora (pesquisando, conferindo...). */
+  generationStatus?: string | null;
   selectedMode: ChatMode;
   setSelectedMode: (mode: ChatMode) => void;
   user: UserProfile;
@@ -210,6 +212,7 @@ export const ChatCentral: React.FC<
   onSendMessage,
   onStopGeneration,
   isGenerating,
+  generationStatus,
   selectedMode,
   setSelectedMode,
   user,
@@ -1917,7 +1920,7 @@ await onSendMessage(
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse [animation-delay:400ms]" />
                         </span>
                       </span>
-                      <p className="text-[10px] text-white/50">Processando com raciocínio profundo</p>
+                      <p className="text-[10px] text-white/50" aria-live="polite">{generationStatus || 'Processando com raciocínio profundo'}</p>
                     </div>
                   </div>
 
