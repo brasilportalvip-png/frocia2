@@ -212,3 +212,15 @@ describe('Forja: resposta cortada no meio de um arquivo', () => {
     expect(types).not.toContain('file_end:src/components/Footer.tsx');
   });
 });
+
+describe('Forja: o HTML final não pede scripts locais', () => {
+  it('remove ./src/main.tsx, importmap e CSS local e mantém CDNs', async () => {
+    const { stripLocalScripts } = await import('../server/forja/bundler');
+    const out = stripLocalScripts('<head><script type="importmap">{}</script><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="./src/index.css"></head><body><script type="module" src="./src/main.tsx"></script><script src="app.js"></script></body>');
+    expect(out).not.toContain('importmap');
+    expect(out).not.toContain('main.tsx');
+    expect(out).not.toContain('app.js');
+    expect(out).not.toContain('./src/index.css');
+    expect(out).toContain('cdn.tailwindcss.com');
+  });
+});

@@ -413,11 +413,7 @@ export function assembleCompiledHtml(params: {
       : `${twTag}\n${html}`;
   }
 
-  // Remove Vite module script tag pointing to /src/main.tsx so we replace with compiled bundle
-  html = html.replace(
-    /<script\b[^>]*type=["']module["'][^>]*src=["']\/?src\/main\.tsx["'][^>]*><\/script>/gi,
-    ''
-  );
+  html = stripLocalScripts(html);
 
   // Inject custom CSS
   if (params.customCss) {
@@ -460,4 +456,20 @@ export function assembleCompiledHtml(params: {
   }
 
   return html;
+}
+
+/**
+ * O site final é UM arquivo: todo <script src> local (./src/main.tsx, /src/main.tsx, app.js...)
+ * e todo importmap são removidos, porque o código já vai embutido. Antes, um caminho como
+ * "./src/main.tsx" escapava e o navegador baixava a página da Froc no lugar do script
+ * ("Uncaught SyntaxError: Unexpected token '<'"). Scripts de CDN (Tailwind) continuam.
+ */
+export function stripLocalScripts(html: string): string {
+  return html
+    .replace(/<script\b[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<script\b[^>]*\bsrc=["']([^"']*)["'][^>]*>\s*<\/script>/gi, (tag, src: string) =>
+      /^(?:https?:)?\/\//i.test(src.trim()) ? tag : ''
+    )
+    .replace(/<link\b[^>]*rel=["']modulepreload["'][^>]*>/gi, '')
+    .replace(/<link\b[^>]*rel=["']stylesheet["'][^>]*href=["'](?!https?:|\/\/)[^"']*["'][^>]*>/gi, '');
 }
