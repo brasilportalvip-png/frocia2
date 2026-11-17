@@ -57,7 +57,7 @@ export const ConnectVercel: React.FC<ConnectVercelProps> = ({ username, isBusy, 
               e clique em <strong>Create Token</strong>.
             </li>
             <li>
-              Nome: <code className="font-mono text-xs px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">froc-ia</code>. Em <strong>Scope</strong>, escolha a sua conta. Em <strong>Expiration</strong>, escolha <strong>No Expiration</strong>.
+              Nome: <code className="font-mono text-xs px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800">froc-ia</code>. Em <strong>Scope</strong>, escolha o seu time (o nome que termina em <strong>Projects</strong>, onde ficam os seus sites). Em <strong>Expiration</strong>, escolha <strong>No Expiration</strong>.
             </li>
             <li>Copie o token e cole aqui:</li>
           </ol>
