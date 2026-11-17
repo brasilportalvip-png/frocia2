@@ -224,3 +224,15 @@ describe('Forja: o HTML final não pede scripts locais', () => {
     expect(out).toContain('cdn.tailwindcss.com');
   });
 });
+
+describe('Forja: código com "$&" não é corrompido ao montar o HTML', () => {
+  it('mantém o JavaScript e o CSS exatamente como vieram', async () => {
+    const { assembleCompiledHtml } = await import('../server/forja/bundler');
+    // O React minificado tem trechos como `s=$&&s[$]`: com replace de texto, "$&" virava "</body>".
+    const js = 'var s=$&&s[$];var t="$\'";var u="$`";var v="$$";';
+    const html = assembleCompiledHtml({ indexHtml: '<!doctype html><html><head></head><body><div id="root"></div></body></html>', compiledJs: js, customCss: 'a{b:$&}', withErrorBridge: false });
+    expect(html).toContain(js);
+    expect(html).toContain('a{b:$&}');
+    expect(html).not.toContain('</body>&');
+  });
+});
