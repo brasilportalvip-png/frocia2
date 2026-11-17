@@ -21,6 +21,7 @@ import {
   Loader2,
   Rocket,
   ExternalLink,
+  ClipboardList,
 } from 'lucide-react';
 import type {
   DeviceViewport,
@@ -56,6 +57,9 @@ interface TopBarProps {
   onPublish?: () => void;
   publishState?: 'idle' | 'publishing' | 'error';
   productionUrl?: string | null;
+  /** Janela "Dados do site" (WhatsApp, endereço, redes...). */
+  onOpenSiteData?: () => void;
+  siteDataMissing?: number;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -83,6 +87,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onPublish,
   publishState = 'idle',
   productionUrl,
+  onOpenSiteData,
+  siteDataMissing = 0,
 }) => {
   const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -425,6 +431,23 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
+
+        {onOpenSiteData && (
+          <button
+            type="button"
+            onClick={onOpenSiteData}
+            title={siteDataMissing > 0 ? `${siteDataMissing} dado(s) do site ainda em branco` : 'Dados do site (WhatsApp, endereço, redes)'}
+            className="relative flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            <span className="hidden lg:inline">Dados do site</span>
+            {siteDataMissing > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-[10px] font-bold leading-[18px] text-white text-center tabular-nums">
+                {siteDataMissing}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* Primary Export Action */}
         <div className="relative" ref={exportMenuRef}>

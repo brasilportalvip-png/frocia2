@@ -41,6 +41,7 @@ export const SPECIALISTS: { id: SpecialistId; name: string; focus: string }[] = 
     focus: [
       'Textos reais e específicos do negócio pedido, em português do Brasil, sem "lorem ipsum", "Seu texto aqui" ou placeholders.',
       'Nada inventado que possa enganar: números, prêmios, depoimentos com nome de pessoas reais, CNPJ, endereços falsos apresentados como reais.',
+      'Contatos, endereço, redes e links do negócio vêm de siteVar()/whatsappLink() com variáveis declaradas em forja/site.json (nunca escritos direto no código), e o trecho some quando a variável está vazia.',
       'index.html com <title>, meta description, lang="pt-BR", canonical e og:url com __SITE_URL__, Open Graph com og:image /forja-img/hero.jpg, Twitter card e JSON-LD (tipo schema.org do negócio + FAQPage); um único <h1> por página e títulos em ordem.',
       'Cada página chama useSeo com título e descrição próprios; existem /privacidade e /termos (componentes PrivacyPolicy e TermsOfUse do kit) com links no rodapé, página 404 e aviso de cookies (CookieConsent).',
       'Chamadas para ação claras (WhatsApp, contato, comprar) e coerentes com o pedido.',

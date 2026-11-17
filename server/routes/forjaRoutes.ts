@@ -18,7 +18,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import type { AuthenticatedRequest } from '../types.js';
 import { adminDb, getMediaStorageBucket, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
 import { firebaseImageStore, forgeSiteImages, pendingImages, type ForgeImagesResult } from '../forja/imageForge.js';
-import { IMAGE_LOCK_PATH, parseSiteManifest } from '../forja/siteKit.js';
+import { IMAGE_LOCK_PATH, parseSiteManifest, SYSTEM_FILES } from '../forja/siteKit.js';
 import { env } from '../config/env.js';
 import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
@@ -217,7 +217,8 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
             sendEvent('file_delta', { path: ev.path, chunk: ev.chunk });
           } else if (ev.type === 'file_end') {
             const clean = safeGeneratedPath(ev.path);
-            if (clean) {
+            // Arquivos do sistema (kit, fotos, dados do negócio) nunca são sobrescritos pela IA.
+            if (clean && !SYSTEM_FILES.includes(clean)) {
               mergedFiles[clean] = buffers[ev.path] || '';
               written += 1;
             }

@@ -474,3 +474,53 @@ describe('Forja: site profissional (kit, fotos, SEO)', () => {
     expect(pinged).toMatchObject({ host: 'site-1.vercel.app', urlList: ['https://site-1.vercel.app/', 'https://site-1.vercel.app/sobre'] });
   });
 });
+
+describe('Forja: dados do site (janela de variáveis)', () => {
+  const manifest = JSON.stringify({
+    brand: 'Bella',
+    schemaType: 'Restaurant',
+    variables: [
+      { key: 'whatsapp', label: 'WhatsApp', type: 'tel', hint: '(11) 9...', value: '' },
+      { key: 'cidade', label: 'Cidade', type: 'text', value: 'São Paulo' },
+      { key: 'Inválida!', label: 'x' },
+      { key: 'instagram', label: 'Instagram', type: 'senha' },
+    ],
+  });
+
+  it('lê as variáveis declaradas e junta com o que a pessoa preencheu', async () => {
+    const { parseSiteManifest, resolveSiteData } = await import('../server/forja/siteKit');
+    const m = parseSiteManifest({ 'forja/site.json': manifest })!;
+    expect(m.variables.map((v) => [v.key, v.type])).toEqual([['whatsapp', 'tel'], ['cidade', 'text'], ['instagram', 'text']]);
+    expect(m.schemaType).toBe('Restaurant');
+    const data = resolveSiteData({ 'forja/site.json': manifest, 'forja/variables.json': JSON.stringify({ whatsapp: '11 98765-4321', cidade: '' }) });
+    expect(data.vars).toEqual({ whatsapp: '11 98765-4321', cidade: '', instagram: '' });
+  });
+
+  it('dados vão embutidos no kit sem permitir fechar o <script> do site', async () => {
+    const { withSiteKit, KIT_PATH } = await import('../server/forja/siteKit');
+    const out = withSiteKit({ 'forja/site.json': manifest, 'forja/variables.json': JSON.stringify({ whatsapp: '</script><img src=x onerror=alert(1)>' }) });
+    expect(out[KIT_PATH]).not.toContain('</script>');
+    expect(out[KIT_PATH]).toContain('\\u003c/script>');
+    expect(out[KIT_PATH]).not.toContain('__FORJA_VARS__');
+    expect(out[KIT_PATH]).not.toContain('__FORJA_SITE__');
+  });
+
+  it('a IA não sobrescreve arquivos do sistema', async () => {
+    const { SYSTEM_FILES } = await import('../server/forja/siteKit');
+    expect(SYSTEM_FILES).toEqual(['src/forja/kit.tsx', 'forja/images.lock.json', 'forja/variables.json']);
+  });
+
+  it('janela: campos, valores, faltando e validação', async () => {
+    const v = await import('../src/forja/utils/siteVariables');
+    const files = { 'forja/site.json': manifest, 'forja/variables.json': JSON.stringify({ whatsapp: '' }) };
+    expect(v.readSiteVariableFields(files).map((f) => f.key)).toEqual(['whatsapp', 'cidade', 'instagram']);
+    expect(v.effectiveSiteValues(files)).toEqual({ whatsapp: '', cidade: 'São Paulo', instagram: '' });
+    expect(v.missingSiteVariables(files)).toBe(2);
+    const tel = { key: 'whatsapp', label: 'W', type: 'tel' as const, hint: '', value: '' };
+    expect(v.validateSiteValue(tel, '1198')).toBe('Informe o número com DDD.');
+    expect(v.validateSiteValue(tel, '(11) 98765-4321')).toBeNull();
+    expect(v.validateSiteValue({ ...tel, type: 'url' }, 'instagram.com/x')).toBe('Comece com https://');
+    expect(v.validateSiteValue({ ...tel, type: 'email' }, 'a@b.com')).toBeNull();
+    expect(v.readSiteVariableFields({ 'forja/site.json': '{"variables": [' })).toEqual([]);
+  });
+});
