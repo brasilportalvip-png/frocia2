@@ -153,6 +153,39 @@ describe('Forja: publicar com link próprio', () => {
     await expect(createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({ code: 'vercel_token_refused' });
   });
 
+  it('token conectado num lugar sem permissão de criar: tenta os outros times e publica onde pode', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const created: string[] = [];
+    const fetchImpl = happy((url, method) => {
+      if (url.includes('/v5/user/tokens/current')) return reply(200, { token: {} });
+      if (url.includes('/v2/user')) return reply(200, { user: { username: 'ze', defaultTeamId: 'team_ok' } });
+      if (url.includes('/v2/teams')) return reply(200, { teams: [{ id: 'team_view', slug: 'empresa' }, { id: 'team_ok', slug: 'ze-projects' }] });
+      if (method === 'POST' && url.includes('/v10/projects')) {
+        created.push(url);
+        return url.includes('teamId=team_ok') ? reply(200, { id: 'prj_ok' }) : reply(403, { error: { message: "You don't have permission to create the project." } });
+      }
+      return null;
+    });
+    const r = await createForjaPublisher({ token: 't', teamId: 'team_view', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html });
+    expect(r).toMatchObject({ vercelProjectId: 'prj_ok', teamId: 'team_ok' });
+    expect(created.length).toBe(2);
+  });
+
+  it('nenhum lugar deixa criar: explica como gerar o token certo', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const fetchImpl = happy((url, method) => {
+      if (url.includes('/v5/user/tokens/current')) return reply(200, { token: {} });
+      if (url.includes('/v2/user')) return reply(200, { user: { username: 'ze' } });
+      if (url.includes('/v2/teams')) return reply(200, { teams: [{ id: 'team_view', slug: 'empresa' }] });
+      if (method === 'POST' && url.includes('/v10/projects')) return reply(403, { error: { message: "You don't have permission to create the project." } });
+      return null;
+    });
+    await expect(createForjaPublisher({ token: 't', teamId: 'team_view', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({
+      code: 'vercel_cannot_create_project',
+      message: expect.stringContaining('empresa, ze (conta pessoal)'),
+    });
+  });
+
   it('conexão antiga sem time: ao receber 403 descobre o time do token e publica lá', async () => {
     const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
     const fetchImpl = happy((url) => {

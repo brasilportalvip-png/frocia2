@@ -394,9 +394,9 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
     } catch (e) {
       const code = (e as { code?: string })?.code;
       setPublishState('error');
-      if (code === 'vercel_not_connected' || code === 'vercel_token_refused') {
+      if (code === 'vercel_not_connected' || code === 'vercel_token_refused' || code === 'vercel_cannot_create_project') {
         setVercelAccount({ connected: false });
-        setVercelError(code === 'vercel_token_refused' ? (e as Error).message : null);
+        setVercelError(code === 'vercel_not_connected' ? null : (e as Error).message);
         setVercelModal(true);
         return;
       }

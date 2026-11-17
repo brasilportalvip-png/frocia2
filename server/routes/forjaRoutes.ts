@@ -476,7 +476,7 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
   } catch (e) {
     const err = e instanceof ForjaPublishError ? e : new ForjaPublishError('publish_failed', (e as Error)?.message || 'Falha ao publicar.');
     // Token vencido/apagado: libera para conectar de novo e tentar na hora.
-    if (err.code === 'vercel_token_refused') await ref.update({ lastPublishAtMs: 0 });
+    if (err.code === 'vercel_token_refused' || err.code === 'vercel_cannot_create_project') await ref.update({ lastPublishAtMs: 0 });
     console.error('[forja] publicar', err.code, err.message);
     return sendError(res, err.status, err.code, err.message);
   }
