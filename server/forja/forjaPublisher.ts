@@ -142,19 +142,46 @@ export async function verifyVercelToken(token: string, fetchImpl?: FetchLike): P
   const doFetch: FetchLike = fetchImpl ?? ((url, init) => fetch(url, init) as never);
   const get = (path: string) =>
     doFetch(`https://api.vercel.com${path}`, { headers: { Authorization: `Bearer ${clean}` }, signal: AbortSignal.timeout(20_000) });
+  const json = async (res: { ok: boolean; json(): Promise<any> }) => (res.ok ? res.json().catch(() => ({})) : {});
+  const refused = (status: number) => status === 401 || status === 403;
+
+  // Contas novas da Vercel são "times" (ex.: fulano-1234s-projects). Token de time devolve
+  // 404 "User not found" em /v2/user — isso NÃO quer dizer token inválido.
   const me = await get('/v2/user');
-  if (me.status === 401 || me.status === 403) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou esse token. Gere um novo e cole de novo.', 400);
-  if (!me.ok) throw new ForjaPublishError('vercel_unavailable', `A Vercel não respondeu agora (HTTP ${me.status}). Tente de novo.`, 502);
-  const user = ((await me.json()) as { user?: { username?: string; name?: string; email?: string; defaultTeamId?: string } }).user || {};
-  // Token de conta pessoal funciona sem time; se não funcionar, usa o time padrão da conta.
+  if (me.status === 401) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou esse token. Gere um novo e cole de novo.', 400);
+  const user = ((await json(me)) as { user?: { username?: string; name?: string; email?: string; defaultTeamId?: string } }).user || {};
+
+  // De quais times o token pode cuidar (metadados do próprio token e lista de times).
+  const candidates: string[] = [];
+  const meta = (await json(await get('/v5/user/tokens/current'))) as { token?: { scopes?: { type?: string; teamId?: string }[]; teamId?: string } };
+  for (const scope of meta.token?.scopes || []) if (scope.type === 'team' && scope.teamId) candidates.push(scope.teamId);
+  if (meta.token?.teamId) candidates.push(meta.token.teamId);
+  if (user.defaultTeamId) candidates.push(user.defaultTeamId);
+  const teamsRes = await get('/v2/teams?limit=20');
+  const teams = (((await json(teamsRes)) as { teams?: { id?: string; slug?: string; name?: string }[] }).teams || []).filter((t) => t.id);
+  for (const t of teams) candidates.push(String(t.id));
+
+  // Onde ele consegue criar projetos: primeiro na conta pessoal, depois em cada time.
   let teamId: string | null = null;
-  const probe = await get('/v9/projects?limit=1');
-  if (!probe.ok && user.defaultTeamId) {
-    const withTeam = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(user.defaultTeamId)}`);
-    if (withTeam.ok) teamId = user.defaultTeamId;
-    else throw new ForjaPublishError('vercel_token_scope', 'Esse token não tem permissão para criar projetos. Ao criar o token, escolha a sua conta em "Scope".', 400);
-  } else if (!probe.ok) {
-    throw new ForjaPublishError('vercel_token_scope', 'Esse token não tem permissão para criar projetos. Ao criar o token, escolha a sua conta em "Scope".', 400);
+  let lastStatus = 0;
+  const personal = await get('/v9/projects?limit=1');
+  lastStatus = personal.status;
+  if (!personal.ok) {
+    for (const id of [...new Set(candidates)]) {
+      const probe = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(id)}`);
+      lastStatus = probe.status;
+      if (probe.ok) {
+        teamId = id;
+        break;
+      }
+    }
+    if (!teamId) {
+      if (refused(lastStatus) || refused(me.status)) {
+        throw new ForjaPublishError('vercel_token_scope', 'Esse token não tem permissão para criar projetos. Ao criar o token, em "Scope" escolha a sua conta (ou o seu time "...-projects") e tente de novo.', 400);
+      }
+      throw new ForjaPublishError('vercel_unavailable', `A Vercel não confirmou o token agora (HTTP ${lastStatus}). Confira se copiou o token inteiro e tente de novo.`, 502);
+    }
   }
-  return { username: String(user.username || user.name || user.email || 'sua conta'), teamId };
+  const team = teams.find((t) => t.id === teamId);
+  return { username: String(user.username || user.name || team?.slug || team?.name || teams[0]?.slug || user.email || 'sua conta'), teamId };
 }

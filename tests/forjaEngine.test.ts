@@ -131,6 +131,17 @@ describe('Forja: conectar a Vercel de cada pessoa', () => {
     expect(r).toEqual({ username: 'joao', teamId: 'team_x' });
   });
 
+  it('aceita token de time (conta nova "...-projects"), em que /v2/user responde 404', async () => {
+    const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
+    const r = await verifyVercelToken('abcdefghijklmnopqrstuvwx', async (url: string) => {
+      if (url.includes('/v2/user')) return reply(404, { error: { code: 'not_found', message: 'User not found' } });
+      if (url.includes('/v5/user/tokens/current')) return reply(200, { token: { scopes: [{ type: 'team', teamId: 'team_y' }] } });
+      if (url.includes('/v2/teams')) return reply(200, { teams: [{ id: 'team_y', slug: 'fulano-1234s-projects' }] });
+      return url.includes('teamId=team_y') ? reply(200, { projects: [] }) : reply(403, {});
+    });
+    expect(r).toEqual({ username: 'fulano-1234s-projects', teamId: 'team_y' });
+  });
+
   it('recusa token inválido ou recusado com mensagem clara', async () => {
     const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
     await expect(verifyVercelToken('curto')).rejects.toThrow(/token da Vercel/);
