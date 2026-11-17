@@ -4,7 +4,8 @@
  */
 
 export const FORJA_LIMITS = {
-  promptChars: 12_000,
+  // Pedidos longos (briefing completo colado no chat, com cardápio, preços e contatos) cabem inteiros.
+  promptChars: 60_000,
   files: 120,
   fileChars: 400_000,
   totalChars: 850_000,

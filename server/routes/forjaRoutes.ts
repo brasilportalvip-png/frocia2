@@ -104,8 +104,12 @@ forjaRouter.post('/preview/bundle', requireAuth, async (req: AuthenticatedReques
 
 forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest, res) => {
   const uid = req.user!.uid;
-  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, FORJA_LIMITS.promptChars) : '';
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
   if (!prompt) return sendError(res, 400, 'empty_prompt', 'Descreva o site ou a alteração que deseja construir.');
+  // Nunca corta o pedido em silêncio (dados do fim do texto se perderiam): avisa e não cobra nada.
+  if (prompt.length > FORJA_LIMITS.promptChars) {
+    return sendError(res, 413, 'prompt_too_long', `Seu pedido tem ${prompt.length.toLocaleString('pt-BR')} caracteres; o máximo é ${FORJA_LIMITS.promptChars.toLocaleString('pt-BR')}. Envie em duas partes: primeiro crie o site e depois peça "adicione estes itens: ...".`);
+  }
 
   const current = sanitizeForjaFiles(req.body?.currentFiles);
   if (!current.ok) return sendError(res, 413, 'project_too_large', current.error);
