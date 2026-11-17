@@ -252,9 +252,9 @@ export function assembleStandaloneHtml(
     const cleaned = css.replace(/@import\s+["']tailwindcss["'];?/gi, '');
     const styleBlock = `<style data-forja-bundle="styles.css">\n${cleaned}\n</style>`;
     if (cssLinkRegex.test(html)) {
-      html = html.replace(cssLinkRegex, styleBlock);
+      html = html.replace(cssLinkRegex, () => styleBlock);
     } else if (html.includes('</head>')) {
-      html = html.replace('</head>', `${styleBlock}\n</head>`);
+      html = html.replace('</head>', () => `${styleBlock}\n</head>`);
     } else {
       html = `${styleBlock}\n${html}`;
     }
@@ -290,9 +290,9 @@ export function assembleStandaloneHtml(
 
   if (scriptBlock) {
     if (jsScriptRegex.test(html)) {
-      html = html.replace(jsScriptRegex, scriptBlock);
+      html = html.replace(jsScriptRegex, () => scriptBlock);
     } else if (html.includes('</body>')) {
-      html = html.replace('</body>', `${scriptBlock}\n</body>`);
+      html = html.replace('</body>', () => `${scriptBlock}\n</body>`);
     } else {
       html = `${html}\n${scriptBlock}`;
     }

@@ -167,13 +167,13 @@ createRoot(document.getElementById('root')!).render(<App />);
     let html = rawHtml;
     if (css) {
       html = html.includes('</head>')
-        ? html.replace('</head>', `<style>\n${css}\n</style>\n</head>`)
+        ? html.replace('</head>', () => `<style>\n${css}\n</style>\n</head>`)
         : `<style>\n${css}\n</style>\n${html}`;
     }
     if (js) {
       const safeJs = js.replace(/<\/script>/gi, '<\\/script>');
       html = html.includes('</body>')
-        ? html.replace('</body>', `<script>\n${safeJs}\n</script>\n</body>`)
+        ? html.replace('</body>', () => `<script>\n${safeJs}\n</script>\n</body>`)
         : `${html}\n<script>\n${safeJs}\n</script>`;
     }
     return { ok: true, js, css, html, errors: [] };
@@ -409,7 +409,7 @@ export function assembleCompiledHtml(params: {
   if (!/cdn\.tailwindcss\.com/i.test(html)) {
     const twTag = `<script src="https://cdn.tailwindcss.com"></script>`;
     html = html.includes('</head>')
-      ? html.replace('</head>', `  ${twTag}\n  </head>`)
+      ? html.replace('</head>', () => `  ${twTag}\n  </head>`)
       : `${twTag}\n${html}`;
   }
 
@@ -419,7 +419,7 @@ export function assembleCompiledHtml(params: {
   if (params.customCss) {
     const styleBlock = `<style data-forja-styles>\n${params.customCss}\n</style>`;
     html = html.includes('</head>')
-      ? html.replace('</head>', `  ${styleBlock}\n  </head>`)
+      ? html.replace('</head>', () => `  ${styleBlock}\n  </head>`)
       : `${styleBlock}\n${html}`;
   }
 
@@ -450,7 +450,7 @@ export function assembleCompiledHtml(params: {
   const bundleBlock = `${errorBridge}\n<script data-forja-bundle>\n${safeJs}\n</script>`;
 
   if (html.includes('</body>')) {
-    html = html.replace('</body>', `${bundleBlock}\n</body>`);
+    html = html.replace('</body>', () => `${bundleBlock}\n</body>`);
   } else {
     html = `${html}\n${bundleBlock}`;
   }
