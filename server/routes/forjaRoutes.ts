@@ -252,7 +252,9 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
     // Compila e corrige sozinho (até 2 vezes), como no Forja Studio.
     let compiled = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
     let attempts = 0;
-    while (!compiled.ok && attempts < 2 && !closed) {
+    // Falha de download dos pacotes (React) não é erro do código: não adianta pedir correção à IA.
+    const infraOnly = (errors: string[]) => errors.length > 0 && errors.every((e) => /Não consegui baixar o React/.test(e));
+    while (!compiled.ok && attempts < 2 && !closed && !infraOnly(compiled.errors)) {
       attempts += 1;
       sendEvent('phase', { phase: 'verifying', label: `Corrigindo compilação automaticamente (tentativa ${attempts}/2)` });
       await streamTurn(buildCompileRepairContents({ originalPrompt: prompt, currentFiles: mergedFiles, compileErrors: compiled.errors }), 'LOW', true);
