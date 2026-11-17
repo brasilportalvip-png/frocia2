@@ -501,6 +501,21 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       }));
     };
 
+    // Arquivo que não terminou de chegar: volta a versão anterior (ou sai, se era novo).
+    // Antes ficava salvo pela metade e a prévia quebrava ("Unterminated string literal").
+    const restorePartialFile = (filePath: string) => {
+      if (!filePath) return;
+      if (Object.prototype.hasOwnProperty.call(filesSnapshot, filePath)) liveFiles[filePath] = filesSnapshot[filePath];
+      else delete liveFiles[filePath];
+      streamedFileMeta.delete(filePath);
+    };
+    let finished = false;
+    const restoreUnfinishedFiles = () => {
+      for (const meta of Array.from(streamedFileMeta.values())) {
+        if (meta.status === 'writing') restorePartialFile(meta.path);
+      }
+    };
+
     const onEvent = ({ event: eventName, data }: { event: string; data: unknown }) => {
       const payload = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
       if (eventName === 'phase') {
@@ -530,6 +545,9 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       } else if (eventName === 'summary_delta') {
         const delta = String(payload.text || '');
         updateAssistantMessage((m) => ({ ...m, summary: (m.summary || '') + delta }));
+      } else if (eventName === 'file_truncated') {
+        restorePartialFile(String(payload.path || ''));
+        updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()) }), true);
       } else if (eventName === 'review') {
         const reviews = Array.isArray(payload.reviews) ? (payload.reviews as ChatMessage['review']) : [];
         updateAssistantMessage((m) => ({ ...m, review: reviews }));
@@ -549,11 +567,14 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         setCompileErrors([]);
         setReloadKey((k) => k + 1);
       } else if (eventName === 'done') {
+        finished = true;
         updateAssistantMessage((m) => ({ ...m, phase: 'done', phaseLabel: 'Compilado e pronto para produção' }), true);
         setMobilePane('canvas');
       } else if (eventName === 'error') {
+        finished = true;
+        restoreUnfinishedFiles();
         const errMessage = String(payload.message || 'Erro durante a geração.');
-        updateAssistantMessage((m) => ({ ...m, phase: 'error', error: errMessage }));
+        updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()), phase: 'error', error: errMessage }), true);
       }
     };
 
@@ -563,12 +584,26 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         { prompt: text, history: historyPayload, currentFiles: filesSnapshot, buildMode, designPreset, idempotencyKey: assistantMsgId },
         { signal: controller.signal, onEvent },
       );
+      // A conexão acabou sem "pronto" nem "erro" (ex.: limite de tempo do servidor).
+      if (!finished) {
+        restoreUnfinishedFiles();
+        updateAssistantMessage(
+          (m) => ({
+            ...m,
+            files: Array.from(streamedFileMeta.values()),
+            phase: 'error',
+            error: 'A construção foi interrompida antes de terminar (tempo limite). Os arquivos que já tinham ficado prontos foram mantidos. Tente de novo ou use o modo Rápido.',
+          }),
+          true,
+        );
+      }
     } catch (err: unknown) {
+      restoreUnfinishedFiles();
       if ((err as Error)?.name === 'AbortError') {
-        updateAssistantMessage((m) => ({ ...m, phase: 'done', summary: (m.summary || '') + '\n\nGeração interrompida pelo usuário.' }), true);
+        updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()), phase: 'done', summary: (m.summary || '') + '\n\nGeração interrompida pelo usuário.' }), true);
       } else {
         const message = err instanceof Error ? err.message : 'Falha de comunicação com o servidor.';
-        updateAssistantMessage((m) => ({ ...m, phase: 'error', error: message }));
+        updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()), phase: 'error', error: message }), true);
       }
     } finally {
       abortControllerRef.current = null;

@@ -198,3 +198,17 @@ describe('Forja: pacotes do site sem node_modules (como na Vercel)', () => {
     }
   }, 30_000);
 });
+
+describe('Forja: resposta cortada no meio de um arquivo', () => {
+  it('o arquivo incompleto nunca vira arquivo pronto', () => {
+    const parser = new ArchitectStreamParser();
+    const events = [
+      ...parser.push('<file path="src/App.tsx">\nexport default function App(){ return null }\n</file>\n<file path="src/components/Footer.tsx">\nimport React from \'rea'),
+      ...parser.flush(),
+    ];
+    const types = events.map((e) => `${e.type}:${'path' in e ? e.path : ''}`);
+    expect(types).toContain('file_end:src/App.tsx');
+    expect(types).toContain('file_truncated:src/components/Footer.tsx');
+    expect(types).not.toContain('file_end:src/components/Footer.tsx');
+  });
+});
