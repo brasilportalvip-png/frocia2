@@ -16,7 +16,9 @@ import { GoogleGenAI } from '@google/genai';
 import { FieldValue } from 'firebase-admin/firestore';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import type { AuthenticatedRequest } from '../types.js';
-import { adminDb, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { adminDb, getMediaStorageBucket, isFirebaseAdminConfigured } from '../lib/firebaseAdmin.js';
+import { firebaseImageStore, forgeSiteImages, pendingImages, type ForgeImagesResult } from '../forja/imageForge.js';
+import { IMAGE_LOCK_PATH, parseSiteManifest } from '../forja/siteKit.js';
 import { env } from '../config/env.js';
 import { configuredGeminiFailoverChain } from '../ai/geminiFailoverService.js';
 import { CreditWalletService, InsufficientCreditsError } from '../services/creditWalletService.js';
@@ -255,6 +257,46 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
       return;
     }
 
+    // Fotos ultrarrealistas: começam já (em paralelo com compilação e especialistas).
+    let imageJob: Promise<ForgeImagesResult | null> | null = null;
+    let imageWarning = '';
+    const startImages = () => {
+      const pending = pendingImages(mergedFiles);
+      if (imageJob || pending.length === 0) return;
+      const snapshot = { ...mergedFiles };
+      sendEvent('images', { status: 'started', total: pending.length });
+      imageJob = (async () => {
+        try {
+          const bucket = await getMediaStorageBucket();
+          return await forgeSiteImages({
+            ai,
+            files: snapshot,
+            store: firebaseImageStore(bucket),
+            ownerId: uid,
+            onProgress: (done, total) => sendEvent('images', { status: 'progress', done, total }),
+          });
+        } catch (e) {
+          const message = String((e as Error)?.message || e);
+          console.error('[forja] fotos', message);
+          imageWarning = /FIREBASE_STORAGE_BUCKET/.test(message)
+            ? 'As fotos não foram geradas: falta configurar FIREBASE_STORAGE_BUCKET na Vercel.'
+            : 'As fotos não puderam ser geradas agora; peça "gere as fotos de novo" para tentar outra vez.';
+          return null;
+        }
+      })();
+    };
+    /** Junta as fotos prontas ao projeto (a trava com os links fica salva junto com os arquivos). */
+    const collectImages = async () => {
+      if (!imageJob) return;
+      const result = await imageJob;
+      imageJob = null;
+      if (!result) return;
+      if (result.files[IMAGE_LOCK_PATH]) mergedFiles[IMAGE_LOCK_PATH] = result.files[IMAGE_LOCK_PATH];
+      if (result.failed.length > 0) imageWarning = `${result.failed.length} foto(s) não saíram (${result.failed.map((f) => f.id).join(', ')}); o site mostra um fundo elegante no lugar. Peça "gere as fotos de novo" para tentar outra vez.`;
+      sendEvent('images', { status: 'done', generated: result.generated.length, failed: result.failed.length });
+    };
+    startImages();
+
     // Compila e corrige sozinho (até 2 vezes), como no Forja Studio.
     let compiled = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
     let attempts = 0;
@@ -306,6 +348,23 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
         return;
       }
     }
+
+    // Fotos: espera as que estavam sendo feitas e, se os especialistas pediram fotos novas, faz mais uma rodada.
+    if (imageJob) sendEvent('phase', { phase: 'verifying', label: 'Finalizando as fotos ultrarrealistas do site' });
+    await collectImages();
+    if (!closed && pendingImages(mergedFiles).length > 0 && Date.now() - startedAt < 215_000) {
+      startImages();
+      await collectImages();
+    }
+    if (closed) {
+      await settle(false, 'construção interrompida');
+      return;
+    }
+    if (mergedFiles[IMAGE_LOCK_PATH]) {
+      const withPhotos = await compileVirtualReactProject(mergedFiles, { withErrorBridge: true });
+      if (withPhotos.ok) compiled = withPhotos;
+    }
+    if (imageWarning) sendEvent('summary_delta', { text: `\n\n${imageWarning}` });
 
     // A tela recebe a versão final exata (inclusive quando uma melhoria foi desfeita).
     sendEvent('files_final', { files: mergedFiles });
@@ -464,6 +523,7 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
       projectName: String(x.vercelProjectName || vercelProjectName(String(x.name || 'site'), doc.id)),
       html: compiled.html,
       vercelProjectId: x.vercelProjectId || null,
+      routes: (parseSiteManifest(files)?.routes || []).map((r) => r.path),
     });
     const now = Date.now();
     // Conexão antiga sem time: guarda o time descoberto para as próximas publicações irem direto.
@@ -472,7 +532,7 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
     const project = store.collection('projects').doc(doc.id);
     const p = await project.get();
     if (p.exists && p.data()?.userId === uid) await project.update({ productionUrl: result.url, updatedAt: FieldValue.serverTimestamp() });
-    return res.json({ ok: true, url: result.url, publishedAt: now });
+    return res.json({ ok: true, url: result.url, publishedAt: now, searchEnginesNotified: result.searchEnginesNotified });
   } catch (e) {
     const err = e instanceof ForjaPublishError ? e : new ForjaPublishError('publish_failed', (e as Error)?.message || 'Falha ao publicar.');
     // Token vencido/apagado: libera para conectar de novo e tentar na hora.

@@ -6,6 +6,8 @@
  * O site é um único index.html (código e estilos dentro), então a publicação leva segundos.
  */
 
+import { createHash } from 'node:crypto';
+
 type FetchLike = (url: string, init: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
@@ -49,6 +51,8 @@ export interface PublishInput {
   html: string;
   /** Projeto Vercel já criado numa publicação anterior. */
   vercelProjectId?: string | null;
+  /** Páginas do site (forja/site.json) para o sitemap.xml. */
+  routes?: string[];
 }
 
 export interface PublishResult {
@@ -57,6 +61,40 @@ export interface PublishResult {
   deploymentId: string;
   /** Time da Vercel onde o site ficou (descoberto na hora se a conexão antiga não tinha). */
   teamId: string | null;
+  /** Bing e outros buscadores foram avisados (IndexNow). */
+  searchEnginesNotified: boolean;
+}
+
+/** Chave IndexNow fixa por projeto (o arquivo com ela vai junto na publicação). */
+export function indexNowKey(projectName: string): string {
+  return createHash('sha256').update('forja-indexnow:' + projectName).digest('hex').slice(0, 32);
+}
+
+/** Arquivos publicados: site + SEO (robots, sitemap, rotas com endereço próprio, chave IndexNow). */
+export function buildDeployFiles(params: { html: string; host: string; projectName: string; routes?: string[] }) {
+  const origin = `https://${params.host}`;
+  const html = params.html.split('__SITE_URL__').join(origin);
+  const routes = [...new Set(['/', ...(params.routes || [])].filter((r) => /^\/[a-z0-9\-/]*$/.test(r)))];
+  const today = new Date().toISOString().slice(0, 10);
+  const sitemap =
+    '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+    routes
+      .map((r) => {
+        const legal = /^\/(privacidade|termos)/.test(r);
+        return `  <url><loc>${origin}${r === '/' ? '/' : r}</loc><lastmod>${today}</lastmod><changefreq>${legal ? 'yearly' : 'weekly'}</changefreq><priority>${r === '/' ? '1.0' : legal ? '0.3' : '0.8'}</priority></url>`;
+      })
+      .join('\n') +
+    '\n</urlset>\n';
+  const key = indexNowKey(params.projectName);
+  const files = [
+    { file: 'index.html', data: html },
+    { file: 'robots.txt', data: `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n` },
+    { file: 'sitemap.xml', data: sitemap },
+    { file: `${key}.txt`, data: key },
+    // Páginas com endereço próprio (/sobre, /privacidade): a Vercel entrega o site e ele abre a página certa.
+    { file: 'vercel.json', data: JSON.stringify({ cleanUrls: true, rewrites: [{ source: '/((?!.*\\.).*)', destination: '/index.html' }] }, null, 2) },
+  ];
+  return { files: files.map((f) => ({ ...f, encoding: 'utf-8' })), urls: routes.map((r) => origin + (r === '/' ? '/' : r)), key, origin };
 }
 
 export function createForjaPublisher(options: {
@@ -103,23 +141,30 @@ export function createForjaPublisher(options: {
   // confere) não garante criar: token com escopo de outro time, conta pessoal antiga ou papel
   // "Viewer" recebem 403 "You don't have permission to create the project". Por isso, quando a
   // criação é recusada, tentamos os outros lugares a que o token tem acesso, um por um.
+  // Resumo (sem segredos) do que a Vercel respondeu, para o suporte saber por que nenhum time apareceu.
+  const scopeDiagnostics: string[] = [];
   const listScopes = async (): Promise<{ id: string; label: string }[]> => {
-    const read = async (path: string) => {
+    const read = async (path: string, label: string) => {
       const res = await doFetch(`https://api.vercel.com${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
+      scopeDiagnostics.push(`${label} ${res.status}`);
       return res.ok ? res.json().catch(() => ({})) : {};
     };
-    const meta = (await read('/v5/user/tokens/current')) as { token?: { scopes?: { type?: string; teamId?: string }[]; teamId?: string } };
-    const me = (await read('/v2/user')) as { user?: { defaultTeamId?: string; username?: string } };
-    const teams = ((await read('/v2/teams?limit=50')) as { teams?: { id?: string; slug?: string; name?: string }[] }).teams || [];
+    const meta = (await read('/v5/user/tokens/current', 'token')) as { token?: { scopes?: { type?: string; teamId?: string }[]; teamId?: string } };
+    const me = (await read('/v2/user', 'usuário')) as { user?: { defaultTeamId?: string; username?: string } };
+    const teams = ((await read('/v2/teams?limit=50', 'times')) as { teams?: { id?: string; slug?: string; name?: string }[] }).teams || [];
     const ids: string[] = [];
     for (const scope of meta.token?.scopes || []) if (scope.type === 'team' && scope.teamId) ids.push(scope.teamId);
     if (meta.token?.teamId) ids.push(meta.token.teamId);
     if (me.user?.defaultTeamId) ids.push(me.user.defaultTeamId);
     for (const t of teams) if (t.id) ids.push(String(t.id));
+    // Último recurso: os projetos que o token enxerga dizem de qual time eles são (accountId "team_...").
+    const visible = ((await read('/v9/projects?limit=20', 'projetos')) as { projects?: { accountId?: string }[] }).projects || [];
+    for (const project of visible) if (project.accountId && project.accountId.startsWith('team_')) ids.push(project.accountId);
     const out = [...new Set(ids)].map((id) => {
       const t = teams.find((x) => x.id === id);
       return { id, label: String(t?.slug || t?.name || id) };
     });
+    scopeDiagnostics.push(`${teams.length} time(s) visível(is)`);
     out.push({ id: '', label: me.user?.username ? `${me.user.username} (conta pessoal)` : 'conta pessoal' });
     return out;
   };
@@ -159,34 +204,61 @@ export function createForjaPublisher(options: {
         }
       }
 
-      // 2. Publica o index.html em produção.
-      const deployment = await api('/v13/deployments', 'POST', {
-        name: input.projectName,
-        project: projectId,
-        target: 'production',
-        files: [{ file: 'index.html', data: input.html, encoding: 'utf-8' }],
-        projectSettings: { framework: null, buildCommand: null, installCommand: null, outputDirectory: null, devCommand: null },
-        meta: { frocForja: '1' },
-      });
-      const deploymentId = String(deployment.id || deployment.uid || '');
-      if (!deploymentId) throw new ForjaPublishError('vercel_deploy_invalid', 'A Vercel não devolveu a publicação.');
+      // 2. Endereço público do projeto (o mesmo a cada nova publicação).
+      const readHost = async () => {
+        const domains = await api(`/v9/projects/${encodeURIComponent(projectId)}/domains`, 'GET', undefined, true);
+        const list: { name?: string }[] = Array.isArray(domains?.domains) ? domains.domains : [];
+        return list.find((d) => d.name && !d.name.endsWith('.vercel.app'))?.name || list.find((d) => d.name?.endsWith('.vercel.app'))?.name || `${input.projectName}.vercel.app`;
+      };
 
-      // 3. Espera ficar no ar (site estático: poucos segundos).
-      let state = String(deployment.readyState || deployment.status || '');
-      const started = Date.now();
-      while (state !== 'READY') {
-        if (['ERROR', 'CANCELED'].includes(state)) throw new ForjaPublishError('vercel_deploy_failed', 'A Vercel não conseguiu publicar o site. Tente de novo.');
-        if (Date.now() - started > maxWait) throw new ForjaPublishError('vercel_deploy_slow', 'A Vercel está demorando para publicar. Tente de novo em 1 minuto.', 504);
-        await sleep(2000);
-        const d = await api(`/v13/deployments/${encodeURIComponent(deploymentId)}`);
-        state = String(d.readyState || d.status || '');
+      // 3. Publica site + robots + sitemap e espera ficar no ar (site estático: poucos segundos).
+      const deploy = async (host: string) => {
+        const pack = buildDeployFiles({ html: input.html, host, projectName: input.projectName, routes: input.routes });
+        const deployment = await api('/v13/deployments', 'POST', {
+          name: input.projectName,
+          project: projectId,
+          target: 'production',
+          files: pack.files,
+          projectSettings: { framework: null, buildCommand: null, installCommand: null, outputDirectory: null, devCommand: null },
+          meta: { frocForja: '1' },
+        });
+        const deploymentId = String(deployment.id || deployment.uid || '');
+        if (!deploymentId) throw new ForjaPublishError('vercel_deploy_invalid', 'A Vercel não devolveu a publicação.');
+        let state = String(deployment.readyState || deployment.status || '');
+        const started = Date.now();
+        while (state !== 'READY') {
+          if (['ERROR', 'CANCELED'].includes(state)) throw new ForjaPublishError('vercel_deploy_failed', 'A Vercel não conseguiu publicar o site. Tente de novo.');
+          if (Date.now() - started > maxWait) throw new ForjaPublishError('vercel_deploy_slow', 'A Vercel está demorando para publicar. Tente de novo em 1 minuto.', 504);
+          await sleep(2000);
+          const d = await api(`/v13/deployments/${encodeURIComponent(deploymentId)}`);
+          state = String(d.readyState || d.status || '');
+        }
+        return { deploymentId, pack };
+      };
+
+      let host = await readHost();
+      let result = await deploy(host);
+      // Projeto novo: a Vercel só confirma o endereço depois da 1ª publicação. Se mudou, publica de novo com o certo (SEO).
+      const confirmed = await readHost();
+      if (confirmed !== host) {
+        host = confirmed;
+        result = await deploy(host);
       }
 
-      // 4. Endereço público fixo do projeto (o mesmo a cada nova publicação).
-      const domains = await api(`/v9/projects/${encodeURIComponent(projectId)}/domains`, 'GET', undefined, true);
-      const list: { name?: string }[] = Array.isArray(domains?.domains) ? domains.domains : [];
-      const host = list.find((d) => d.name && !d.name.endsWith('.vercel.app'))?.name || list.find((d) => d.name?.endsWith('.vercel.app'))?.name || `${input.projectName}.vercel.app`;
-      return { url: `https://${host}`, vercelProjectId: projectId, deploymentId, teamId: team || null };
+      // 4. Avisa Bing e outros buscadores (IndexNow). O Google descobre pelo sitemap.xml do robots.txt.
+      let searchEnginesNotified = false;
+      try {
+        const ping = await doFetch('https://api.indexnow.org/indexnow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ host, key: result.pack.key, keyLocation: `${result.pack.origin}/${result.pack.key}.txt`, urlList: result.pack.urls }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        searchEnginesNotified = ping.ok || ping.status === 202;
+      } catch (pingError) {
+        console.warn('[forja] IndexNow indisponível agora; o site foi publicado mesmo assim.', pingError instanceof Error ? pingError.message : pingError);
+      }
+      return { url: `https://${host}`, vercelProjectId: projectId, deploymentId: result.deploymentId, teamId: team || null, searchEnginesNotified };
   };
 
   return {
@@ -214,7 +286,7 @@ export function createForjaPublisher(options: {
         team = firstTeam;
         throw new ForjaPublishError(
           'vercel_cannot_create_project',
-          `A Vercel não deixa esse token criar projetos (tentei: ${[...new Set(tried)].join(', ')}). Crie um token novo em vercel.com/account/tokens: em "Scope" escolha o seu time (o que termina em "-projects"), sem restrição de projeto, e conecte de novo aqui.`,
+          `A Vercel não deixa esse token criar projetos (tentei: ${[...new Set(tried)].join(', ')}). Crie um token novo em vercel.com/account/tokens: em "Scope" escolha o seu time (o que termina em "-projects"), sem restrição de projeto, e conecte de novo aqui. [diagnóstico: ${scopeDiagnostics.join(', ')}]`,
           403,
         );
       }

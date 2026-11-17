@@ -31,7 +31,8 @@ export const SPECIALISTS: { id: SpecialistId; name: string; focus: string }[] = 
       'Layout no celular (390px), tablet e computador: nada cortado, sobreposto ou com rolagem lateral.',
       'Contraste de texto suficiente, hierarquia visual clara, espaçamentos consistentes.',
       'Menu de navegação funcionando no celular, estados de foco e hover, botões com tamanho de toque (44px).',
-      'Ícones e ilustrações coerentes; nenhuma imagem quebrada ou externa frágil.',
+      'Fotos: o site usa <Photo id> do kit com fotos declaradas em forja/site.json (4 a 8, incluindo "hero"), prompts em inglês ricos (cena, lente, luz) e sem texto na foto; nada de ilustração SVG genérica no lugar de foto, nem URLs externas.',
+      'Acabamento de agência: logotipo próprio (src/components/Logo.tsx) no menu e no rodapé, favicon, luz (brilhos/Spotlight/vidro), animações de entrada (Reveal) e hover; hero com impacto.',
     ].join('\n'),
   },
   {
@@ -40,7 +41,8 @@ export const SPECIALISTS: { id: SpecialistId; name: string; focus: string }[] = 
     focus: [
       'Textos reais e específicos do negócio pedido, em português do Brasil, sem "lorem ipsum", "Seu texto aqui" ou placeholders.',
       'Nada inventado que possa enganar: números, prêmios, depoimentos com nome de pessoas reais, CNPJ, endereços falsos apresentados como reais.',
-      'index.html com <title>, meta description, lang="pt-BR", Open Graph; um único <h1> e títulos em ordem.',
+      'index.html com <title>, meta description, lang="pt-BR", canonical e og:url com __SITE_URL__, Open Graph com og:image /forja-img/hero.jpg, Twitter card e JSON-LD (tipo schema.org do negócio + FAQPage); um único <h1> por página e títulos em ordem.',
+      'Cada página chama useSeo com título e descrição próprios; existem /privacidade e /termos (componentes PrivacyPolicy e TermsOfUse do kit) com links no rodapé, página 404 e aviso de cookies (CookieConsent).',
       'Chamadas para ação claras (WhatsApp, contato, comprar) e coerentes com o pedido.',
     ].join('\n'),
   },
