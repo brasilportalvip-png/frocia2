@@ -466,6 +466,8 @@ forjaRouter.post('/projects/:id/publish', requireAuth, async (req: Authenticated
       vercelProjectId: x.vercelProjectId || null,
     });
     const now = Date.now();
+    // Conexão antiga sem time: guarda o time descoberto para as próximas publicações irem direto.
+    if (result.teamId && result.teamId !== account.teamId) await store.collection(VERCEL_ACCOUNTS).doc(uid).update({ teamId: result.teamId });
     await ref.update({ productionUrl: result.url, vercelProjectId: result.vercelProjectId, vercelProjectName: x.vercelProjectName || vercelProjectName(String(x.name || 'site'), doc.id), publishedAtMs: now });
     const project = store.collection('projects').doc(doc.id);
     const p = await project.get();

@@ -48,6 +48,8 @@ export interface PublishResult {
   url: string;
   vercelProjectId: string;
   deploymentId: string;
+  /** Time da Vercel onde o site ficou (descoberto na hora se a conexão antiga não tinha). */
+  teamId: string | null;
 }
 
 export function createForjaPublisher(options: {
@@ -58,7 +60,7 @@ export function createForjaPublisher(options: {
   maxWaitMs?: number;
 }) {
   const token = (options.token || '').trim();
-  const team = (options.teamId || '').trim();
+  let team = (options.teamId || '').trim();
   const doFetch: FetchLike = options.fetchImpl ?? ((url, init) => fetch(url, init) as never);
   const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const maxWait = options.maxWaitMs ?? 90_000;
@@ -74,15 +76,47 @@ export function createForjaPublisher(options: {
     if (allow404 && res.status === 404) return null;
     if (!res.ok) {
       const detail = (await res.text().catch(() => '')).replace(/Bearer\s+\S+/g, 'Bearer [oculto]').slice(0, 200);
-      if (res.status === 401 || res.status === 403) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou o token da sua conta (ele pode ter vencido ou sido apagado). Conecte de novo.', 409);
+      if (res.status === 401) throw new ForjaPublishError('vercel_token_refused', 'A Vercel recusou o token da sua conta (ele pode ter vencido ou sido apagado). Conecte de novo.', 409);
+      if (res.status === 403) {
+        let reason = '';
+        try {
+          const parsed = JSON.parse(detail);
+          reason = String(parsed?.error?.message || parsed?.message || '');
+        } catch {
+          reason = detail;
+        }
+        throw new ForjaPublishError('vercel_forbidden', `A Vercel não permitiu esta etapa da publicação${reason ? `: ${reason}` : '.'}`.trim(), 403);
+      }
       throw new ForjaPublishError(`vercel_http_${res.status}`, `A Vercel recusou a publicação (HTTP ${res.status}). ${detail}`.trim());
     }
     return res.json();
   };
 
-  return {
-    configured: Boolean(token),
-    async publish(input: PublishInput): Promise<PublishResult> {
+  // Conexões antigas guardaram só a conta pessoal. Contas novas da Vercel são "times" e a
+  // conta pessoal pode não aceitar projetos (403). Descobre o time do token e tenta lá.
+  const discoverTeam = async (): Promise<string> => {
+    const get = (path: string) =>
+      doFetch(`https://api.vercel.com${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) });
+    const read = async (path: string) => {
+      const res = await get(path);
+      return res.ok ? res.json().catch(() => ({})) : {};
+    };
+    const candidates: string[] = [];
+    const meta = (await read('/v5/user/tokens/current')) as { token?: { scopes?: { type?: string; teamId?: string }[]; teamId?: string } };
+    for (const scope of meta.token?.scopes || []) if (scope.type === 'team' && scope.teamId) candidates.push(scope.teamId);
+    if (meta.token?.teamId) candidates.push(meta.token.teamId);
+    const me = (await read('/v2/user')) as { user?: { defaultTeamId?: string } };
+    if (me.user?.defaultTeamId) candidates.push(me.user.defaultTeamId);
+    const teams = (await read('/v2/teams?limit=20')) as { teams?: { id?: string }[] };
+    for (const t of teams.teams || []) if (t.id) candidates.push(String(t.id));
+    for (const id of [...new Set(candidates)]) {
+      const probe = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(id)}`);
+      if (probe.ok) return id;
+    }
+    return '';
+  };
+
+  const publishOnce = async (input: PublishInput): Promise<PublishResult> => {
       if (!token) throw new ForjaPublishError('vercel_not_connected', 'Conecte a sua conta da Vercel para publicar.', 409);
       if (!input.html || !/<html[\s>]/i.test(input.html)) throw new ForjaPublishError('nothing_to_publish', 'O site ainda não tem uma versão compilada para publicar.', 400);
 
@@ -97,7 +131,13 @@ export function createForjaPublisher(options: {
         const project = existing ?? (await api('/v10/projects', 'POST', { name: input.projectName, framework: null }));
         projectId = String(project.id || '');
         if (!projectId) throw new ForjaPublishError('vercel_project_invalid', 'A Vercel não devolveu o projeto criado.');
-        await api(`/v9/projects/${encodeURIComponent(projectId)}`, 'PATCH', { ssoProtection: null, passwordProtection: null });
+        // Deixa o site aberto ao público. Planos que não permitem mexer nisso não devem travar a publicação.
+        try {
+          await api(`/v9/projects/${encodeURIComponent(projectId)}`, 'PATCH', { ssoProtection: null });
+        } catch (patchError) {
+          if (patchError instanceof ForjaPublishError && patchError.code === 'vercel_token_refused') throw patchError;
+          console.warn('[forja] Não foi possível desligar a proteção do projeto na Vercel; seguindo com a publicação.', patchError instanceof Error ? patchError.message : patchError);
+        }
       }
 
       // 2. Publica o index.html em produção.
@@ -127,7 +167,22 @@ export function createForjaPublisher(options: {
       const domains = await api(`/v9/projects/${encodeURIComponent(projectId)}/domains`, 'GET', undefined, true);
       const list: { name?: string }[] = Array.isArray(domains?.domains) ? domains.domains : [];
       const host = list.find((d) => d.name && !d.name.endsWith('.vercel.app'))?.name || list.find((d) => d.name?.endsWith('.vercel.app'))?.name || `${input.projectName}.vercel.app`;
-      return { url: `https://${host}`, vercelProjectId: projectId, deploymentId };
+      return { url: `https://${host}`, vercelProjectId: projectId, deploymentId, teamId: team || null };
+  };
+
+  return {
+    configured: Boolean(token),
+    async publish(input: PublishInput): Promise<PublishResult> {
+      try {
+        return await publishOnce(input);
+      } catch (error) {
+        if (!(error instanceof ForjaPublishError) || error.code !== 'vercel_forbidden' || team) throw error;
+        const found = await discoverTeam();
+        if (!found) throw error;
+        team = found;
+        // O projeto antigo (se havia) era da conta pessoal; no time ele é criado de novo.
+        return publishOnce({ ...input, vercelProjectId: null });
+      }
     },
   };
 }
@@ -161,13 +216,30 @@ export async function verifyVercelToken(token: string, fetchImpl?: FetchLike): P
   const teams = (((await json(teamsRes)) as { teams?: { id?: string; slug?: string; name?: string }[] }).teams || []).filter((t) => t.id);
   for (const t of teams) candidates.push(String(t.id));
 
-  // Onde ele consegue criar projetos: primeiro na conta pessoal, depois em cada time.
+  // Onde ele consegue criar projetos. Contas novas da Vercel guardam os projetos no time padrão
+  // (a conta "pessoal" pode listar, mas recusar criar com 403), então o time do token vem primeiro.
+  const preferred = [...new Set(candidates)].filter((id) =>
+    (meta.token?.scopes || []).some((scope) => scope.teamId === id) || meta.token?.teamId === id || user.defaultTeamId === id,
+  );
+  const others = [...new Set(candidates)].filter((id) => !preferred.includes(id));
   let teamId: string | null = null;
   let lastStatus = 0;
-  const personal = await get('/v9/projects?limit=1');
-  lastStatus = personal.status;
-  if (!personal.ok) {
-    for (const id of [...new Set(candidates)]) {
+  let personalOk = false;
+  for (const id of preferred) {
+    const probe = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(id)}`);
+    lastStatus = probe.status;
+    if (probe.ok) {
+      teamId = id;
+      break;
+    }
+  }
+  if (!teamId) {
+    const personal = await get('/v9/projects?limit=1');
+    lastStatus = personal.status;
+    personalOk = personal.ok;
+  }
+  if (!teamId && !personalOk) {
+    for (const id of others) {
       const probe = await get(`/v9/projects?limit=1&teamId=${encodeURIComponent(id)}`);
       lastStatus = probe.status;
       if (probe.ok) {

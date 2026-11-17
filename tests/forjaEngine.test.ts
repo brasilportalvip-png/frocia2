@@ -101,7 +101,7 @@ describe('Forja: publicar com link próprio', () => {
     };
     const pub = createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} });
     const r = await pub.publish({ projectName: 'pizzaria-bella-abc123', html: '<!doctype html><html><body>oi</body></html>' });
-    expect(r).toEqual({ url: 'https://pizzaria-bella-abc123.vercel.app', vercelProjectId: 'prj_1', deploymentId: 'dpl_1' });
+    expect(r).toEqual({ url: 'https://pizzaria-bella-abc123.vercel.app', vercelProjectId: 'prj_1', deploymentId: 'dpl_1', teamId: 'team_9' });
     expect(calls.every((c) => c.url.includes('teamId=team_9'))).toBe(true);
     const patch = calls.find((c) => c.method === 'PATCH');
     expect(patch?.body).toMatchObject({ ssoProtection: null });
@@ -109,6 +109,63 @@ describe('Forja: publicar com link próprio', () => {
     expect(deploy?.body).toMatchObject({ target: 'production', project: 'prj_1', files: [{ file: 'index.html' }] });
   });
 
+  const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+  const html = '<!doctype html><html><body>oi</body></html>';
+  const happy = (overrides: (url: string, method: string) => any) => async (url: string, init: { method?: string }) => {
+    const method = init.method || 'GET';
+    const o = overrides(url, method);
+    if (o) return o;
+    if (method === 'GET' && /\/v9\/projects\/site-1(\?|$)/.test(url)) return reply(404, {});
+    if (method === 'POST' && url.includes('/v10/projects')) return reply(200, { id: 'prj_1' });
+    if (method === 'PATCH') return reply(200, {});
+    if (method === 'POST' && url.includes('/v13/deployments')) return reply(200, { id: 'dpl_1', readyState: 'READY' });
+    if (url.includes('/domains')) return reply(200, { domains: [{ name: 'site-1.vercel.app' }] });
+    return reply(500, {});
+  };
+
+  it('publica mesmo quando a Vercel não deixa mudar a proteção do projeto (plano grátis)', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const patches: any[] = [];
+    const fetchImpl = happy((url, method) => {
+      if (method === 'PATCH') {
+        patches.push(url);
+        return reply(403, { error: { code: 'forbidden', message: 'Password protection requires Pro' } });
+      }
+      return null;
+    });
+    const r = await createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html });
+    expect(r.url).toBe('https://site-1.vercel.app');
+    expect(patches.length).toBe(1);
+  });
+
+  it('403 da Vercel não é tratado como token vencido: mostra o motivo real', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const fetchImpl = happy((url, method) => (method === 'POST' && url.includes('/v13/deployments') ? reply(403, { error: { message: 'Limite de publicações do dia atingido' } }) : null));
+    await expect(createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({
+      code: 'vercel_forbidden',
+      message: expect.stringContaining('Limite de publicações do dia atingido'),
+    });
+  });
+
+  it('só 401 vira "token recusado"', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const fetchImpl = async () => reply(401, {});
+    await expect(createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({ code: 'vercel_token_refused' });
+  });
+
+  it('conexão antiga sem time: ao receber 403 descobre o time do token e publica lá', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const fetchImpl = happy((url) => {
+      if (url.includes('/v5/user/tokens/current')) return reply(200, { token: { scopes: [{ type: 'team', teamId: 'team_z' }] } });
+      if (url.includes('/v2/user')) return reply(404, {});
+      if (url.includes('/v2/teams')) return reply(200, { teams: [] });
+      if (url.includes('/v9/projects?limit=1&teamId=team_z')) return reply(200, { projects: [] });
+      if (!url.includes('teamId=team_z')) return reply(403, { error: { message: 'Not authorized' } });
+      return null;
+    });
+    const r = await createForjaPublisher({ token: 't', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html, vercelProjectId: 'prj_old' });
+    expect(r).toMatchObject({ url: 'https://site-1.vercel.app', vercelProjectId: 'prj_1', teamId: 'team_z' });
+  });
 });
 
 describe('Forja: conectar a Vercel de cada pessoa', () => {
@@ -140,6 +197,17 @@ describe('Forja: conectar a Vercel de cada pessoa', () => {
       return url.includes('teamId=team_y') ? reply(200, { projects: [] }) : reply(403, {});
     });
     expect(r).toEqual({ username: 'fulano-1234s-projects', teamId: 'team_y' });
+  });
+
+  it('prefere o time do token mesmo se a conta pessoal também listar projetos', async () => {
+    const { verifyVercelToken } = await import('../server/forja/forjaPublisher');
+    const r = await verifyVercelToken('abcdefghijklmnopqrstuvwx', async (url: string) => {
+      if (url.includes('/v2/user')) return reply(200, { user: { username: 'ana', defaultTeamId: 'team_a' } });
+      if (url.includes('/v5/user/tokens/current')) return reply(200, { token: {} });
+      if (url.includes('/v2/teams')) return reply(200, { teams: [{ id: 'team_a' }] });
+      return reply(200, { projects: [] });
+    });
+    expect(r).toEqual({ username: 'ana', teamId: 'team_a' });
   });
 
   it('recusa token inválido ou recusado com mensagem clara', async () => {
