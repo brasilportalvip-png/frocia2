@@ -6,6 +6,8 @@ import { PreviewCanvas } from './components/PreviewCanvas';
 import { CodeExplorer } from './components/CodeExplorer';
 import { AuditPanel } from './components/AuditPanel';
 import { ConnectVercel } from './components/ConnectVercel';
+import { SiteDataModal } from './components/SiteDataModal';
+import { effectiveSiteValues, missingSiteVariables, readSiteVariableFields, SITE_MANIFEST_FILE, SITE_VARIABLES_FILE } from './utils/siteVariables';
 import {
   assembleStandaloneHtml,
   exportProjectAsZip,
@@ -122,6 +124,12 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const skipNextAutoBundleRef = useRef(false);
+  // Janela "Dados do site": abre sozinha durante a construção; o que for salvo no meio da
+  // construção entra na versão final (e a prévia é refeita com os dados no fim).
+  const [siteDataOpen, setSiteDataOpen] = useState(false);
+  const pendingSiteVarsRef = useRef<string | null>(null);
+  const liveFilesRef = useRef<Record<string, string> | null>(null);
+  const siteDataPromptedRef = useRef(false);
   const startedInitialRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<Record<string, string>>({});
@@ -305,6 +313,21 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
   }, []);
 
   const hasFiles = Boolean(activeProject?.files['src/App.tsx'] || activeProject?.files['index.html']);
+  const siteDataFields = useMemo(() => readSiteVariableFields(activeProject?.files || {}), [activeProject?.files]);
+  const siteDataValues = useMemo(() => effectiveSiteValues(activeProject?.files || {}), [activeProject?.files]);
+  const siteDataMissing = useMemo(() => missingSiteVariables(activeProject?.files || {}), [activeProject?.files]);
+
+  const handleSaveSiteData = (values: Record<string, string>) => {
+    const json = JSON.stringify(values, null, 2);
+    setSiteDataOpen(false);
+    if (isGenerating && liveFilesRef.current) {
+      pendingSiteVarsRef.current = json;
+      liveFilesRef.current[SITE_VARIABLES_FILE] = json;
+      updateActiveProject((proj) => ({ ...proj, updatedAt: Date.now(), files: { ...proj.files, [SITE_VARIABLES_FILE]: json } }));
+      return;
+    }
+    handleUpdateFile(SITE_VARIABLES_FILE, json);
+  };
 
   const auditChecks = useMemo(() => {
     if (!activeProject) return [];
@@ -490,6 +513,9 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
     abortControllerRef.current = controller;
 
     const liveFiles: Record<string, string> = { ...filesSnapshot };
+    liveFilesRef.current = liveFiles;
+    pendingSiteVarsRef.current = null;
+    siteDataPromptedRef.current = false;
     const streamedFileMeta = new Map<string, GeneratedFileMeta>();
 
     const updateAssistantMessage = (patcher: (msg: ChatMessage) => ChatMessage, syncFiles = false) => {
@@ -542,6 +568,11 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         const fullText = liveFiles[filePath] || '';
         streamedFileMeta.set(filePath, { path: filePath, status: 'complete', lines: countLines(fullText), bytes: fullText.length });
         updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()) }), true);
+        // O site precisa de dados do negócio (WhatsApp, endereço...): abre a janela sem parar a construção.
+        if (filePath === SITE_MANIFEST_FILE && !siteDataPromptedRef.current && missingSiteVariables(liveFiles) > 0) {
+          siteDataPromptedRef.current = true;
+          setSiteDataOpen(true);
+        }
       } else if (eventName === 'summary_delta') {
         const delta = String(payload.text || '');
         updateAssistantMessage((m) => ({ ...m, summary: (m.summary || '') + delta }));
@@ -563,6 +594,7 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         const finalFiles = (payload.files && typeof payload.files === 'object' ? payload.files : {}) as Record<string, string>;
         for (const key of Object.keys(liveFiles)) delete liveFiles[key];
         Object.assign(liveFiles, finalFiles);
+        if (pendingSiteVarsRef.current) liveFiles[SITE_VARIABLES_FILE] = pendingSiteVarsRef.current;
         updateAssistantMessage((m) => m, true);
       } else if (eventName === 'bundle_ready') {
         const readyCompiled = String(payload.compiledHtml || '');
@@ -576,6 +608,8 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       } else if (eventName === 'done') {
         finished = true;
         updateAssistantMessage((m) => ({ ...m, phase: 'done', phaseLabel: 'Compilado e pronto para produção' }), true);
+        // Dados salvos no meio da construção: refaz a prévia já com eles.
+        if (pendingSiteVarsRef.current) void compileProjectFiles({ ...liveFiles });
         setMobilePane('canvas');
       } else if (eventName === 'error') {
         finished = true;
@@ -614,6 +648,8 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       }
     } finally {
       abortControllerRef.current = null;
+      liveFilesRef.current = null;
+      pendingSiteVarsRef.current = null;
       setIsGenerating(false);
     }
   };
@@ -728,6 +764,8 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
         onClose={handleClose}
         saveState={saveState}
         onPublish={() => void handlePublish()}
+        onOpenSiteData={siteDataFields.length > 0 ? () => setSiteDataOpen(true) : undefined}
+        siteDataMissing={siteDataMissing}
         publishState={publishState}
         productionUrl={activeProject?.productionUrl}
       />
@@ -783,6 +821,16 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+      )}
+
+      {siteDataOpen && siteDataFields.length > 0 && (
+        <SiteDataModal
+          fields={siteDataFields}
+          values={siteDataValues}
+          building={isGenerating}
+          onSave={handleSaveSiteData}
+          onClose={() => setSiteDataOpen(false)}
+        />
       )}
 
       {vercelModal && (
