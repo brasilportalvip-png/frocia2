@@ -1,3 +1,4 @@
+import { withSiteKit } from './siteKit.js';
 // esbuild só carrega quando alguém compila um site (não pesa na inicialização da API).
 const loadEsbuild = () => import('esbuild');
 
@@ -144,10 +145,12 @@ export async function compileVirtualReactProject(
   rawFiles: Record<string, string>,
   options: { withErrorBridge?: boolean; /** Testes: ignora o node_modules (como na Vercel). */ skipLocalPackages?: boolean } = {}
 ): Promise<BundleResult> {
-  const files: Record<string, string> = {};
+  const normalized: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawFiles)) {
-    files[normalizeVirtualPath(k)] = v;
+    normalized[normalizeVirtualPath(k)] = v;
   }
+  // Kit do sistema (rotas, SEO, fotos, animações) + URLs reais das fotos geradas.
+  const files: Record<string, string> = withSiteKit(normalized);
 
   // Ensure src/main.tsx exists if src/App.tsx exists
   if (!files['src/main.tsx'] && files['src/App.tsx']) {

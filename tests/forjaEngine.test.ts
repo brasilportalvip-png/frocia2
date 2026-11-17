@@ -101,12 +101,13 @@ describe('Forja: publicar com link próprio', () => {
     };
     const pub = createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} });
     const r = await pub.publish({ projectName: 'pizzaria-bella-abc123', html: '<!doctype html><html><body>oi</body></html>' });
-    expect(r).toEqual({ url: 'https://pizzaria-bella-abc123.vercel.app', vercelProjectId: 'prj_1', deploymentId: 'dpl_1', teamId: 'team_9' });
-    expect(calls.every((c) => c.url.includes('teamId=team_9'))).toBe(true);
+    expect(r).toEqual({ url: 'https://pizzaria-bella-abc123.vercel.app', vercelProjectId: 'prj_1', deploymentId: 'dpl_1', teamId: 'team_9', searchEnginesNotified: false });
+    expect(calls.filter((c) => c.url.includes('api.vercel.com')).every((c) => c.url.includes('teamId=team_9'))).toBe(true);
     const patch = calls.find((c) => c.method === 'PATCH');
     expect(patch?.body).toMatchObject({ ssoProtection: null });
     const deploy = calls.find((c) => c.url.includes('/v13/deployments') && c.method === 'POST');
-    expect(deploy?.body).toMatchObject({ target: 'production', project: 'prj_1', files: [{ file: 'index.html' }] });
+    expect(deploy?.body).toMatchObject({ target: 'production', project: 'prj_1' });
+    expect(deploy?.body.files.map((f: { file: string }) => f.file)).toEqual(expect.arrayContaining(['index.html', 'robots.txt', 'sitemap.xml', 'vercel.json']));
   });
 
   const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -171,6 +172,18 @@ describe('Forja: publicar com link próprio', () => {
     expect(created.length).toBe(2);
   });
 
+  it('sem acesso à lista de times, acha o time pelos projetos que o token enxerga', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const fetchImpl = happy((url, method) => {
+      if (url.includes('/v5/user/tokens/current') || url.includes('/v2/user') || url.includes('/v2/teams')) return reply(403, {});
+      if (method === 'GET' && url.includes('/v9/projects?limit=20')) return reply(200, { projects: [{ accountId: 'team_achado' }] });
+      if (method === 'POST' && url.includes('/v10/projects')) return url.includes('teamId=team_achado') ? reply(200, { id: 'prj_t' }) : reply(403, { error: { message: "You don't have permission to create the project." } });
+      return null;
+    });
+    const r = await createForjaPublisher({ token: 't', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html });
+    expect(r).toMatchObject({ vercelProjectId: 'prj_t', teamId: 'team_achado' });
+  });
+
   it('nenhum lugar deixa criar: explica como gerar o token certo', async () => {
     const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
     const fetchImpl = happy((url, method) => {
@@ -183,6 +196,9 @@ describe('Forja: publicar com link próprio', () => {
     await expect(createForjaPublisher({ token: 't', teamId: 'team_view', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({
       code: 'vercel_cannot_create_project',
       message: expect.stringContaining('empresa, ze (conta pessoal)'),
+    });
+    await expect(createForjaPublisher({ token: 't', teamId: 'team_view', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html })).rejects.toMatchObject({
+      message: expect.stringContaining('diagnóstico: token 200, usuário 200, times 200'),
     });
   });
 
@@ -346,5 +362,115 @@ describe('Forja: código com "$&" não é corrompido ao montar o HTML', () => {
     expect(html).toContain(js);
     expect(html).toContain('a{b:$&}');
     expect(html).not.toContain('</body>&');
+  });
+});
+
+
+describe('Forja: site profissional (kit, fotos, SEO)', () => {
+  const manifest = JSON.stringify({
+    brand: 'Bella Napoli',
+    description: 'Pizza napolitana de fermentação lenta.',
+    routes: [{ path: '/', title: 'Início' }, { path: '/cardapio/', title: 'Cardápio' }, { path: '/privacidade', title: 'Privacidade' }, { path: 'javascript:x', title: 'ruim' }],
+    images: [
+      { id: 'hero', aspect: '21:9', alt: 'Pizza saindo do forno', prompt: 'Wood-fired Neapolitan pizza leaving the oven, 35mm, warm light' },
+      { id: 'forno', aspect: '9:9', alt: 'Forno', prompt: 'Brick oven with flames' },
+      { id: 'Bad Id', aspect: '1:1', alt: 'x', prompt: 'x' },
+    ],
+  });
+
+  it('lê forja/site.json e descarta o que é inválido', async () => {
+    const { parseSiteManifest } = await import('../server/forja/siteKit');
+    const m = parseSiteManifest({ 'forja/site.json': manifest })!;
+    expect(m.brand).toBe('Bella Napoli');
+    expect(m.routes.map((r) => r.path)).toEqual(['/', '/cardapio', '/privacidade']);
+    expect(m.images.map((i) => [i.id, i.aspect])).toEqual([['hero', '21:9'], ['forno', '16:9']]);
+    expect(parseSiteManifest({ 'forja/site.json': '{quebrado' })).toBe(null);
+  });
+
+  it('injeta o kit com as fotos e troca /forja-img/ID.jpg (inclusive URLs com "$&")', async () => {
+    const { withSiteKit, KIT_PATH } = await import('../server/forja/siteKit');
+    const url = 'https://firebasestorage.googleapis.com/v0/b/x/o/a.jpg?alt=media&token=$&abc';
+    const out = withSiteKit({
+      'forja/images.lock.json': JSON.stringify({ hero: { url, hash: 'h' } }),
+      'index.html': '<meta property="og:image" content="/forja-img/hero.jpg"><meta content="/forja-img/outra.jpg">',
+    });
+    expect(out['index.html']).toContain(`content="${url}"`);
+    expect(out['index.html']).toContain('/forja-img/outra.jpg');
+    expect(out[KIT_PATH]).toContain(JSON.stringify({ hero: url }));
+    expect(out[KIT_PATH]).not.toContain('__FORJA_IMAGES__');
+  });
+
+  it('o kit embutido é igual ao arquivo-fonte (rode scripts/build-site-kit.mjs ao mudar o kit)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { SITE_KIT_SOURCE } = await import('../server/forja/kit/siteKitSource');
+    expect(SITE_KIT_SOURCE).toBe(readFileSync(new URL('../server/forja/kit/siteKit.source.txt', import.meta.url), 'utf8'));
+  });
+
+  it('gera só as fotos novas, salva no Storage e anota a trava; falha de uma foto não derruba as outras', async () => {
+    const { forgeSiteImages, imageHash } = await import('../server/forja/imageForge');
+    const { parseSiteManifest } = await import('../server/forja/siteKit');
+    const m = parseSiteManifest({ 'forja/site.json': manifest })!;
+    const asked: string[] = [];
+    const ai = {
+      models: {
+        generateContent: async (req: any) => {
+          const text = req.contents[0].parts[0].text as string;
+          asked.push(req.config.imageConfig.aspectRatio);
+          if (text.includes('Brick oven')) throw new Error('falhou');
+          return { candidates: [{ content: { parts: [{ inlineData: { data: Buffer.alloc(5000, 1).toString('base64'), mimeType: 'image/jpeg' } }] } }] };
+        },
+      },
+    };
+    const saved: string[] = [];
+    const store = { save: async (path: string) => { saved.push(path); return 'https://cdn.example/' + path; } };
+    const files = { 'forja/site.json': manifest, 'forja/images.lock.json': JSON.stringify({ velha: { url: 'https://cdn.example/velha.jpg', hash: 'x' } }) };
+    const r = await forgeSiteImages({ ai: ai as never, files, store, ownerId: 'uid/1', models: ['m1'] });
+    expect(r.generated).toEqual(['hero']);
+    expect(r.failed.map((f) => f.id)).toEqual(['forno']);
+    expect(asked).toEqual(expect.arrayContaining(['21:9', '16:9']));
+    expect(saved[0]).toMatch(/^forja-public\/uid1\/hero-[a-f0-9]{12}\.jpg$/);
+    const lock = JSON.parse(r.files['forja/images.lock.json']);
+    expect(Object.keys(lock)).toEqual(['hero']);
+    expect(lock.hero.hash).toBe(imageHash(m.images[0]));
+
+    // Segunda construção: a foto pronta não é gerada de novo.
+    asked.length = 0;
+    const again = await forgeSiteImages({ ai: ai as never, files: r.files, store, ownerId: 'uid', models: ['m1'] });
+    expect(again.generated).toEqual([]);
+    expect(asked).toEqual(['16:9']);
+  });
+
+  it('publicação leva robots.txt, sitemap.xml, rotas e troca __SITE_URL__ pelo endereço', async () => {
+    const { buildDeployFiles, indexNowKey } = await import('../server/forja/forjaPublisher');
+    const pack = buildDeployFiles({ html: '<link rel="canonical" href="__SITE_URL__/"><script>var u="__SITE_URL__"</script>', host: 'bella.vercel.app', projectName: 'bella-1', routes: ['/', '/cardapio', '/privacidade'] });
+    const byName = Object.fromEntries(pack.files.map((f) => [f.file, f.data]));
+    expect(byName['index.html']).toBe('<link rel="canonical" href="https://bella.vercel.app/"><script>var u="https://bella.vercel.app"</script>');
+    expect(byName['robots.txt']).toContain('Sitemap: https://bella.vercel.app/sitemap.xml');
+    expect(byName['sitemap.xml']).toContain('<loc>https://bella.vercel.app/cardapio</loc>');
+    expect(byName[`${indexNowKey('bella-1')}.txt`]).toBe(indexNowKey('bella-1'));
+    expect(JSON.parse(byName['vercel.json']).rewrites[0]).toEqual({ source: '/((?!.*\\.).*)', destination: '/index.html' });
+    expect(pack.urls).toEqual(['https://bella.vercel.app/', 'https://bella.vercel.app/cardapio', 'https://bella.vercel.app/privacidade']);
+  });
+
+  it('avisa os buscadores (IndexNow) depois de publicar', async () => {
+    const { createForjaPublisher } = await import('../server/forja/forjaPublisher');
+    const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+    let pinged: any = null;
+    const fetchImpl = async (url: string, init: { method?: string; body?: string }) => {
+      const method = init.method || 'GET';
+      if (url.startsWith('https://api.indexnow.org')) {
+        pinged = JSON.parse(init.body || '{}');
+        return reply(202, {});
+      }
+      if (method === 'GET' && url.includes('/v9/projects/site-1?')) return reply(404, {});
+      if (method === 'POST' && url.includes('/v10/projects')) return reply(200, { id: 'prj_1' });
+      if (method === 'PATCH') return reply(200, {});
+      if (method === 'POST' && url.includes('/v13/deployments')) return reply(200, { id: 'dpl_1', readyState: 'READY' });
+      if (url.includes('/domains')) return reply(200, { domains: [{ name: 'site-1.vercel.app' }] });
+      return reply(500, {});
+    };
+    const r = await createForjaPublisher({ token: 't', teamId: 'team_9', fetchImpl, sleep: async () => {} }).publish({ projectName: 'site-1', html: '<html><body>oi</body></html>', routes: ['/sobre'] });
+    expect(r.searchEnginesNotified).toBe(true);
+    expect(pinged).toMatchObject({ host: 'site-1.vercel.app', urlList: ['https://site-1.vercel.app/', 'https://site-1.vercel.app/sobre'] });
   });
 });

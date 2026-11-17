@@ -385,11 +385,11 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
     try {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       await saveProject(activeProject);
-      const r = await apiClient<{ ok: boolean; url: string }>(`/api/forja/projects/${encodeURIComponent(activeProject.id)}/publish`, { method: 'POST', body: '{}' });
+      const r = await apiClient<{ ok: boolean; url: string; searchEnginesNotified?: boolean }>(`/api/forja/projects/${encodeURIComponent(activeProject.id)}/publish`, { method: 'POST', body: '{}' });
       const targetId = activeProject.id;
       setProjects((prev) => prev.map((p) => (p.id === targetId ? { ...p, productionUrl: r.url } : p)));
       setPublishState('idle');
-      setPublishNotice({ kind: 'ok', text: 'Seu site está no ar!', url: r.url });
+      setPublishNotice({ kind: 'ok', text: r.searchEnginesNotified ? 'Seu site está no ar! Sitemap publicado e buscadores avisados.' : 'Seu site está no ar! Sitemap publicado para os buscadores.', url: r.url });
       onProjectSaved?.({ id: targetId, name: activeProject.name, standaloneHtml: standaloneRef.current, productionUrl: r.url });
     } catch (e) {
       const code = (e as { code?: string })?.code;
@@ -548,6 +548,13 @@ export default function ForjaStudio({ initialPrompt, openProjectId, onClose, onP
       } else if (eventName === 'file_truncated') {
         restorePartialFile(String(payload.path || ''));
         updateAssistantMessage((m) => ({ ...m, files: Array.from(streamedFileMeta.values()) }), true);
+      } else if (eventName === 'images') {
+        // Fotos sendo geradas em paralelo: aparece junto da etapa atual ("· Fotos 3/6").
+        const total = Number(payload.total) || 0;
+        const done = payload.status === 'started' ? 0 : Number(payload.done) || 0;
+        if (payload.status === 'started' || payload.status === 'progress') {
+          updateAssistantMessage((m) => ({ ...m, phaseLabel: `${String(m.phaseLabel || '').split(' · Fotos')[0]} · Fotos ${done}/${total}` }));
+        }
       } else if (eventName === 'review') {
         const reviews = Array.isArray(payload.reviews) ? (payload.reviews as ChatMessage['review']) : [];
         updateAssistantMessage((m) => ({ ...m, review: reviews }));
