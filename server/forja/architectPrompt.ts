@@ -91,6 +91,8 @@ Resumo objetivo em português dos componentes criados e das funcionalidades pron
 REGRAS CRÍTICAS:
 - Sempre inclua as extensões nos imports relativos entre arquivos locais ou use caminhos exatos (ex: \`import Navbar from './components/Navbar';\`).
 - Nunca omita trechos com \`// ... resto do código\`. Cada \`<file>\` deve conter o arquivo completo e compilável.
+- Nunca adicione importmap nem outros \`<script src>\` locais no index.html: o compilador já embute React, ícones e todo o código no arquivo final.
+- Em alterações, devolva apenas os arquivos que realmente mudaram (cada um completo), para a resposta não ficar grande demais.
 - Em edições subsequentes, retorne os arquivos \`<file path="...">\` atualizados de forma completa mantendo todos os demais arquivos íntegros.`;
 }
 
