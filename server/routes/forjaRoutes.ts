@@ -161,6 +161,7 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
   });
 
   const mergedFiles: Record<string, string> = { ...currentFiles };
+  const truncatedFiles: string[] = [];
   let usedModel = '';
   const startedAt = Date.now();
 
@@ -174,7 +175,8 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
       for (const model of usedModel ? [usedModel, ...models.filter((m) => m !== usedModel)] : models) {
         for (const withThinking of [true, false]) {
           try {
-            const config: Record<string, unknown> = { systemInstruction: getArchitectSystemInstruction(designPreset) };
+            // Teto alto de resposta: projetos grandes não podem sair cortados no meio de um arquivo.
+            const config: Record<string, unknown> = { systemInstruction: getArchitectSystemInstruction(designPreset), maxOutputTokens: 65_536 };
             if (withThinking) config.thinkingConfig = { thinkingLevel: thinking };
             const stream = await ai.models.generateContentStream({ model, contents, config: config as never });
             usedModel = model;
@@ -218,6 +220,10 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
               written += 1;
             }
             sendEvent('file_end', { path: ev.path });
+          } else if (ev.type === 'file_truncated') {
+            // Arquivo cortado: fica a versão anterior (ou some, se era novo) e a tela é avisada.
+            truncatedFiles.push(ev.path);
+            sendEvent('file_truncated', { path: ev.path });
           } else if (ev.type === 'summary_delta') {
             if (phase !== 'summarizing') {
               phase = 'summarizing';
@@ -254,7 +260,8 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
     let attempts = 0;
     // Falha de download dos pacotes (React) não é erro do código: não adianta pedir correção à IA.
     const infraOnly = (errors: string[]) => errors.length > 0 && errors.every((e) => /Não consegui baixar o React/.test(e));
-    while (!compiled.ok && attempts < 2 && !closed && !infraOnly(compiled.errors)) {
+    // Sem tempo para mais uma correção dentro do limite da Vercel (300 s): para com aviso claro.
+    while (!compiled.ok && attempts < 2 && !closed && !infraOnly(compiled.errors) && Date.now() - startedAt < 200_000) {
       attempts += 1;
       sendEvent('phase', { phase: 'verifying', label: `Corrigindo compilação automaticamente (tentativa ${attempts}/2)` });
       await streamTurn(buildCompileRepairContents({ originalPrompt: prompt, currentFiles: mergedFiles, compileErrors: compiled.errors }), 'LOW', true);
@@ -267,7 +274,10 @@ forjaRouter.post('/build/stream', requireAuth, async (req: AuthenticatedRequest,
     }
     if (!compiled.ok) {
       await settle(false, 'não compilou');
-      sendEvent('error', { message: `Não consegui compilar automaticamente (sem créditos cobrados): ${compiled.errors.slice(0, 3).join(' | ')}` });
+      const cut = truncatedFiles.length
+        ? ` A resposta da IA veio cortada em ${[...new Set(truncatedFiles)].join(', ')} (mantive a versão anterior desses arquivos). Peça a mudança em partes menores.`
+        : '';
+      sendEvent('error', { message: `Não consegui compilar automaticamente (sem créditos cobrados): ${compiled.errors.slice(0, 3).join(' | ')}.${cut}` });
       return;
     }
 

@@ -3,6 +3,8 @@ export type StreamParserEvent =
   | { type: 'file_start'; path: string }
   | { type: 'file_delta'; path: string; chunk: string }
   | { type: 'file_end'; path: string }
+  /** A resposta acabou no meio do arquivo (limite de tamanho ou de tempo): o arquivo está incompleto. */
+  | { type: 'file_truncated'; path: string }
   | { type: 'summary_delta'; text: string };
 
 type ParserState =
@@ -143,10 +145,9 @@ export class ArchitectStreamParser {
     } else if (this.state.mode === 'summary' && this.buffer) {
       events.push({ type: 'summary_delta', text: this.buffer });
     } else if (this.state.mode === 'file') {
-      if (this.buffer) {
-        events.push({ type: 'file_delta', path: this.state.path, chunk: this.buffer });
-      }
-      events.push({ type: 'file_end', path: this.state.path });
+      // Sem </file>: o arquivo veio cortado. Nunca vira arquivo "pronto" (antes ele era salvo
+      // pela metade e quebrava a compilação com "Unterminated string literal").
+      events.push({ type: 'file_truncated', path: this.state.path });
     }
     this.buffer = '';
     this.state = { mode: 'idle' };
