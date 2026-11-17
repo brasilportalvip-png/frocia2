@@ -63,6 +63,7 @@ export function specialistSystemInstruction(focus: string): string {
     'Revise SOMENTE os pontos do seu foco abaixo. Aponte apenas problemas reais e concretos que você consegue ver no código; não invente.',
     'Para cada problema, diga em português simples o que está errado e exatamente como corrigir (arquivo e mudança).',
     'Se estiver tudo certo no seu foco, devolva a lista vazia. No máximo 5 problemas, os mais importantes primeiro.',
+    'IMPORTANTE SOBRE A MONTAGEM: o compilador da Froc embute React, ícones e todo o código direto no HTML final. O index.html NÃO deve ter <script src="/src/main.tsx">, importmap nem outros scripts locais — a ausência deles está CORRETA. Nunca peça para adicioná-los e nunca aponte isso como problema.',
     'Responda SOMENTE com JSON no formato: {"issues":[{"severity":"alta|media|baixa","file":"src/...","problem":"...","fix":"..."}]}',
     '',
     'SEU FOCO:',
